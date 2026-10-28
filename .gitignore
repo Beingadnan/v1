@@ -39,3 +39,14 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+!.env.example
+
+# local data: uploaded files, dev database volumes
+/.data/
+
+# real client files used by tests — never commit client data
+/fixtures/
+
+# test output
+/playwright-report/
+/test-results/

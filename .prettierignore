@@ -1,0 +1,8 @@
+node_modules
+.next
+drizzle/meta
+fixtures
+coverage
+playwright-report
+test-results
+package-lock.json
