@@ -1,0 +1,24 @@
+# Local development database. Not used in production (production uses managed Postgres).
+# Start:  docker compose up -d
+# Stop:   docker compose down        (data is kept in the qtech-pg volume)
+services:
+  postgres:
+    image: postgres:16.4-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: qtech
+      POSTGRES_PASSWORD: qtech_dev_password
+      POSTGRES_DB: qtech
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - qtech-pg:/var/lib/postgresql/data
+      - ./scripts/docker/create-test-db.sql:/docker-entrypoint-initdb.d/10-create-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qtech -d qtech"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  qtech-pg:
