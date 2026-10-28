@@ -1,26 +1,96 @@
 @import "tailwindcss";
+@import "@fontsource-variable/ibm-plex-sans";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/*
+ * QTech design tokens.
+ * Brand navy comes from the QA Tech logo (#002D8C).
+ * Status colours carry meaning only: pass / attention / fail / info.
+ * Component code uses the semantic names (bg-primary, text-muted-foreground…),
+ * never raw hex values.
+ */
+@theme {
+  --font-sans: "IBM Plex Sans Variable", ui-sans-serif, system-ui, sans-serif;
+
+  --color-brand: #002d8c;
+  --color-brand-deep: #001c5c;
+  --color-brand-soft: #e6ecf8;
+
+  --color-background: #f5f7fb;
+  --color-foreground: #13203b;
+  --color-surface: #ffffff;
+  --color-surface-muted: #eef2f8;
+  --color-border: #dbe2ee;
+  --color-input: #c9d3e3;
+  --color-ring: #2f5bd3;
+
+  --color-muted-foreground: #5a6884;
+
+  --color-primary: #002d8c;
+  --color-primary-hover: #00246f;
+  --color-primary-foreground: #ffffff;
+
+  --color-pass: #1f7a4d;
+  --color-pass-soft: #e5f3ec;
+  --color-attention: #9a5b00;
+  --color-attention-soft: #fdf1dc;
+  --color-fail: #b42318;
+  --color-fail-soft: #fdeceb;
+  --color-info: #2f5bd3;
+  --color-info-soft: #e8eefc;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+@layer base {
+  html {
+    color-scheme: light;
+  }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Readings, serials and certificate numbers line up in columns. */
+  .tabular,
+  td,
+  th {
+    font-variant-numeric: tabular-nums;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/*
+ * The one decorative element: a thermometer-style graduated scale
+ * running down the inner edge of the navy sidebar.
+ */
+@utility scale-ticks {
+  background-image:
+    repeating-linear-gradient(to bottom, rgb(255 255 255 / 0.28) 0 1px, transparent 1px 40px),
+    repeating-linear-gradient(to bottom, rgb(255 255 255 / 0.12) 0 1px, transparent 1px 8px);
+  background-size:
+    10px 100%,
+    5px 100%;
+  background-position:
+    right top,
+    right top;
+  background-repeat: repeat-y;
 }
