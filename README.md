@@ -11,22 +11,29 @@ Architecture decisions: [docs/adr/](docs/adr/).
 
 ## Status
 
-**Phase 0 — Foundations.** App shell and design system, database with an append-only audit
-log, content-addressed file storage, CI. No login yet (phase 1), so nothing is exposed that
-accepts data.
+**Phase 1 — Sign-in, roles and settings.** Email + password sign-in with lockout, one-time
+invite/reset links, nine roles with a permission matrix, electronic signatures, users,
+settings (letterhead details, sites, number formats, calculation defaults), audit trail
+screen and an authenticated upload endpoint. Built on phase 0: design system, append-only
+audit log, content-addressed file storage, CI.
 
 ## Run it locally
 
-Requires Node 22 and Docker.
+Requires Node 22 and a Postgres database: either Neon (paste its connection string into
+`DATABASE_URL`) or local Docker (`docker compose up -d`).
 
 ```bash
+npm ci                          # install packages first
 cp .env.example .env.local      # local settings; never commit .env.local
-docker compose up -d            # Postgres 16 on localhost:5432 (+ a separate qtech_test DB)
-npm ci
 npm run db:migrate              # create tables
-npm run db:seed                 # create the QA Tech organisation (safe to re-run)
+npm run db:seed                 # QA Tech organisation, settings and sites (safe to re-run)
+npm run user:create-admin -- --name "Your Name" --email you@qatech.co.in
 npm run dev                     # http://localhost:3000
 ```
+
+`user:create-admin` prints a one-time link: open it to set your password, then sign in.
+Invite everyone else from **Users** in the app. If the only admin is locked out, run the
+same command again with their email to get a fresh link.
 
 The design system is browsable at `/dev/components` in development (hidden in production).
 
@@ -36,6 +43,7 @@ The design system is browsable at `/dev/components` in development (hidden in pr
 | -------------------------- | ----------------------------------------------------------- |
 | `npm run check`            | Typecheck, lint, formatting and unit tests                  |
 | `npm run test:integration` | Tests against real Postgres (`TEST_DATABASE_URL`, `*_test`) |
+|                            | Browser tests also use `TEST_DATABASE_URL` and wipe it      |
 | `npm run build`            | Production build                                            |
 | `npm run test:e2e`         | Browser tests against the production build (build first)    |
 

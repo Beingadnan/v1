@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { connection } from "next/server";
 
+import { CspNonce } from "@/components/shell/csp-nonce";
+
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -23,7 +25,10 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
 
   return (
     <html lang="en">
-      <body className="min-h-dvh">{children}</body>
+      <body className="min-h-dvh">
+        <CspNonce />
+        {children}
+      </body>
     </html>
   );
 }
