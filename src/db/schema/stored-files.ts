@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { bigint, check, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 
 import { organisations } from "./organisations";
+import { users } from "./users";
 
 /**
  * Registry of file contents kept in blob storage (raw logger exports,
@@ -28,8 +29,9 @@ export const storedFiles = pgTable(
     /** Name at first upload, for display in the audit trail only. */
     firstFileName: text("first_file_name").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    /** Users table arrives in phase 1, which adds the foreign key. */
-    createdByUserId: uuid("created_by_user_id"),
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, {
+      onDelete: "restrict",
+    }),
   },
   (t) => [
     uniqueIndex("stored_files_org_sha256_key").on(t.organisationId, t.sha256),

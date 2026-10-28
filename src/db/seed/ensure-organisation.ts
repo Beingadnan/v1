@@ -3,7 +3,7 @@ import "server-only";
 import { eq } from "drizzle-orm";
 
 import type { Database } from "@/db/client-factory";
-import { organisations, type Organisation } from "@/db/schema";
+import { organisationSettings, organisations, type Organisation } from "@/db/schema";
 import { recordAudit } from "@/lib/audit";
 
 /**
@@ -23,6 +23,11 @@ export async function ensureOrganisation(
       .returning();
 
     if (inserted) {
+      // Every organisation gets a settings row with safe defaults, created atomically with it.
+      await tx
+        .insert(organisationSettings)
+        .values({ organisationId: inserted.id, legalName: inserted.name, shortName: inserted.name })
+        .onConflictDoNothing();
       await recordAudit(tx, {
         organisationId: inserted.id,
         actor: { type: "system" },

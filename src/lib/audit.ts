@@ -9,7 +9,28 @@ import { auditLog } from "@/db/schema";
  * Every audited action the app can record. Adding a new action means adding it
  * here, so the audit trail vocabulary stays consistent and searchable.
  */
-export const AUDIT_ACTIONS = ["organisation.created", "file.stored", "file.reused"] as const;
+export const AUDIT_ACTIONS = [
+  "organisation.created",
+  "file.stored",
+  "file.reused",
+  "user.invited",
+  "user.role_changed",
+  "user.deactivated",
+  "user.reactivated",
+  "user.setup_link_issued",
+  "user.password_set",
+  "user.password_changed",
+  "user.login_succeeded",
+  "user.login_failed",
+  "user.locked_out",
+  "user.logged_out",
+  "user.sessions_revoked",
+  "settings.updated",
+  "site.created",
+  "site.updated",
+  "record.signed",
+  "signature.failed",
+] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
 const MAX_SNAPSHOT_BYTES = 64 * 1024;

@@ -12,6 +12,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 import { organisations } from "./organisations";
+import { users } from "./users";
 
 /**
  * Append-only record of every important action (GMP / 21 CFR Part 11 style).
@@ -19,9 +20,6 @@ import { organisations } from "./organisations";
  * Rows can never be updated or deleted: a database trigger (migration
  * 0001_audit_log_append_only) rejects UPDATE, DELETE and TRUNCATE for every
  * role, so this is enforced below the application, not just by convention.
- *
- * actor_user_id has no foreign key yet because the users table arrives in
- * phase 1; that phase adds the constraint.
  */
 export const auditLog = pgTable(
   "audit_log",
@@ -33,7 +31,7 @@ export const auditLog = pgTable(
       .notNull()
       .references(() => organisations.id, { onDelete: "restrict" }),
     actorType: text("actor_type").notNull(),
-    actorUserId: uuid("actor_user_id"),
+    actorUserId: uuid("actor_user_id").references(() => users.id, { onDelete: "restrict" }),
     /** Dotted verb, e.g. "file.stored", "study.status_changed". */
     action: text("action").notNull(),
     entityType: text("entity_type").notNull(),
