@@ -1,14 +1,30 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+/** Pages anyone can open without signing in. */
+const PUBLIC_PATHS = ["/login", "/set-password"];
+/** Both names, because the proxy can't read app settings; see src/lib/auth/session-cookie.ts. */
+const SESSION_COOKIES = ["__Host-qtech_session", "qtech_session"];
+
 /**
- * Runs before every page request.
+ * Runs before every page request:
+ * 1. sets a per-request nonce-based Content-Security-Policy;
+ * 2. sends visitors without a session cookie to /login early.
  *
- * Phase 0: sets a per-request nonce-based Content-Security-Policy.
- * Phase 1 adds an optimistic session check here (redirect to /login);
- * the authoritative auth check always happens again on the server
- * (data access layer), never only in the proxy.
+ * Step 2 only looks at whether a cookie exists. The real check (is the session
+ * valid, is the user active, may they do this) always happens on the server in
+ * src/lib/auth/dal.ts, for every page, action and API route.
  */
 export function proxy(request: NextRequest) {
+  const { pathname, search } = request.nextUrl;
+  const isPublic = PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+  const hasSessionCookie = SESSION_COOKIES.some((name) => request.cookies.has(name));
+
+  if (!isPublic && !hasSessionCookie) {
+    const loginUrl = new URL("/login", request.url);
+    if (pathname !== "/") loginUrl.searchParams.set("next", `${pathname}${search}`);
+    return NextResponse.redirect(loginUrl);
+  }
+
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
   const csp = buildContentSecurityPolicy(nonce, process.env.NODE_ENV === "development");
 

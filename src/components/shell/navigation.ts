@@ -9,8 +9,11 @@ import {
   ReceiptIndianRupee,
   Settings,
   ThermometerSnowflake,
+  Users,
   type LucideIcon,
 } from "lucide-react";
+
+import type { Action } from "@/domain/auth/permissions";
 
 export type NavItem = {
   label: string;
@@ -18,12 +21,14 @@ export type NavItem = {
   icon: LucideIcon;
   /** The build phase that delivers this screen. Shown as unavailable until then. */
   availableFromPhase: number;
+  /** Hidden from people whose role lacks this permission. */
+  permission?: Action;
 };
 
 export type NavGroup = { label: string; items: NavItem[] };
 
 /** Where the app is in the build plan. Bump as each phase ships. */
-export const CURRENT_PHASE = 0;
+export const CURRENT_PHASE = 1;
 
 export const navigation: NavGroup[] = [
   {
@@ -47,12 +52,41 @@ export const navigation: NavGroup[] = [
   {
     label: "Admin",
     items: [
-      { label: "Audit trail", href: "/audit", icon: History, availableFromPhase: 1 },
-      { label: "Settings", href: "/settings", icon: Settings, availableFromPhase: 1 },
+      {
+        label: "Users",
+        href: "/users",
+        icon: Users,
+        availableFromPhase: 1,
+        permission: "users.view",
+      },
+      {
+        label: "Audit trail",
+        href: "/audit",
+        icon: History,
+        availableFromPhase: 1,
+        permission: "audit.view",
+      },
+      {
+        label: "Settings",
+        href: "/settings",
+        icon: Settings,
+        availableFromPhase: 1,
+        permission: "settings.view",
+      },
     ],
   },
 ];
 
 export function isNavItemAvailable(item: NavItem): boolean {
   return item.availableFromPhase <= CURRENT_PHASE;
+}
+
+/** Navigation for one person: items their role can't use are removed, empty groups dropped. */
+export function navigationFor(allowed: readonly Action[]): NavGroup[] {
+  return navigation
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => !item.permission || allowed.includes(item.permission)),
+    }))
+    .filter((group) => group.items.length > 0);
 }

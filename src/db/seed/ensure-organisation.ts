@@ -2,7 +2,7 @@ import "server-only";
 
 import { eq } from "drizzle-orm";
 
-import type { Database } from "@/db/client-factory";
+import type { Database, Transaction } from "@/db/client-factory";
 import { organisationSettings, organisations, type Organisation } from "@/db/schema";
 import { recordAudit } from "@/lib/audit";
 
@@ -23,11 +23,7 @@ export async function ensureOrganisation(
       .returning();
 
     if (inserted) {
-      // Every organisation gets a settings row with safe defaults, created atomically with it.
-      await tx
-        .insert(organisationSettings)
-        .values({ organisationId: inserted.id, legalName: inserted.name, shortName: inserted.name })
-        .onConflictDoNothing();
+      await ensureSettingsRow(tx, inserted);
       await recordAudit(tx, {
         organisationId: inserted.id,
         actor: { type: "system" },
@@ -45,6 +41,20 @@ export async function ensureOrganisation(
       .from(organisations)
       .where(eq(organisations.slug, input.slug));
     if (!existing) throw new Error(`Organisation ${input.slug} conflicted but could not be read`);
+    // Organisations created before settings existed (phase 0) get their row now.
+    await ensureSettingsRow(tx, existing);
     return { organisation: existing, created: false };
   });
+}
+
+/** Every organisation has exactly one settings row with safe defaults. */
+async function ensureSettingsRow(tx: Transaction, organisation: Organisation): Promise<void> {
+  await tx
+    .insert(organisationSettings)
+    .values({
+      organisationId: organisation.id,
+      legalName: organisation.name,
+      shortName: organisation.name,
+    })
+    .onConflictDoNothing();
 }

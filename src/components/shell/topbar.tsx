@@ -4,9 +4,13 @@ import { Menu, Search } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { useState } from "react";
 
-import { SidebarContent } from "./sidebar";
+import type { Action } from "@/domain/auth/permissions";
+import type { UserSummary } from "@/lib/auth/dal";
 
-export function Topbar() {
+import { SidebarContent } from "./sidebar";
+import { UserMenu } from "./user-menu";
+
+export function Topbar({ user, allowed }: { user: UserSummary; allowed: readonly Action[] }) {
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
@@ -25,7 +29,7 @@ export function Topbar() {
             <DialogPrimitive.Description className="sr-only">
               Main navigation
             </DialogPrimitive.Description>
-            <SidebarContent onNavigate={() => setMenuOpen(false)} />
+            <SidebarContent allowed={allowed} onNavigate={() => setMenuOpen(false)} />
           </DialogPrimitive.Content>
         </DialogPrimitive.Portal>
       </DialogPrimitive.Root>
@@ -37,6 +41,9 @@ export function Topbar() {
         <kbd className="ml-auto hidden rounded border border-border bg-surface px-1.5 text-xs sm:inline">
           Ctrl K
         </kbd>
+      </div>
+      <div className="ml-auto">
+        <UserMenu user={user} />
       </div>
     </header>
   );

@@ -4,13 +4,21 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import type { Action } from "@/domain/auth/permissions";
 import { cn } from "@/lib/utils";
 
-import { isNavItemAvailable, navigation } from "./navigation";
+import { isNavItemAvailable, navigationFor } from "./navigation";
+
+type SidebarProps = {
+  /** Permissions of the signed-in person; decided on the server. */
+  allowed: readonly Action[];
+  onNavigate?: () => void;
+};
 
 /** Sidebar contents; used both in the desktop rail and the mobile drawer. */
-export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
+export function SidebarContent({ allowed, onNavigate }: SidebarProps) {
   const pathname = usePathname();
+  const groups = navigationFor(allowed);
 
   return (
     <div className="flex h-full flex-col bg-brand scale-ticks text-white">
@@ -32,7 +40,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       </div>
 
       <nav aria-label="Main" className="flex-1 overflow-y-auto px-3 pb-6">
-        {navigation.map((group) => (
+        {groups.map((group) => (
           <div key={group.label} className="mt-5 first:mt-2">
             <p className="px-2 pb-1.5 text-xs font-medium text-white/60">{group.label}</p>
             <ul className="flex flex-col gap-0.5">

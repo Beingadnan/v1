@@ -22,6 +22,24 @@ const envSchema = z.object({
   STORAGE_LOCAL_DIR: z.string().min(1).default("./.data/storage"),
   /** Hard upload limit in megabytes; logger exports are small, certificate scans can be larger. */
   UPLOAD_MAX_MB: z.coerce.number().int().min(1).max(200).default(50),
+  /**
+   * The address people use to open the app. Used for links (invites, resets)
+   * and to decide cookie security: https → Secure, __Host- prefixed cookie.
+   */
+  APP_URL: z
+    .string()
+    .url()
+    .default("http://localhost:3000")
+    .transform((v) => v.replace(/\/$/, "")),
+  /**
+   * Set to "true" only when the app runs behind a reverse proxy that sets
+   * X-Forwarded-For (Railway, Render, nginx). Otherwise that header is ignored,
+   * because a client could forge it to dodge sign-in throttling.
+   */
+  TRUST_PROXY: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
 });
 
 export type Env = z.infer<typeof envSchema>;

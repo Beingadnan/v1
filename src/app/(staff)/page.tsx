@@ -4,20 +4,21 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
+import { ROLE_DESCRIPTIONS } from "@/domain/auth/roles";
+import { requireUser } from "@/lib/auth/dal";
 
-export default function HomePage() {
+export default async function HomePage() {
+  const user = await requireUser();
+  const firstName = user.name.split(/\s+/)[0] ?? user.name;
   const showDevLinks = process.env.NODE_ENV !== "production";
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-8">
-      <PageHeader
-        title="Home"
-        description="Your jobs, studies and reports waiting on you will show here."
-      />
+      <PageHeader title={`Hello, ${firstName}`} description={ROLE_DESCRIPTIONS[user.role]} />
       <EmptyState
         icon={ClipboardList}
         title="Nothing assigned to you yet"
-        description="Jobs arrive here once job management is switched on. Until then, this is the empty shell of the app."
+        description="Jobs, studies and reports waiting on you will show here once job management is switched on."
         action={
           showDevLinks ? (
             <Button variant="secondary" asChild>
