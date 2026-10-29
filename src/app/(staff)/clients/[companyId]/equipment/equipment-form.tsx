@@ -1,7 +1,9 @@
 "use client";
 
+import { Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { flushSync } from "react-dom";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -13,16 +15,29 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Field, Textarea } from "@/components/ui/form-controls";
-import { FormMessage, SelectField, TextField, useFormAction } from "@/components/ui/form-kit";
+import {
+  CheckboxField,
+  FormMessage,
+  SelectField,
+  TextField,
+  useFormAction,
+} from "@/components/ui/form-kit";
 import {
   EQUIPMENT_TYPE_INFO,
   EQUIPMENT_TYPES,
   type EquipmentType,
 } from "@/domain/clients/equipment-types";
+import {
+  STUDY_CYCLE_LABELS,
+  STUDY_CYCLES,
+  suggestLoggerCount,
+  type TypeDefaults,
+} from "@/domain/clients/study-defaults";
 
 import { saveEquipmentAction, setEquipmentActiveAction } from "../../actions";
 
 export type EquipmentFormValues = {
+  /** Empty when the form starts a new item from an existing one ("Add similar"). */
   id: string;
   siteId: string;
   departmentId: string;
@@ -46,8 +61,23 @@ export type EquipmentFormValues = {
   studyDurationHours: string;
   requalificationMonths: string;
   lastStudyOn: string;
+  cycles: string[];
+  seasonalMapping: boolean;
   notes: string;
 };
+
+/** Fields a type's defaults can fill, in the order they appear. */
+const DEFAULT_FIELDS = [
+  "setPointC",
+  "tempMinC",
+  "tempMaxC",
+  "rhMinPct",
+  "rhMaxPct",
+  "defaultChannels",
+  "readingIntervalMinutes",
+  "studyDurationHours",
+  "requalificationMonths",
+] as const;
 
 function Group({
   title,
@@ -76,6 +106,7 @@ export function EquipmentForm({
   sites,
   departments,
   values,
+  typeDefaults,
   readOnly,
 }: {
   companyId: string;
@@ -83,27 +114,82 @@ export function EquipmentForm({
   sites: { id: string; name: string }[];
   departments: { id: string; name: string; siteId: string }[];
   values?: EquipmentFormValues;
+  /** QA Tech's defaults per type (Settings); fill empty fields when a type is chosen. */
+  typeDefaults: Record<EquipmentType, TypeDefaults>;
   readOnly?: boolean;
 }) {
   const router = useRouter();
+  const formRef = useRef<HTMLFormElement>(null);
   const { result, pending, onSubmit } = useFormAction(saveEquipmentAction);
+  const isNew = !values?.id;
   const [siteId, setSiteId] = useState(values?.siteId ?? sites[0]?.id ?? "");
   const [type, setType] = useState<EquipmentType | "">(values?.type ?? "");
+  const [filledFrom, setFilledFrom] = useState<{ type: EquipmentType; count: number } | null>(null);
+  const [size, setSize] = useState({
+    lengthM: values?.lengthM ?? "",
+    widthM: values?.widthM ?? "",
+    heightM: values?.heightM ?? "",
+  });
   const siteDepartments = departments.filter((d) => d.siteId === siteId);
   const showRh =
     (type !== "" && EQUIPMENT_TYPE_INFO[type].hasRh) ||
     Boolean(values?.rhMinPct || values?.rhMaxPct);
+  const suggestion = suggestLoggerCount({
+    lengthM: Number(size.lengthM) || null,
+    widthM: Number(size.widthM) || null,
+    heightM: Number(size.heightM) || null,
+  });
 
   useEffect(() => {
-    if (result?.ok && !values) router.push(`/clients/${companyId}/equipment/${result.data.id}`);
-  }, [result, values, router, companyId]);
+    if (result?.ok && isNew) router.push(`/clients/${companyId}/equipment/${result.data.id}`);
+  }, [result, isNew, router, companyId]);
+
+  /**
+   * Choosing a type on a new item fills the empty fields from that type's
+   * defaults (never overwriting what was typed), ticks its usual cycles if none
+   * are ticked yet, and says how many fields it filled.
+   */
+  function applyDefaults(next: EquipmentType) {
+    const form = formRef.current;
+    if (!form || !isNew) return;
+    const defaults = typeDefaults[next];
+    let count = 0;
+    const tempTyped = ["setPointC", "tempMinC", "tempMaxC"].some((n) => inputValue(form, n) !== "");
+    const rhTyped = ["rhMinPct", "rhMaxPct"].some((n) => inputValue(form, n) !== "");
+    for (const name of DEFAULT_FIELDS) {
+      const value = defaults[name];
+      if (value === null) continue;
+      if (tempTyped && ["setPointC", "tempMinC", "tempMaxC"].includes(name)) continue;
+      if (rhTyped && ["rhMinPct", "rhMaxPct"].includes(name)) continue;
+      const input = form.elements.namedItem(name);
+      if (input instanceof HTMLInputElement && input.value === "") {
+        input.value = String(value);
+        count += 1;
+      }
+    }
+    const boxes = [...form.querySelectorAll<HTMLInputElement>('input[name="cycles"]')];
+    if (!boxes.some((b) => b.checked)) {
+      for (const box of boxes) box.checked = defaults.cycles.includes(box.value as never);
+      if (defaults.cycles.length) count += 1;
+    }
+    const seasonal = form.elements.namedItem("seasonalMapping");
+    if (seasonal instanceof HTMLInputElement) seasonal.checked = defaults.seasonalMapping;
+    setFilledFrom(count > 0 ? { type: next, count } : null);
+  }
 
   const v = values;
   const common = { result, disabled: readOnly };
 
   return (
     <form
+      ref={formRef}
       onSubmit={onSubmit}
+      onInput={(e) => {
+        const target = e.target as HTMLInputElement;
+        if (target.name === "lengthM" || target.name === "widthM" || target.name === "heightM") {
+          setSize((current) => ({ ...current, [target.name]: target.value }));
+        }
+      }}
       noValidate
       className="flex flex-col gap-6 rounded-lg border border-border bg-surface p-6"
     >
@@ -172,7 +258,12 @@ export function EquipmentForm({
           label="Type"
           required
           value={type}
-          onChange={(e) => setType(e.currentTarget.value as EquipmentType)}
+          onChange={(e) => {
+            const next = e.currentTarget.value as EquipmentType;
+            // Render the RH fields for the new type first, then fill them.
+            flushSync(() => setType(next));
+            applyDefaults(next);
+          }}
           hint={
             type === ""
               ? undefined
@@ -201,6 +292,18 @@ export function EquipmentForm({
         <TextField name="model" label="Model" defaultValue={v?.model} {...common} />
         <TextField name="serialNo" label="Serial number" defaultValue={v?.serialNo} {...common} />
       </Group>
+
+      {filledFrom ? (
+        <p
+          role="status"
+          className="flex items-center gap-2 rounded-md bg-brand-soft px-3 py-2 text-sm text-primary"
+        >
+          <Sparkles className="size-4 shrink-0" aria-hidden="true" />
+          Filled {filledFrom.count} empty field{filledFrom.count === 1 ? "" : "s"} from the{" "}
+          {EQUIPMENT_TYPE_INFO[filledFrom.type].label.toLowerCase()} defaults. Check them and change
+          anything that differs for this unit.
+        </p>
+      ) : null}
 
       <Group title="Size" description="Inside dimensions, for the sensor layout.">
         <TextField
@@ -238,7 +341,6 @@ export function EquipmentForm({
           label="Set point"
           inputMode="decimal"
           suffix="°C"
-          placeholder="-24"
           defaultValue={v?.setPointC}
           {...common}
         />
@@ -247,7 +349,6 @@ export function EquipmentForm({
           label="Lowest allowed"
           inputMode="decimal"
           suffix="°C"
-          placeholder="-30"
           defaultValue={v?.tempMinC}
           {...common}
         />
@@ -256,7 +357,6 @@ export function EquipmentForm({
           label="Highest allowed"
           inputMode="decimal"
           suffix="°C"
-          placeholder="-15"
           defaultValue={v?.tempMaxC}
           {...common}
         />
@@ -283,20 +383,35 @@ export function EquipmentForm({
       </Group>
 
       <Group title="Study defaults" description="Copied into each new study; can be changed there.">
-        <TextField
-          name="defaultChannels"
-          label="Number of loggers"
-          inputMode="numeric"
-          placeholder="9"
-          defaultValue={v?.defaultChannels}
-          {...common}
-        />
+        <div className="flex flex-col gap-1.5">
+          <TextField
+            name="defaultChannels"
+            label="Number of loggers"
+            inputMode="numeric"
+            defaultValue={v?.defaultChannels}
+            {...common}
+          />
+          {suggestion && !readOnly ? (
+            <p className="text-xs text-muted-foreground">
+              Suggested {suggestion.count}: {suggestion.reason}.{" "}
+              <button
+                type="button"
+                className="font-medium text-primary hover:underline"
+                onClick={() => {
+                  const input = formRef.current?.elements.namedItem("defaultChannels");
+                  if (input instanceof HTMLInputElement) input.value = String(suggestion.count);
+                }}
+              >
+                Use {suggestion.count}
+              </button>
+            </p>
+          ) : null}
+        </div>
         <TextField
           name="readingIntervalMinutes"
           label="Reading every"
           inputMode="numeric"
           suffix="min"
-          placeholder="10"
           defaultValue={v?.readingIntervalMinutes}
           {...common}
         />
@@ -305,7 +420,6 @@ export function EquipmentForm({
           label="Study duration"
           inputMode="numeric"
           suffix="hours"
-          placeholder="24"
           defaultValue={v?.studyDurationHours}
           {...common}
         />
@@ -327,6 +441,36 @@ export function EquipmentForm({
           defaultValue={v?.lastStudyOn}
           {...common}
         />
+        <fieldset className="flex flex-col gap-2 sm:col-span-2 lg:col-span-3">
+          <legend className="mb-1.5 text-sm font-medium">Cycles each study runs</legend>
+          <div className="flex flex-wrap gap-2">
+            {STUDY_CYCLES.map((cycle) => (
+              <label
+                key={cycle}
+                className="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm has-checked:border-primary has-checked:bg-brand-soft"
+              >
+                <input
+                  type="checkbox"
+                  name="cycles"
+                  value={cycle}
+                  defaultChecked={v?.cycles.includes(cycle)}
+                  disabled={readOnly}
+                  className="size-4 accent-primary"
+                />
+                {STUDY_CYCLE_LABELS[cycle]}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        <div className="sm:col-span-2 lg:col-span-3">
+          <CheckboxField
+            name="seasonalMapping"
+            label="Map in summer and in winter"
+            hint="WHO: warehouses and stores affected by outside weather need a study in the hottest and the coldest season. Not usually needed for cold rooms and freezers."
+            defaultChecked={v?.seasonalMapping}
+            disabled={readOnly}
+          />
+        </div>
       </Group>
 
       <Group title="Notes">
@@ -339,8 +483,8 @@ export function EquipmentForm({
 
       {readOnly ? null : (
         <div className="flex flex-col gap-3 border-t border-border pt-6 sm:flex-row sm:items-center">
-          <Button type="submit" disabled={pending || (result?.ok && !values)}>
-            {pending ? "Saving…" : values ? "Save changes" : "Add equipment"}
+          <Button type="submit" disabled={pending || (result?.ok && isNew)}>
+            {pending ? "Saving…" : isNew ? "Add equipment" : "Save changes"}
           </Button>
           <div className="flex-1">
             <FormMessage result={result} />
@@ -349,6 +493,11 @@ export function EquipmentForm({
       )}
     </form>
   );
+}
+
+function inputValue(form: HTMLFormElement, name: string): string {
+  const input = form.elements.namedItem(name);
+  return input instanceof HTMLInputElement ? input.value : "";
 }
 
 export function RetireEquipmentButton({

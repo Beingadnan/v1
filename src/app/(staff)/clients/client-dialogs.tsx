@@ -20,6 +20,7 @@ import {
   TextField,
   useFormAction,
 } from "@/components/ui/form-kit";
+import { checkGstin } from "@/domain/clients/gstin";
 import { DEFAULT_REPORT_NUMBER_FORMAT, formatReportNumber } from "@/domain/clients/report-number";
 
 import { LinkReady } from "../users/user-dialogs";
@@ -76,6 +77,53 @@ function useCloseOnSuccess(ok: boolean | undefined, close: () => void) {
     const timer = setTimeout(close, 900);
     return () => clearTimeout(timer);
   }, [ok, close]);
+}
+
+// ---------------------------------------------------------------- GSTIN
+
+/**
+ * GSTIN with a live check: shows the state and PAN it contains, or what looks
+ * wrong. With fillState, an empty State field in the same form is filled in.
+ */
+function GstinField({
+  label = "GSTIN",
+  defaultValue,
+  result,
+  fillState,
+}: {
+  label?: string;
+  defaultValue?: string;
+  result: Parameters<typeof TextField>[0]["result"];
+  fillState?: boolean;
+}) {
+  const [value, setValue] = useState(defaultValue ?? "");
+  const check = value.trim().length >= 15 ? checkGstin(value) : null;
+  const hint = !value.trim()
+    ? "Optional. The state is read from it."
+    : !check
+      ? `${value.trim().length} of 15 characters`
+      : check.ok
+        ? `${check.state} · PAN ${check.pan}`
+        : check.message;
+  return (
+    <TextField
+      name="gstin"
+      label={label}
+      defaultValue={defaultValue}
+      result={result}
+      hint={hint}
+      autoComplete="off"
+      onChange={(e) => {
+        const next = e.currentTarget.value;
+        setValue(next);
+        const found = next.trim().length === 15 ? checkGstin(next) : null;
+        if (fillState && found?.ok) {
+          const state = e.currentTarget.form?.elements.namedItem("state");
+          if (state instanceof HTMLInputElement && !state.value) state.value = found.state;
+        }
+      }}
+    />
+  );
 }
 
 // ---------------------------------------------------------------- company
@@ -144,7 +192,7 @@ function CompanyFields({
         result={result}
         required
       />
-      <TextField name="gstin" label="GSTIN" defaultValue={values?.gstin} result={result} />
+      <GstinField defaultValue={values?.gstin} result={result} />
       <TextField
         className="sm:col-span-2"
         name="address"
@@ -250,6 +298,9 @@ function AddClientForm() {
         <TextField name="siteState" label="State" result={result} />
       </fieldset>
       <FormMessage result={result && !result.ok ? result : undefined} />
+      {result && !result.ok && result.error.includes("looks like the same company") ? (
+        <CheckboxField name="allowSimilar" label="This is a different company" />
+      ) : null}
       <DialogFooter>
         <Button type="submit" disabled={pending || result?.ok}>
           {pending || result?.ok ? "Saving…" : "Add client"}
@@ -393,12 +444,11 @@ function SiteForm({
         />
         <TextField name="city" label="City" defaultValue={site?.city} result={result} />
         <TextField name="state" label="State" defaultValue={site?.state} result={result} />
-        <TextField
-          name="gstin"
+        <GstinField
           label="GSTIN for this site"
-          hint="Only if it differs from the company's."
           defaultValue={site?.gstin}
           result={result}
+          fillState
         />
       </div>
       {site ? <ActiveSelect defaultActive={site.active} noun="site" /> : null}

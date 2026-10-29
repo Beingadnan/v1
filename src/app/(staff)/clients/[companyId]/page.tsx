@@ -1,4 +1,4 @@
-import { ChevronLeft, MapPin, Plus, Refrigerator, Users } from "lucide-react";
+import { ChevronLeft, Download, MapPin, Plus, Refrigerator, Users } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -164,6 +164,16 @@ export default async function ClientPage({ params }: PageProps<"/clients/[compan
       <Section
         title="Equipment"
         description="What QA Tech maps or validates here. Studies copy their defaults from these records."
+        action={
+          equipment.length > 0 ? (
+            <Button variant="secondary" size="sm" asChild>
+              <a href={`/clients/${company.id}/export`} download>
+                <Download aria-hidden="true" />
+                Download Excel
+              </a>
+            </Button>
+          ) : undefined
+        }
       >
         {equipment.length === 0 ? (
           <EmptyState

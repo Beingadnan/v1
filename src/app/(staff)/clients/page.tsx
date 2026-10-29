@@ -1,4 +1,4 @@
-import { Building2, FileSpreadsheet, Search } from "lucide-react";
+import { Building2, CalendarClock, Download, FileSpreadsheet, Search } from "lucide-react";
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/table";
 import { db } from "@/db/client";
 import { can } from "@/domain/auth/permissions";
+import { listDueEquipment } from "@/domain/clients/export-service";
 import { listCompanies } from "@/domain/clients/queries";
 import { requirePermission } from "@/lib/auth/dal";
 
@@ -29,7 +30,11 @@ export default async function ClientsPage({ searchParams }: PageProps<"/clients"
   const canManage = can(actor, "clients.manage");
   const { q } = await searchParams;
   const search = typeof q === "string" ? q.trim().slice(0, 100) : "";
-  const companies = await listCompanies(db, actor, search);
+  const [companies, due] = await Promise.all([
+    listCompanies(db, actor, search),
+    listDueEquipment(db, actor, { days: 30 }),
+  ]);
+  const overdue = due.filter((d) => d.status === "overdue").length;
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6">
@@ -51,22 +56,59 @@ export default async function ClientsPage({ searchParams }: PageProps<"/clients"
         }
       />
 
-      <form role="search" className="flex max-w-md gap-2">
-        <label htmlFor="q" className="sr-only">
-          Search clients
-        </label>
-        <Input
-          id="q"
-          name="q"
-          type="search"
-          defaultValue={search}
-          placeholder="Client, site or equipment ID"
-        />
-        <Button type="submit" variant="secondary">
-          <Search aria-hidden="true" />
-          Search
-        </Button>
-      </form>
+      {due.length > 0 ? (
+        <Link
+          href="/clients/due?days=30"
+          className="flex flex-wrap items-center gap-2 rounded-lg border border-attention/30 bg-attention-soft px-4 py-3 text-sm text-attention hover:border-attention"
+        >
+          <CalendarClock className="size-4" aria-hidden="true" />
+          <strong>
+            {overdue > 0 ? `${overdue} overdue` : null}
+            {overdue > 0 && due.length > overdue ? " and " : null}
+            {due.length > overdue ? `${due.length - overdue} due within 30 days` : null}
+          </strong>
+          <span>for requalification. See the list →</span>
+        </Link>
+      ) : null}
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <form role="search" className="flex max-w-md flex-1 gap-2">
+          <label htmlFor="q" className="sr-only">
+            Search clients
+          </label>
+          <Input
+            id="q"
+            name="q"
+            type="search"
+            defaultValue={search}
+            placeholder="Client, site or equipment ID"
+          />
+          <Button type="submit" variant="secondary">
+            <Search aria-hidden="true" />
+            Search
+          </Button>
+        </form>
+        <div className="flex flex-wrap gap-2 text-sm">
+          <Link
+            href="/clients/due"
+            className="inline-flex items-center gap-1.5 text-primary hover:underline"
+          >
+            <CalendarClock className="size-4" aria-hidden="true" />
+            Requalification due
+          </Link>
+          <span aria-hidden="true" className="text-border">
+            |
+          </span>
+          <a
+            href="/clients/export"
+            download
+            className="inline-flex items-center gap-1.5 text-primary hover:underline"
+          >
+            <Download className="size-4" aria-hidden="true" />
+            Download register
+          </a>
+        </div>
+      </div>
 
       {companies.length === 0 ? (
         search ? (

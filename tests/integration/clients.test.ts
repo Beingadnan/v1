@@ -155,7 +155,10 @@ describe("phase 2 exit test: Watson Pharma → Seawoods → BA → BE-WF-02", ()
 describe("rules", () => {
   it("refuses duplicate names, codes and equipment IDs with a readable message", async () => {
     await expect(createCompany(db, manager, { ...company, code: "WPL" }, req)).rejects.toThrow(
-      new ClientsError("A client with this name already exists."),
+      // Caught as a look-alike before the database's unique index is reached.
+      new ClientsError(
+        "Watson Pharma Pvt Limited (Watson) already exists and looks like the same company. If this really is a different company, tick “This is a different company” and save again.",
+      ),
     );
     await expect(
       createCompany(db, manager, { ...company, name: "Watson Two", code: "watson" }, req),

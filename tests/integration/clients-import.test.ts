@@ -238,7 +238,12 @@ describe("importing clients and equipment", () => {
       },
     ]);
     await applyImport(db, blobs, manager, id, req);
-    const [row] = await db.select().from(equipment).where(eq(equipment.code, "BE-WF-02"));
+    const [row] = await db
+      .select()
+      .from(equipment)
+      .where(
+        and(eq(equipment.code, "BE-WF-02"), eq(equipment.organisationId, manager.organisationId)),
+      );
     expect(row).toMatchObject({ defaultChannels: 12, make: "Blue Star" });
   });
 });
@@ -423,7 +428,10 @@ describe("problems", () => {
     await expect(applyImport(db, blobs, manager, id, req)).rejects.toThrow(
       "The file has 6 problems.",
     );
-    const [row] = await db.select().from(equipment).where(eq(equipment.code, "E-5"));
+    const [row] = await db
+      .select()
+      .from(equipment)
+      .where(and(eq(equipment.code, "E-5"), eq(equipment.organisationId, manager.organisationId)));
     expect(row).toBeUndefined();
   });
 
@@ -447,7 +455,15 @@ describe("problems", () => {
     two[3] = "QC-2";
     const id = await upload(await workbook([], [one, two]), "qc.xlsx");
     await applyImport(db, blobs, manager, id, req);
-    const qc = await db.select().from(clientDepartments).where(eq(clientDepartments.name, "QC"));
+    const qc = await db
+      .select()
+      .from(clientDepartments)
+      .where(
+        and(
+          eq(clientDepartments.name, "QC"),
+          eq(clientDepartments.organisationId, manager.organisationId),
+        ),
+      );
     expect(qc).toHaveLength(1);
   });
 });

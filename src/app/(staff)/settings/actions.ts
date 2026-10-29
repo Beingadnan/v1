@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { db } from "@/db/client";
 import { createSite, updateSettings, updateSite } from "@/domain/admin/settings-service";
+import { saveTypeDefaults } from "@/domain/clients/type-defaults-service";
 import { runAction, type ActionResult } from "@/lib/action-result";
 import { requireUser } from "@/lib/auth/dal";
 import { getRequestInfo } from "@/lib/request-info";
@@ -104,4 +105,39 @@ export async function updateSiteAction(_prev: unknown, formData: FormData): Prom
   }, "Site updated.");
   if (result.ok) revalidatePath("/settings");
   return result;
+}
+
+export async function saveTypeDefaultsAction(
+  _prev: unknown,
+  formData: FormData,
+): Promise<ActionResult> {
+  const actor = await requireUser();
+  const names = [
+    "setPointC",
+    "tempMinC",
+    "tempMaxC",
+    "rhMinPct",
+    "rhMaxPct",
+    "defaultChannels",
+    "readingIntervalMinutes",
+    "studyDurationHours",
+    "requalificationMonths",
+    "seasonalMapping",
+  ];
+  const result = await runAction(async () => {
+    const { changed } = await saveTypeDefaults(
+      db,
+      actor,
+      field(formData, "type"),
+      {
+        ...Object.fromEntries(names.map((n) => [n, field(formData, n)])),
+        cycles: formData.getAll("cycles").filter((c): c is string => typeof c === "string"),
+      },
+      await getRequestInfo(),
+    );
+    return changed;
+  });
+  if (!result.ok) return result;
+  revalidatePath("/settings");
+  return { ok: true, data: undefined, message: savedMessage(result.data) };
 }

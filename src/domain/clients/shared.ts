@@ -63,9 +63,12 @@ function findPgError(error: unknown): { code?: string; constraint?: string } | n
   return null;
 }
 
-type Plain = string | number | boolean | null;
+type Plain = string | number | boolean | null | readonly string[];
 
 function same(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return JSON.stringify(a ?? []) === JSON.stringify(b ?? []);
+  }
   const empty = (v: unknown) => v === null || v === undefined || v === "";
   if (empty(a) || empty(b)) return empty(a) && empty(b);
   // numeric columns come back as "-30.00"; compare them as numbers.

@@ -165,7 +165,17 @@ function addDataSheet(
 }
 
 /** The import template: instructions, an example, and the two sheets to fill. */
-export async function buildImportTemplate(): Promise<Buffer> {
+/** Rows to pre-fill, keyed by column key (export of an existing register). */
+export type TemplateRows = {
+  clients?: Partial<Record<ClientColumn, string | number>>[];
+  equipment?: Partial<Record<EquipmentColumn, string | number>>[];
+};
+
+/**
+ * The import template. With rows, it is an export of the register in the same
+ * layout, so people can edit it in Excel and import it back.
+ */
+export async function buildImportTemplate(rows: TemplateRows = {}): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "QTech";
 
@@ -216,9 +226,21 @@ export async function buildImportTemplate(): Promise<Buffer> {
   const clients = addDataSheet(workbook, SHEET_NAMES.clients, CLIENT_COLUMNS);
   const equipment = addDataSheet(workbook, SHEET_NAMES.equipment, EQUIPMENT_COLUMNS);
 
+  (rows.clients ?? []).forEach((row, i) => {
+    clients.getRow(2 + i).values = CLIENT_COLUMNS.map((c) => row[c.key] ?? "");
+  });
+  (rows.equipment ?? []).forEach((row, i) => {
+    equipment.getRow(2 + i).values = EQUIPMENT_COLUMNS.map((c) => row[c.key] ?? "");
+  });
+
   const postCalColumn = CLIENT_COLUMNS.findIndex((c) => c.key === "postCalRequired") + 1;
   const typeColumn = EQUIPMENT_COLUMNS.findIndex((c) => c.key === "type") + 1;
-  for (let r = 2; r <= 501; r += 1) {
+  const lastRow = Math.max(
+    501,
+    (rows.equipment?.length ?? 0) + 101,
+    (rows.clients?.length ?? 0) + 101,
+  );
+  for (let r = 2; r <= lastRow; r += 1) {
     clients.getCell(r, postCalColumn).dataValidation = {
       type: "list",
       allowBlank: true,

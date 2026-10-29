@@ -28,6 +28,7 @@ import {
 } from "../company-service";
 import { applyEquipmentChanges, EQUIPMENT_LABELS, insertEquipment } from "../equipment-service";
 import { ClientsError } from "../errors";
+import { getEffectiveTypeDefaults } from "../type-defaults-service";
 import { isUuid, rethrowUnique } from "../shared";
 import { planCounts, planImport, type ImportPlan, type Snapshot } from "./plan";
 import { readImportWorkbook } from "./workbook";
@@ -46,7 +47,8 @@ async function loadSnapshot(executor: DbExecutor, organisationId: string): Promi
       .where(eq(clientDepartments.organisationId, organisationId)),
     executor.select().from(equipment).where(eq(equipment.organisationId, organisationId)),
   ]);
-  return { companies, sites, departments, equipment: items };
+  const typeDefaults = await getEffectiveTypeDefaults(executor, organisationId);
+  return { companies, sites, departments, equipment: items, typeDefaults };
 }
 
 async function loadFile(db: Database, blobs: BlobStore, actor: SessionUser, fileId: string) {

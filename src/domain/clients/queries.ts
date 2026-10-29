@@ -1,9 +1,10 @@
 import "server-only";
 
-import { and, asc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
 
 import type { Database } from "@/db/client-factory";
 import {
+  auditLog,
   clientCompanies,
   clientContacts,
   clientDepartments,
@@ -159,4 +160,29 @@ export async function getEquipment(db: Database, actor: SessionUser, equipmentId
     .innerJoin(clientCompanies, eq(clientCompanies.id, equipment.companyId))
     .where(and(eq(equipment.id, equipmentId), eq(equipment.organisationId, actor.organisationId)));
   return row ?? null;
+}
+
+/** Who changed this equipment and when, newest first (from the audit trail). */
+export async function getEquipmentHistory(db: Database, actor: SessionUser, equipmentId: string) {
+  assertCan(actor, "clients.view");
+  if (!isUuid(equipmentId)) return [];
+  return db
+    .select({
+      id: auditLog.id,
+      occurredAt: auditLog.occurredAt,
+      summary: auditLog.summary,
+      reason: auditLog.reason,
+      actorName: users.name,
+    })
+    .from(auditLog)
+    .leftJoin(users, eq(users.id, auditLog.actorUserId))
+    .where(
+      and(
+        eq(auditLog.organisationId, actor.organisationId),
+        eq(auditLog.entityType, "equipment"),
+        eq(auditLog.entityId, equipmentId),
+      ),
+    )
+    .orderBy(desc(auditLog.id))
+    .limit(50);
 }

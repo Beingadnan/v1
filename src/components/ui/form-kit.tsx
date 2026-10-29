@@ -150,11 +150,13 @@ export function CheckboxField({
   label,
   hint,
   defaultChecked,
+  disabled,
 }: {
   name: string;
   label: string;
   hint?: string;
   defaultChecked?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <label htmlFor={name} className="flex items-start gap-3 rounded-md border border-border p-3">
@@ -163,6 +165,7 @@ export function CheckboxField({
         name={name}
         type="checkbox"
         defaultChecked={defaultChecked}
+        disabled={disabled}
         className="mt-0.5 size-4 accent-primary"
         aria-describedby={hint ? `${name}-desc` : undefined}
       />

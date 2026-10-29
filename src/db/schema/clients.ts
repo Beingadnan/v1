@@ -9,6 +9,7 @@ import {
   integer,
   numeric,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -17,11 +18,13 @@ import {
 } from "drizzle-orm/pg-core";
 
 import { EQUIPMENT_TYPES } from "@/domain/clients/equipment-types";
+import { STUDY_CYCLES } from "@/domain/clients/study-defaults";
 
 import { organisations } from "./organisations";
 import { users } from "./users";
 
 const typeList = sql.raw(EQUIPMENT_TYPES.map((t) => `'${t}'`).join(", "));
+const cycleArray = sql.raw(`array[${STUDY_CYCLES.map((c) => `'${c}'`).join(", ")}]::text[]`);
 
 /**
  * Tenant safety: every child row repeats organisation_id and points at its
@@ -208,6 +211,13 @@ export const equipment = pgTable(
     studyDurationHours: integer("study_duration_hours"),
     /** Overrides the company's requalification interval when set. */
     requalificationMonths: integer("requalification_months"),
+    /** Cycles each study of this equipment normally runs (empty, loaded, door open, power failure). */
+    cycles: text("cycles")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    /** Warehouses and stores affected by outside weather are mapped in summer and in winter (WHO). */
+    seasonalMapping: boolean("seasonal_mapping").notNull().default(false),
     /**
      * End date of the last study done before QTech (from old reports). Once
      * studies run in the app, the latest signed study takes over.
@@ -235,6 +245,7 @@ export const equipment = pgTable(
     }).onDelete("restrict"),
     uniqueIndex("equipment_company_code_key").on(t.companyId, sql`lower(${t.code})`),
     index("equipment_site_idx").on(t.siteId),
+    check("equipment_cycles_check", sql`${t.cycles} <@ ${cycleArray}`),
     check("equipment_type_check", sql`${t.type} in (${typeList})`),
     check(
       "equipment_temp_limits_check",
@@ -248,6 +259,43 @@ export const equipment = pgTable(
       "equipment_counts_check",
       sql`(${t.defaultChannels} is null or ${t.defaultChannels} between 1 and 500) and (${t.readingIntervalMinutes} is null or ${t.readingIntervalMinutes} between 1 and 1440) and (${t.studyDurationHours} is null or ${t.studyDurationHours} between 1 and 2160) and (${t.requalificationMonths} is null or ${t.requalificationMonths} between 1 and 60)`,
     ),
+  ],
+);
+
+/**
+ * QA Tech's own defaults per equipment type (Settings). A missing row means
+ * the built-in defaults in src/domain/clients/study-defaults.ts apply.
+ */
+export const equipmentTypeDefaults = pgTable(
+  "equipment_type_defaults",
+  {
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id, { onDelete: "restrict" }),
+    type: text("type").notNull(),
+    setPointC: numeric("set_point_c", { precision: 6, scale: 2 }),
+    tempMinC: numeric("temp_min_c", { precision: 6, scale: 2 }),
+    tempMaxC: numeric("temp_max_c", { precision: 6, scale: 2 }),
+    rhMinPct: numeric("rh_min_pct", { precision: 5, scale: 1 }),
+    rhMaxPct: numeric("rh_max_pct", { precision: 5, scale: 1 }),
+    defaultChannels: integer("default_channels"),
+    readingIntervalMinutes: integer("reading_interval_minutes"),
+    studyDurationHours: integer("study_duration_hours"),
+    requalificationMonths: integer("requalification_months"),
+    cycles: text("cycles")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    seasonalMapping: boolean("seasonal_mapping").notNull().default(false),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedByUserId: uuid("updated_by_user_id").references((): AnyPgColumn => users.id, {
+      onDelete: "restrict",
+    }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.organisationId, t.type] }),
+    check("equipment_type_defaults_type_check", sql`${t.type} in (${typeList})`),
+    check("equipment_type_defaults_cycles_check", sql`${t.cycles} <@ ${cycleArray}`),
   ],
 );
 

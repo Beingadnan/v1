@@ -5,10 +5,14 @@
 import { z } from "zod";
 
 import { EQUIPMENT_TYPES } from "./equipment-types";
+import { checkGstin } from "./gstin";
 import { checkReportNumberFormat } from "./report-number";
+import { STUDY_CYCLES } from "./study-defaults";
 
-const text = (max: number) => z.string().trim().max(max, `Use at most ${max} characters.`);
-const required = (max: number, message: string) => text(max).min(1, message);
+const bounded = (max: number) => z.string().trim().max(max, `Use at most ${max} characters.`);
+/** Optional text: a missing value is the same as an empty one. */
+const text = (max: number) => bounded(max).default("");
+const required = (max: number, message: string) => bounded(max).min(1, message);
 
 const blankToNull = (value: unknown) =>
   value === undefined || value === null || (typeof value === "string" && value.trim() === "")
@@ -44,14 +48,38 @@ export const yesNo = z.preprocess((value) => {
   return ["on", "true", "yes", "y", "1"].includes(value.trim().toLowerCase());
 }, z.boolean());
 
-export const gstinSchema = z.union([
-  z.literal(""),
+/** Empty, or a GSTIN whose state code and check character are right. */
+export const gstinSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .superRefine((value, ctx) => {
+    if (value === "") return;
+    const check = checkGstin(value);
+    if (!check.ok) ctx.addIssue({ code: "custom", message: check.message });
+  });
+
+/** Checkbox groups and spreadsheet lists ("Empty, Door open") → known cycle ids. */
+export const cyclesSchema = z.preprocess(
+  (value) => {
+    const items = Array.isArray(value)
+      ? value
+      : typeof value === "string" && value.trim() !== ""
+        ? value.split(/[,;\n]+/)
+        : [];
+    return items.map((item) =>
+      String(item)
+        .trim()
+        .toLowerCase()
+        .replace(/[\s-]+/g, "_"),
+    );
+  },
   z
-    .string()
-    .trim()
-    .toUpperCase()
-    .regex(/^[0-9]{2}[A-Z0-9]{10}[0-9A-Z]{3}$/, "A GSTIN has 15 letters and digits."),
-]);
+    .array(
+      z.enum(STUDY_CYCLES, { message: "Cycles can be Empty, Loaded, Door open or Power failure." }),
+    )
+    .transform((list) => STUDY_CYCLES.filter((c) => list.includes(c))),
+);
 
 /** Codes go into report numbers: letters, digits, spaces, - _ . & ( ). */
 const code = (label: string) =>
@@ -79,14 +107,21 @@ export const companySchema = z.object({
 });
 export type CompanyInput = z.input<typeof companySchema>;
 
-export const clientSiteSchema = z.object({
-  name: required(100, "Enter the site name."),
-  code: code("site code"),
-  address: text(500),
-  city: text(100),
-  state: text(100),
-  gstin: gstinSchema,
-});
+export const clientSiteSchema = z
+  .object({
+    name: required(100, "Enter the site name."),
+    code: code("site code"),
+    address: text(500),
+    city: text(100),
+    state: text(100),
+    gstin: gstinSchema,
+  })
+  // The GSTIN's first two digits name the state: fill it in when left empty.
+  .transform((site) => {
+    if (site.state || !site.gstin) return site;
+    const check = checkGstin(site.gstin);
+    return check.ok ? { ...site, state: check.state } : site;
+  });
 export type ClientSiteInput = z.input<typeof clientSiteSchema>;
 
 export const departmentSchema = z.object({
@@ -115,69 +150,101 @@ const isoDate = z.preprocess(
     .nullable(),
 );
 
-export const equipmentSchema = z
+const equipmentFields = {
+  siteId: z.string().uuid("Choose the site."),
+  departmentId: z.preprocess(blankToNull, z.string().uuid().nullable()),
+  code: required(60, "Enter the equipment ID.").regex(
+    /^[A-Za-z0-9][A-Za-z0-9 ._/()-]*$/,
+    "The equipment ID can use letters, numbers, spaces and - _ . / ( ) only.",
+  ),
+  name: required(200, "Enter the equipment name."),
+  type: z.enum(EQUIPMENT_TYPES, { message: "Choose the equipment type." }),
+  location: text(200),
+  make: text(100),
+  model: text(100),
+  serialNo: text(100),
+  lengthM: optionalNumber("Length", 0.01, 10000),
+  widthM: optionalNumber("Width", 0.01, 10000),
+  heightM: optionalNumber("Height", 0.01, 1000),
+  setPointC: optionalNumber("Set point", -273, 1000),
+  tempMinC: optionalNumber("Lowest temperature", -273, 1000),
+  tempMaxC: optionalNumber("Highest temperature", -273, 1000),
+  rhMinPct: optionalNumber("Lowest RH", 0, 100),
+  rhMaxPct: optionalNumber("Highest RH", 0, 100),
+  defaultChannels: optionalInteger("Number of loggers", 1, 500),
+  readingIntervalMinutes: optionalInteger("Reading interval", 1, 1440),
+  studyDurationHours: optionalInteger("Study duration", 1, 2160),
+  requalificationMonths: optionalInteger("Requalification interval", 1, 60),
+  lastStudyOn: isoDate,
+  cycles: cyclesSchema,
+  seasonalMapping: yesNo,
+  notes: text(2000),
+};
+
+type Limits = {
+  setPointC: number | null;
+  tempMinC: number | null;
+  tempMaxC: number | null;
+  rhMinPct: number | null;
+  rhMaxPct: number | null;
+};
+
+/** Limits the right way round and the set point inside them. Shared with type defaults. */
+export function checkLimits(v: Limits, ctx: z.RefinementCtx): void {
+  if (v.tempMinC !== null && v.tempMaxC !== null && v.tempMinC >= v.tempMaxC) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["tempMaxC"],
+      message: "The highest temperature must be above the lowest.",
+    });
+  }
+  if (v.rhMinPct !== null && v.rhMaxPct !== null && v.rhMinPct >= v.rhMaxPct) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["rhMaxPct"],
+      message: "The highest RH must be above the lowest.",
+    });
+  }
+  if (
+    v.setPointC !== null &&
+    ((v.tempMinC !== null && v.setPointC < v.tempMinC) ||
+      (v.tempMaxC !== null && v.setPointC > v.tempMaxC))
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["setPointC"],
+      message: "The set point is outside the acceptance limits.",
+    });
+  }
+}
+
+export const equipmentSchema = z.object(equipmentFields).superRefine((v, ctx) => {
+  checkLimits(v, ctx);
+  if (v.lastStudyOn && v.lastStudyOn > new Date().toISOString().slice(0, 10)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["lastStudyOn"],
+      message: "The last study can't be in the future.",
+    });
+  }
+});
+
+/** Per-type defaults (Settings): the study fields of equipment, same rules. */
+export const typeDefaultsSchema = z
   .object({
-    siteId: z.string().uuid("Choose the site."),
-    departmentId: z.preprocess(blankToNull, z.string().uuid().nullable()),
-    code: required(60, "Enter the equipment ID.").regex(
-      /^[A-Za-z0-9][A-Za-z0-9 ._/()-]*$/,
-      "The equipment ID can use letters, numbers, spaces and - _ . / ( ) only.",
-    ),
-    name: required(200, "Enter the equipment name."),
-    type: z.enum(EQUIPMENT_TYPES, { message: "Choose the equipment type." }),
-    location: text(200),
-    make: text(100),
-    model: text(100),
-    serialNo: text(100),
-    lengthM: optionalNumber("Length", 0.01, 10000),
-    widthM: optionalNumber("Width", 0.01, 10000),
-    heightM: optionalNumber("Height", 0.01, 1000),
-    setPointC: optionalNumber("Set point", -273, 1000),
-    tempMinC: optionalNumber("Lowest temperature", -273, 1000),
-    tempMaxC: optionalNumber("Highest temperature", -273, 1000),
-    rhMinPct: optionalNumber("Lowest RH", 0, 100),
-    rhMaxPct: optionalNumber("Highest RH", 0, 100),
-    defaultChannels: optionalInteger("Number of loggers", 1, 500),
-    readingIntervalMinutes: optionalInteger("Reading interval", 1, 1440),
-    studyDurationHours: optionalInteger("Study duration", 1, 2160),
-    requalificationMonths: optionalInteger("Requalification interval", 1, 60),
-    lastStudyOn: isoDate,
-    notes: text(2000),
+    setPointC: equipmentFields.setPointC,
+    tempMinC: equipmentFields.tempMinC,
+    tempMaxC: equipmentFields.tempMaxC,
+    rhMinPct: equipmentFields.rhMinPct,
+    rhMaxPct: equipmentFields.rhMaxPct,
+    defaultChannels: equipmentFields.defaultChannels,
+    readingIntervalMinutes: equipmentFields.readingIntervalMinutes,
+    studyDurationHours: equipmentFields.studyDurationHours,
+    requalificationMonths: equipmentFields.requalificationMonths,
+    cycles: equipmentFields.cycles,
+    seasonalMapping: equipmentFields.seasonalMapping,
   })
-  .superRefine((v, ctx) => {
-    if (v.tempMinC !== null && v.tempMaxC !== null && v.tempMinC >= v.tempMaxC) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["tempMaxC"],
-        message: "The highest temperature must be above the lowest.",
-      });
-    }
-    if (v.rhMinPct !== null && v.rhMaxPct !== null && v.rhMinPct >= v.rhMaxPct) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["rhMaxPct"],
-        message: "The highest RH must be above the lowest.",
-      });
-    }
-    if (
-      v.setPointC !== null &&
-      ((v.tempMinC !== null && v.setPointC < v.tempMinC) ||
-        (v.tempMaxC !== null && v.setPointC > v.tempMaxC))
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["setPointC"],
-        message: "The set point is outside the acceptance limits.",
-      });
-    }
-    if (v.lastStudyOn && v.lastStudyOn > new Date().toISOString().slice(0, 10)) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["lastStudyOn"],
-        message: "The last study can't be in the future.",
-      });
-    }
-  });
+  .superRefine(checkLimits);
 /** Raw form or spreadsheet values; the schema decides what is acceptable. */
-export type EquipmentInput = { [K in keyof z.input<typeof equipmentSchema>]: unknown };
+export type EquipmentInput = { [K in keyof z.input<typeof equipmentSchema>]?: unknown };
 export type EquipmentValues = z.output<typeof equipmentSchema>;

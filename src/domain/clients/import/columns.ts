@@ -146,6 +146,20 @@ export const EQUIPMENT_COLUMNS = [
     aliases: ["last study", "mapping end date", "last mapping date"],
     note: "Date the last study ended, e.g. 23.05.2026",
   },
+  {
+    key: "cycles",
+    header: "Study cycles",
+    width: 26,
+    aliases: ["cycles", "cycle type"],
+    note: "Any of: Empty, Loaded, Door open, Power failure (comma separated). Empty uses the type's defaults.",
+  },
+  {
+    key: "seasonalMapping",
+    header: "Summer and winter mapping",
+    width: 14,
+    aliases: ["seasonal mapping", "seasonal"],
+    note: "Yes for warehouses and stores affected by outside weather",
+  },
   { key: "notes", header: "Notes", width: 24 },
 ] as const satisfies readonly ColumnSpec[];
 

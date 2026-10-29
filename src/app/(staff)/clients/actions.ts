@@ -95,6 +95,7 @@ export async function createCompanyAction(
       actor,
       {
         ...fields(formData, COMPANY_FIELDS),
+        allowSimilar: field(formData, "allowSimilar"),
         // A first site is optional; its code defaults to its name.
         firstSite: siteName
           ? {
@@ -229,7 +230,11 @@ export async function saveEquipmentAction(
   const actor = await requireUser();
   const companyId = field(formData, "companyId");
   const equipmentId = field(formData, "equipmentId");
-  const values = fields(formData, EQUIPMENT_FIELDS);
+  const values = {
+    ...fields(formData, EQUIPMENT_FIELDS),
+    cycles: formData.getAll("cycles").filter((c): c is string => typeof c === "string"),
+    seasonalMapping: field(formData, "seasonalMapping"),
+  };
   const result = await runAction(async () => {
     if (equipmentId) {
       const { changed } = await updateEquipment(

@@ -14,7 +14,13 @@
  * - Nothing is applied while any row has an error.
  */
 import { DEFAULT_REPORT_NUMBER_FORMAT } from "../report-number";
-import { equipmentTypeFromText, EQUIPMENT_TYPE_INFO, EQUIPMENT_TYPES } from "../equipment-types";
+import {
+  equipmentTypeFromText,
+  EQUIPMENT_TYPE_INFO,
+  EQUIPMENT_TYPES,
+  type EquipmentType,
+} from "../equipment-types";
+import type { TypeDefaults } from "../study-defaults";
 import { clientSiteSchema, companySchema, equipmentSchema, type EquipmentValues } from "../schemas";
 import type { ClientColumn, EquipmentColumn } from "./columns";
 
@@ -55,6 +61,8 @@ export type Snapshot = {
   sites: ExistingSite[];
   departments: ExistingDepartment[];
   equipment: ExistingEquipment[];
+  /** Effective defaults per type (Settings, else built-in); fill blank cells of new equipment. */
+  typeDefaults?: Partial<Record<EquipmentType, TypeDefaults>>;
 };
 
 export type RowError = { sheet: "Clients" | "Equipment"; row: number; message: string };
@@ -109,6 +117,9 @@ function parseYesNo(value: string): boolean | null {
 }
 
 function same(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return JSON.stringify(a ?? []) === JSON.stringify(b ?? []);
+  }
   const empty = (v: unknown) => v === null || v === undefined || v === "";
   if (empty(a) || empty(b)) return empty(a) && empty(b);
   if (typeof a === "number" || typeof b === "number") return Number(a) === Number(b);
@@ -192,11 +203,42 @@ const EQUIPMENT_VALUE_FIELDS = [
   "studyDurationHours",
   "requalificationMonths",
   "lastStudyOn",
+  "cycles",
+  "seasonalMapping",
   "notes",
 ] as const;
 
 const pick = <T extends Record<string, unknown>, K extends readonly (keyof T)[]>(obj: T, keys: K) =>
   Object.fromEntries(keys.map((k) => [k, obj[k]])) as Pick<T, K[number]>;
+
+/**
+ * Blank cells of a new item start from its type's defaults. Limits come as a
+ * set: if the row gives any temperature value (set point, lowest, highest),
+ * none of the default temperature values are used; the same for RH.
+ */
+function newEquipmentBase(
+  defaults: TypeDefaults | undefined,
+  provided: Record<string, unknown>,
+): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    location: "",
+    make: "",
+    model: "",
+    serialNo: "",
+    notes: "",
+  };
+  if (!defaults) return base;
+  const rowHasTemp = ["setPointC", "tempMinC", "tempMaxC"].some((k) => k in provided);
+  const rowHasRh = ["rhMinPct", "rhMaxPct"].some((k) => k in provided);
+  const { cycles, seasonalMapping, ...numbers } = defaults;
+  for (const [key, value] of Object.entries(numbers)) {
+    if (value === null) continue;
+    if (rowHasTemp && ["setPointC", "tempMinC", "tempMaxC"].includes(key)) continue;
+    if (rowHasRh && ["rhMinPct", "rhMaxPct"].includes(key)) continue;
+    base[key] = value;
+  }
+  return { ...base, cycles, seasonalMapping };
+}
 
 export function planImport(
   sheets: { clients: SheetRow<ClientColumn>[]; equipment: SheetRow<EquipmentColumn>[] },
@@ -459,7 +501,10 @@ export function planImport(
     if (type) provided.type = type;
     const base: Record<string, unknown> = existing
       ? Object.fromEntries(EQUIPMENT_VALUE_FIELDS.map((f) => [f, existing[f] ?? ""]))
-      : { location: "", make: "", model: "", serialNo: "", notes: "" };
+      : newEquipmentBase(
+          type ? snapshot.typeDefaults?.[type as EquipmentType] : undefined,
+          provided,
+        );
     const parsed = equipmentSchema.safeParse({
       ...base,
       ...provided,

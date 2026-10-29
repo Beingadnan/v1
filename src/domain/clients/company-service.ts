@@ -20,6 +20,7 @@ import type { SessionUser } from "@/domain/auth/session-service";
 import { recordAudit } from "@/lib/audit";
 
 import { ClientsError } from "./errors";
+import { companyNameKey } from "./names";
 import {
   clientSiteSchema,
   companySchema,
@@ -80,7 +81,7 @@ async function guarded<T>(messages: Record<string, string>, work: () => Promise<
 export async function createCompany(
   db: Database,
   actor: SessionUser,
-  input: CompanyInput & { firstSite?: ClientSiteInput | null },
+  input: CompanyInput & { firstSite?: ClientSiteInput | null; allowSimilar?: unknown },
   request: RequestInfo,
 ): Promise<ClientCompany> {
   assertCan(actor, "clients.manage");
@@ -89,6 +90,18 @@ export async function createCompany(
 
   return guarded({ ...COMPANY_UNIQUE, ...SITE_UNIQUE }, () =>
     db.transaction(async (tx) => {
+      if (!yesNo.parse(input.allowSimilar ?? false)) {
+        const existing = await tx
+          .select({ name: clientCompanies.name, code: clientCompanies.code })
+          .from(clientCompanies)
+          .where(eq(clientCompanies.organisationId, actor.organisationId));
+        const twin = existing.find((c) => companyNameKey(c.name) === companyNameKey(values.name));
+        if (twin) {
+          throw new ClientsError(
+            `${twin.name} (${twin.code}) already exists and looks like the same company. If this really is a different company, tick “This is a different company” and save again.`,
+          );
+        }
+      }
       const company = await insertCompany(tx, actor, values, request);
       if (firstSite) await insertSite(tx, actor, company, firstSite, request);
       return company;

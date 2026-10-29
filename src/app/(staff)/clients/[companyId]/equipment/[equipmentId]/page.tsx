@@ -1,15 +1,17 @@
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, Copy } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { db } from "@/db/client";
 import { can } from "@/domain/auth/permissions";
 import { EQUIPMENT_TYPE_INFO, isEquipmentType } from "@/domain/clients/equipment-types";
-import { getCompany, getEquipment } from "@/domain/clients/queries";
+import { getCompany, getEquipment, getEquipmentHistory } from "@/domain/clients/queries";
+import { getEffectiveTypeDefaults } from "@/domain/clients/type-defaults-service";
 import { requirePermission } from "@/lib/auth/dal";
-import { formatDate } from "@/lib/format";
+import { formatDate, formatDateTime } from "@/lib/format";
 
 import { DueBadge } from "../../../due-badge";
 import { EquipmentForm, RetireEquipmentButton } from "../equipment-form";
@@ -29,6 +31,7 @@ export default async function EquipmentPage({
   const data = await getCompany(db, actor, companyId);
   if (!data) notFound();
   const { equipment: item, company, nextDue } = found;
+  const history = await getEquipmentHistory(db, actor, item.id);
   const canManage = can(actor, "clients.manage");
   if (!isEquipmentType(item.type)) throw new Error(`Unknown equipment type ${item.type}`);
 
@@ -59,12 +62,20 @@ export default async function EquipmentPage({
           }`}
           action={
             canManage ? (
-              <RetireEquipmentButton
-                companyId={company.id}
-                equipmentId={item.id}
-                code={item.code}
-                active={item.active}
-              />
+              <div className="flex flex-wrap gap-2">
+                <Button variant="secondary" asChild>
+                  <Link href={`/clients/${company.id}/equipment/new?from=${item.id}`}>
+                    <Copy aria-hidden="true" />
+                    Add similar
+                  </Link>
+                </Button>
+                <RetireEquipmentButton
+                  companyId={company.id}
+                  equipmentId={item.id}
+                  code={item.code}
+                  active={item.active}
+                />
+              </div>
             ) : undefined
           }
         />
@@ -86,6 +97,7 @@ export default async function EquipmentPage({
         sites={sites}
         departments={departments}
         readOnly={!canManage}
+        typeDefaults={await getEffectiveTypeDefaults(db, actor.organisationId)}
         values={{
           id: item.id,
           siteId: item.siteId,
@@ -110,9 +122,29 @@ export default async function EquipmentPage({
           studyDurationHours: plain(item.studyDurationHours),
           requalificationMonths: plain(item.requalificationMonths),
           lastStudyOn: item.lastStudyOn ?? "",
+          cycles: item.cycles,
+          seasonalMapping: item.seasonalMapping,
           notes: item.notes,
         }}
       />
+      <section className="flex flex-col gap-3">
+        <h2 className="text-lg font-semibold">History</h2>
+        {history.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No changes recorded yet.</p>
+        ) : (
+          <ol className="flex flex-col gap-3 border-l-2 border-border pl-4">
+            {history.map((event) => (
+              <li key={event.id.toString()} className="text-sm">
+                <p>{event.summary}</p>
+                <p className="text-xs text-muted-foreground">
+                  {formatDateTime(event.occurredAt)}
+                  {event.reason ? ` · Reason: ${event.reason}` : ""}
+                </p>
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
     </div>
   );
 }

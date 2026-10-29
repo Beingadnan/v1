@@ -43,6 +43,13 @@
       "when": 1793241452792,
       "tag": "0005_clients_equipment",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793244570230,
+      "tag": "0006_equipment_defaults_cycles",
+      "breakpoints": true
     }
   ]
 }

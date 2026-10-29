@@ -2,9 +2,11 @@ import { PageHeader } from "@/components/ui/page-header";
 import { db } from "@/db/client";
 import { getSettings } from "@/domain/admin/queries";
 import { can } from "@/domain/auth/permissions";
+import { getEffectiveTypeDefaults } from "@/domain/clients/type-defaults-service";
 import { requirePermission } from "@/lib/auth/dal";
 
 import { CalculationsForm, DetailsForm, NumberFormatsForm, SitesSection } from "./settings-forms";
+import { TypeDefaultsSection } from "./type-defaults";
 
 export const metadata = { title: "Settings" };
 
@@ -12,6 +14,7 @@ export default async function SettingsPage() {
   const actor = await requirePermission("settings.view");
   const canEdit = can(actor, "settings.manage");
   const { settings, sites } = await getSettings(db, actor);
+  const typeDefaults = await getEffectiveTypeDefaults(db, actor.organisationId);
 
   if (!settings) {
     return (
@@ -60,6 +63,7 @@ export default async function SettingsPage() {
           certificateNumberFormat: settings.certificateNumberFormat,
         }}
       />
+      <TypeDefaultsSection canEdit={canEdit} defaults={typeDefaults} />
       <CalculationsForm
         canEdit={canEdit}
         values={{

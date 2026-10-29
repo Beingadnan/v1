@@ -226,3 +226,63 @@ test("a client QA user is invited from the client's page and only sees the clien
   expect(errors).toEqual([]);
   await context.close();
 });
+
+test("choosing a type fills its usual values, and 'Add similar' copies an item", async ({
+  page,
+  isMobile,
+}) => {
+  test.skip(isMobile, "Desktop task.");
+  const errors = trackErrors(page);
+  await signIn(page, "admin");
+  await page.goto("/clients");
+  await page.getByRole("button", { name: "Add client" }).first().click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Company name").fill("Glenmark Pharmaceuticals");
+  await dialog.getByLabel("Short name").fill("Glenmark");
+  await dialog.getByLabel("Site name").fill("Sinnar");
+  await dialog.getByRole("button", { name: "Add client" }).click();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Glenmark Pharmaceuticals" }),
+  ).toBeVisible();
+
+  await page.getByRole("link", { name: "Add equipment" }).first().click();
+  await expect(page.getByRole("heading", { level: 1, name: "Add equipment" })).toBeVisible();
+  await page.getByLabel("Equipment ID").fill("RF-01");
+  await page.getByLabel("Equipment name").fill("Vaccine refrigerator 1");
+  await page.getByLabel("Type").selectOption({ label: "Refrigerator" });
+  await expect(
+    page.getByText(/^Filled \d+ empty fields from the refrigerator defaults/),
+  ).toBeVisible();
+  await expect(page.getByLabel("Lowest allowed")).toHaveValue("2");
+  await expect(page.getByLabel("Highest allowed")).toHaveValue("8");
+  await expect(page.getByRole("checkbox", { name: "Power failure" })).toBeChecked();
+  // The logger count can come from the size.
+  await page.getByLabel("Length").fill("0.7");
+  await page.getByLabel("Width").fill("0.7");
+  await page.getByLabel("Height").fill("1.8");
+  await expect(page.getByText(/Suggested 9: 9 for up to 2 m³/)).toBeVisible();
+  await page.getByRole("button", { name: "Add equipment" }).click();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "RF-01 · Vaccine refrigerator 1" }),
+  ).toBeVisible();
+  await expect(page.getByText(/added RF-01 \(Vaccine refrigerator 1\)/)).toBeVisible();
+
+  await page.getByRole("link", { name: "Add similar" }).click();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Add equipment like RF-01" }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Equipment ID")).toHaveValue("");
+  await expect(page.getByLabel("Highest allowed")).toHaveValue("8");
+  await page.getByLabel("Equipment ID").fill("RF-02");
+  await page.getByLabel("Equipment name").fill("Vaccine refrigerator 2");
+  await page.getByRole("button", { name: "Add equipment" }).click();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "RF-02 · Vaccine refrigerator 2" }),
+  ).toBeVisible();
+
+  await page.goto("/settings");
+  await expect(page.getByRole("heading", { name: "Equipment defaults" })).toBeVisible();
+  await page.goto("/clients/due?days=180&unknown=1");
+  await expect(page.getByRole("link", { name: "RF-02" })).toBeVisible();
+  expect(errors).toEqual([]);
+});

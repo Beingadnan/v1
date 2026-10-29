@@ -8,6 +8,7 @@ import { organisationSettings, sites, type Site } from "@/db/schema";
 import { assertCan } from "@/domain/auth/permissions";
 import type { RequestInfo } from "@/domain/auth/policy";
 import type { SessionUser } from "@/domain/auth/session-service";
+import { gstinSchema } from "@/domain/clients/schemas";
 import { checkNumberFormat } from "@/domain/numbering/format";
 import { recordAudit } from "@/lib/audit";
 
@@ -27,14 +28,7 @@ export const organisationDetailsSchema = z.object({
   phone: text(100),
   email: z.union([z.literal(""), z.string().trim().email("Enter a valid email address.")]),
   website: text(200),
-  gstin: z.union([
-    z.literal(""),
-    z
-      .string()
-      .trim()
-      .toUpperCase()
-      .regex(/^[0-9]{2}[A-Z0-9]{10}[0-9A-Z]{3}$/, "A GSTIN has 15 letters and digits."),
-  ]),
+  gstin: gstinSchema,
 });
 
 export const numberFormatsSchema = z

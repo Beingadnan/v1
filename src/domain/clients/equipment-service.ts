@@ -47,6 +47,8 @@ export const EQUIPMENT_LABELS: Record<string, string> = {
   studyDurationHours: "study duration",
   requalificationMonths: "requalification interval",
   lastStudyOn: "last study date",
+  cycles: "study cycles",
+  seasonalMapping: "summer and winter mapping",
   notes: "notes",
   active: "status",
 };
