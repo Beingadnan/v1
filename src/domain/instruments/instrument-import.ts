@@ -1,16 +1,27 @@
 /**
- * Reading QA Tech's existing instrument lists ("All site portable datalogger
- * list", site logger lists) and planning what an import would add. Pure: no
- * database, so it is unit-tested against the real layouts.
+ * Reading QA Tech's existing instrument files and planning what an import
+ * would add. Pure: no database, so it is unit-tested against the real layouts.
  *
- * The lists differ from sheet to sheet, so columns are found by their header
- * names wherever they are. A certificate number written only on a batch's
- * first row is carried down to the rows below with the same calibration date.
+ * Three kinds of file are read, sheet by sheet:
+ * - lists with columns (ID No., Serial No., Certificate No., dates…), found by
+ *   their headings in any order; a batch's certificate number written only on
+ *   its first row is carried down to the rows below with the same date;
+ * - bare serial lists (a delivery note, "Data logger details"): serials with
+ *   no QA Tech ID, which can be given IDs from a prefix;
+ * - FT-05 certificate workbooks, one certificate per sheet with every reading
+ *   (see certificate-workbook.ts); a certificate spread over several sheets is
+ *   joined back into one.
  */
 import ExcelJS from "exceljs";
 
 import { cellText, dateText } from "@/domain/clients/import/workbook";
 
+import { firstCodes, lastCodeIn, nextCodes } from "./codes";
+import {
+  isCertificateSheet,
+  readCertificateSheet,
+  type WorkbookCertificate,
+} from "./certificate-workbook";
 import {
   INSTRUMENT_TYPE_INFO,
   instrumentTypeFromText,
@@ -38,8 +49,9 @@ const COLUMNS: { key: keyof ListRow; match: RegExp }[] = [
   { key: "name", match: /^(instrument|equipment) ?name|^instrument$|^description/ },
   { key: "make", match: /^make/ },
   { key: "model", match: /^model/ },
-  { key: "code", match: /^(id|i\.d\.?) ?(no|number)|^instrument id|^id$/ },
-  { key: "serialNo", match: /^serial|^s\/?n\b|^sr\.? ?no\.? of instrument/ },
+  { key: "code", match: /^(id|i\.d\.?) ?(no|number)|^instrument id|^id$|^qa ?tech id/ },
+  // "Sr. No." alone is a row number; "Data Logger Sr.No." and "Serial no" are serials.
+  { key: "serialNo", match: /serial|^s\/?n\b|logger sr\.? ?no|^sr\.? ?no\.? of instrument/ },
   { key: "certificateNo", match: /^cert(ificate)? ?(no|number)/ },
   { key: "rangeText", match: /^range/ },
   { key: "calibratedOn", match: /^cal(ibration|\.)? ?date|^date of cal/ },
@@ -47,13 +59,146 @@ const COLUMNS: { key: keyof ListRow; match: RegExp }[] = [
 ];
 
 const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
+const SERIAL = /^\d{6,12}$/;
 
 function isoOrNull(text: string): string | null {
   const t = dateText(text.trim());
   return /^\d{4}-\d{2}-\d{2}$/.test(t) && !Number.isNaN(Date.parse(`${t}T00:00:00Z`)) ? t : null;
 }
 
-export type ReadResult = { rows: ListRow[]; problems: string[] };
+export type ReadResult = {
+  rows: ListRow[];
+  workbookCertificates: WorkbookCertificate[];
+  problems: string[];
+};
+
+/** Header-less sheet: the column that is mostly unique 6–12 digit numbers holds serials. */
+function guessSerialColumn(sheet: ExcelJS.Worksheet): { col: number; firstRow: number } | null {
+  const counts = new Map<number, { serials: Set<string>; filled: number; firstRow: number }>();
+  for (let r = 1; r <= Math.min(80, sheet.rowCount); r++) {
+    const values = sheet.getRow(r).values as ExcelJS.CellValue[];
+    values.forEach((v, c) => {
+      const text = cellText(v ?? null);
+      if (!text) return;
+      const entry = counts.get(c) ?? { serials: new Set<string>(), filled: 0, firstRow: 0 };
+      entry.filled += 1;
+      if (SERIAL.test(text)) {
+        entry.serials.add(text);
+        if (!entry.firstRow) entry.firstRow = r;
+      }
+      counts.set(c, entry);
+    });
+  }
+  let best: { col: number; firstRow: number; n: number } | null = null;
+  for (const [col, e] of counts) {
+    if (
+      e.serials.size >= 3 &&
+      e.serials.size >= 0.8 * e.filled - 2 &&
+      (!best || e.serials.size > best.n)
+    ) {
+      best = { col, firstRow: e.firstRow, n: e.serials.size };
+    }
+  }
+  return best ? { col: best.col, firstRow: best.firstRow } : null;
+}
+
+function readListSheet(sheet: ExcelJS.Worksheet, problems: string[]): ListRow[] {
+  // Header: the first of the top ten rows that names an ID or serial column.
+  let header = 0;
+  const at: Partial<Record<keyof ListRow, number>> = {};
+  for (let r = 1; r <= Math.min(10, sheet.rowCount) && !header; r++) {
+    const values = sheet.getRow(r).values as ExcelJS.CellValue[];
+    const found: Partial<Record<keyof ListRow, number>> = {};
+    values.forEach((v, i) => {
+      const text = norm(cellText(v ?? null));
+      if (!text || /^sr\.? ?no\.?$/.test(text)) return;
+      const col = COLUMNS.find((c) => c.match.test(text) && found[c.key] === undefined);
+      if (col) found[col.key] = i;
+    });
+    if (found.code !== undefined || found.serialNo !== undefined) {
+      header = r;
+      Object.assign(at, found);
+    }
+  }
+  if (!header) {
+    const guess = guessSerialColumn(sheet);
+    if (!guess) {
+      if (sheet.rowCount > 0) {
+        problems.push(`Sheet “${sheet.name}”: no ID or serial number column found; skipped.`);
+      }
+      return [];
+    }
+    at.serialNo = guess.col;
+    header = guess.firstRow - 1;
+    const letter = String.fromCharCode(64 + guess.col);
+    problems.push(
+      `Sheet “${sheet.name}” has no column headings: column ${letter} was read as serial numbers.`,
+    );
+  }
+
+  const rows: ListRow[] = [];
+  let lastCert = "";
+  let lastDate: string | null = null;
+  for (let r = header + 1; r <= sheet.rowCount; r++) {
+    const values = sheet.getRow(r).values as ExcelJS.CellValue[];
+    const get = (key: keyof ListRow) =>
+      at[key] === undefined ? "" : cellText(values[at[key]!] ?? null);
+    const row: ListRow = {
+      sheet: sheet.name,
+      row: r,
+      name: get("name"),
+      make: get("make"),
+      model: get("model"),
+      code: get("code"),
+      serialNo: get("serialNo"),
+      certificateNo: get("certificateNo"),
+      rangeText: get("rangeText").replace(/\s+/g, " "),
+      calibratedOn: isoOrNull(get("calibratedOn")),
+      validUntil: isoOrNull(get("validUntil")),
+      carried: false,
+    };
+    if (!row.code && !row.serialNo) continue; // blank or a note line
+    // A header-less guess only takes real serials, not stray numbers below the list.
+    if (at.code === undefined && !SERIAL.test(row.serialNo)) continue;
+    const dueText = get("validUntil");
+    if (dueText && !row.validUntil && !/^n\.?a\.?$/i.test(dueText)) {
+      problems.push(`${sheet.name} row ${r}: due date “${dueText}” is not a date; left empty.`);
+    }
+    const calText = get("calibratedOn");
+    if (calText && !row.calibratedOn) {
+      problems.push(
+        `${sheet.name} row ${r}: calibration date “${calText}” is not a date; no certificate recorded for this row.`,
+      );
+    }
+    if (row.calibratedOn && row.validUntil && row.validUntil < row.calibratedOn) {
+      problems.push(
+        `${sheet.name} row ${r}: due date ${row.validUntil} is before the calibration date ${row.calibratedOn}; left empty.`,
+      );
+      row.validUntil = null;
+    }
+    if (row.certificateNo) {
+      lastCert = row.certificateNo;
+      lastDate = row.calibratedOn;
+    } else if (lastCert && row.calibratedOn && row.calibratedOn === lastDate) {
+      row.certificateNo = lastCert;
+      row.carried = true;
+    }
+    rows.push(row);
+  }
+
+  // "Id No" filled with the model name ("EBI 20-T1" on every row) is not an ID.
+  const codes = rows.map((x) => x.code).filter(Boolean);
+  if (codes.length >= 3 && new Set(codes.map((c) => c.toLowerCase())).size <= codes.length / 2) {
+    for (const row of rows) {
+      if (!row.model) row.model = row.code;
+      row.code = "";
+    }
+    problems.push(
+      `Sheet “${sheet.name}”: the ID column repeats “${codes[0]}”, so it was read as the model, not as QA Tech IDs.`,
+    );
+  }
+  return rows;
+}
 
 export async function readInstrumentList(bytes: Uint8Array): Promise<ReadResult> {
   const workbook = new ExcelJS.Workbook();
@@ -62,73 +207,40 @@ export async function readInstrumentList(bytes: Uint8Array): Promise<ReadResult>
   } catch {
     return {
       rows: [],
+      workbookCertificates: [],
       problems: ["This is not an Excel workbook (.xlsx). Save it as .xlsx and try again."],
     };
   }
   const rows: ListRow[] = [];
+  const workbookCertificates: WorkbookCertificate[] = [];
   const problems: string[] = [];
   for (const sheet of workbook.worksheets) {
-    // Header: the first of the top ten rows that names an ID or serial column.
-    let header = 0;
-    const at: Partial<Record<keyof ListRow, number>> = {};
-    for (let r = 1; r <= Math.min(10, sheet.rowCount) && !header; r++) {
-      const values = sheet.getRow(r).values as ExcelJS.CellValue[];
-      const found: Partial<Record<keyof ListRow, number>> = {};
-      values.forEach((v, i) => {
-        const text = norm(cellText(v ?? null));
-        const col = COLUMNS.find((c) => c.match.test(text) && found[c.key] === undefined);
-        if (col) found[col.key] = i;
-      });
-      if (found.code !== undefined || found.serialNo !== undefined) {
-        header = r;
-        Object.assign(at, found);
-      }
-    }
-    if (!header) {
-      if (sheet.rowCount > 0)
-        problems.push(`Sheet “${sheet.name}”: no “ID No.” or “Serial No.” column found; skipped.`);
+    if (sheet.state === "hidden" || sheet.state === "veryHidden") continue;
+    if (isCertificateSheet(sheet, workbook)) {
+      const read = readCertificateSheet(sheet, workbook);
+      problems.push(...read.problems);
+      if (read.certificate) workbookCertificates.push(read.certificate);
       continue;
     }
-    let lastCert = "";
-    let lastDate: string | null = null;
-    for (let r = header + 1; r <= sheet.rowCount; r++) {
-      const values = sheet.getRow(r).values as ExcelJS.CellValue[];
-      const get = (key: keyof ListRow) =>
-        at[key] === undefined ? "" : cellText(values[at[key]!] ?? null);
-      const row: ListRow = {
-        sheet: sheet.name,
-        row: r,
-        name: get("name"),
-        make: get("make"),
-        model: get("model"),
-        code: get("code"),
-        serialNo: get("serialNo"),
-        certificateNo: get("certificateNo"),
-        rangeText: get("rangeText").replace(/\s+/g, " "),
-        calibratedOn: isoOrNull(get("calibratedOn")),
-        validUntil: isoOrNull(get("validUntil")),
-        carried: false,
-      };
-      if (!row.code && !row.serialNo) continue; // blank or a note line
-      if (row.certificateNo) {
-        lastCert = row.certificateNo;
-        lastDate = row.calibratedOn;
-      } else if (lastCert && row.calibratedOn && row.calibratedOn === lastDate) {
-        row.certificateNo = lastCert;
-        row.carried = true;
-      }
-      rows.push(row);
-    }
+    rows.push(...readListSheet(sheet, problems));
   }
-  return { rows, problems };
+  return { rows, workbookCertificates, problems };
 }
+
+// ---------------------------------------------------------------- plan
 
 export type Snapshot = {
   models: { id: string; make: string; model: string }[];
-  instruments: { id: string; code: string; serialNo: string; make: string }[];
+  instruments: { id: string; code: string; serialNo: string; make: string; tier?: string }[];
   certificates: { id: string; number: string; labName: string; itemIds: string[] }[];
   sites: { id: string; code: string; name: string }[];
   labName: string;
+};
+
+export type ImportOptions = {
+  defaultType: InstrumentType;
+  /** Give serials without a QA Tech ID the next IDs of this prefix, as this model. */
+  assign?: { prefix: string; modelId: string | null } | null;
 };
 
 export type PlannedModel = {
@@ -150,6 +262,8 @@ export type PlannedInstrument = {
   rangeText: string;
   modelKey: string | null;
   row: string;
+  /** True when the ID was given by the import (the file had none). */
+  generated: boolean;
 };
 export type PlannedCertificate = {
   number: string;
@@ -162,16 +276,45 @@ export type PlannedCertificate = {
   existingId: string | null;
   codes: string[];
 };
+/** A full FT-05 certificate from a workbook: header, masters, points and readings. */
+export type PlannedFullCertificate = Omit<
+  WorkbookCertificate,
+  "sheet" | "instruments" | "readings" | "masters"
+> & {
+  sheets: string[];
+  certificateKind: string;
+  siteId: string | null;
+  modelKey: string | null;
+  codes: string[];
+  /** readings[point][code index] */
+  readings: string[][];
+  masters: {
+    label: string;
+    certificateNo: string;
+    serialNo: string;
+    validUntil: string | null;
+    instrumentId: string | null;
+    certificateId: string | null;
+  }[];
+  /** Instruments printed on it that could not be imported (no QA Tech ID). */
+  missing: number;
+};
 export type ImportPlan = {
   models: PlannedModel[];
   instruments: PlannedInstrument[];
   certificates: PlannedCertificate[];
+  fullCertificates: PlannedFullCertificate[];
+  alreadyRecorded: string[];
   alreadyRegistered: number;
+  /** Serials with no QA Tech ID, waiting for an ID prefix. */
+  unassigned: { serialNo: string; make: string; model: string; row: string }[];
   skipped: { row: string; reason: string }[];
   problems: string[];
 };
 
-const modelKey = (make: string, model: string) => `${norm(make)}|${norm(model)}`;
+/** Make and model compared loosely: "EBRO"/"EBI - 20TH1" is ebro EBI 20-TH1. */
+export const modelKey = (make: string, model: string) =>
+  `${make.toLowerCase().replace(/[^a-z0-9]/g, "")}|${model.toLowerCase().replace(/[^a-z0-9]/g, "")}`;
 
 function quantitiesFrom(text: string, type: InstrumentType): Quantity[] {
   const t = text.toLowerCase();
@@ -190,93 +333,246 @@ export function parseCertificateNumber(number: string): { kind: string; site: st
   return { kind, site: parts.length >= 4 ? (parts[1] ?? "") : "" };
 }
 
-/** `defaultType`: used when a row doesn't name the instrument (some lists only have serials and IDs). */
+/** Joins sheets that carry the same certificate number (one certificate over several pages). */
+function mergeWorkbookCertificates(list: WorkbookCertificate[], problems: string[]) {
+  const merged = new Map<
+    string,
+    { base: WorkbookCertificate; sheets: string[]; cells: Map<string, string> }
+  >();
+  const pointKey = (p: WorkbookCertificate["points"][number]) =>
+    `${p.quantity}|${p.reference}|${p.condition}`;
+  const instKey = (i: WorkbookCertificate["instruments"][number]) =>
+    i.serialNo || i.code.toLowerCase();
+  for (const c of list) {
+    const key = c.number.toLowerCase();
+    let m = merged.get(key);
+    if (!m) {
+      m = {
+        base: { ...c, points: [], instruments: [], readings: [] },
+        sheets: [],
+        cells: new Map(),
+      };
+      merged.set(key, m);
+    } else if (m.base.calibratedOn !== c.calibratedOn) {
+      problems.push(
+        `${c.number}: sheet “${c.sheet}” has date ${c.calibratedOn}, sheet “${m.sheets[0]}” ${m.base.calibratedOn}. Joined under the first date.`,
+      );
+    }
+    m.sheets.push(c.sheet);
+    for (const p of c.points)
+      if (!m.base.points.some((x) => pointKey(x) === pointKey(p))) m.base.points.push(p);
+    for (const i of c.instruments)
+      if (!m.base.instruments.some((x) => instKey(x) === instKey(i))) m.base.instruments.push(i);
+    for (const master of c.masters) {
+      if (!m.base.masters.some((x) => x.certificateNo === master.certificateNo))
+        m.base.masters.push(master);
+    }
+    c.points.forEach((p, pi) =>
+      c.instruments.forEach((inst, ii) => {
+        const v = c.readings[pi]?.[ii] ?? "";
+        if (v) m!.cells.set(`${pointKey(p)}#${instKey(inst)}`, v);
+      }),
+    );
+  }
+  return [...merged.values()].map(({ base, sheets, cells }) => ({
+    ...base,
+    sheets,
+    readings: base.points.map((p) =>
+      base.instruments.map((i) => cells.get(`${pointKey(p)}#${instKey(i)}`) ?? ""),
+    ),
+  }));
+}
+
 export function planInstrumentImport(
   read: ReadResult,
   snapshot: Snapshot,
-  options: { defaultType: InstrumentType } = { defaultType: "portable_logger" },
+  options: ImportOptions = { defaultType: "portable_logger" },
 ): ImportPlan {
   const plan: ImportPlan = {
     models: [],
     instruments: [],
     certificates: [],
+    fullCertificates: [],
+    alreadyRecorded: [],
     alreadyRegistered: 0,
+    unassigned: [],
     skipped: [],
     problems: [...read.problems],
   };
-  const models = new Map(snapshot.models.map((m) => [modelKey(m.make, m.model), m.id]));
+  const models = new Map(snapshot.models.map((m) => [modelKey(m.make, m.model), m]));
   const byCode = new Map(snapshot.instruments.map((i) => [i.code.toLowerCase(), i]));
-  const bySerial = new Map(
-    snapshot.instruments.filter((i) => i.serialNo).map((i) => [`${norm(i.make)}|${i.serialNo}`, i]),
-  );
-  const newCodes = new Map<string, PlannedInstrument>();
-  const certs = new Map<string, PlannedCertificate>();
+  const bySerial = new Map<string, (typeof snapshot.instruments)[number][]>();
+  for (const i of snapshot.instruments) {
+    if (i.serialNo) bySerial.set(i.serialNo, [...(bySerial.get(i.serialNo) ?? []), i]);
+  }
+  const plannedByCode = new Map<string, PlannedInstrument>();
+  const plannedBySerial = new Map<string, PlannedInstrument>();
+  const counted = new Set<string>();
+  const assignModel = options.assign?.modelId
+    ? snapshot.models.find((m) => m.id === options.assign!.modelId)
+    : undefined;
+  let lastAssigned: string | null = null;
+  const nextAssignedCode = () => {
+    const prefix = options.assign!.prefix;
+    const last =
+      lastAssigned ??
+      lastCodeIn([...snapshot.instruments.map((i) => i.code), ...plannedByCode.keys()], prefix);
+    const [code] = last ? nextCodes(last, 1) : firstCodes(prefix, 1);
+    lastAssigned = code!;
+    return code!;
+  };
+
+  const ensureModel = (
+    make: string,
+    model: string,
+    type: InstrumentType,
+    name: string,
+    rangeText: string,
+  ) => {
+    if (!make || !model) return null;
+    const key = modelKey(make, model);
+    if (!models.has(key) && !plan.models.some((m) => m.key === key)) {
+      plan.models.push({
+        key,
+        type,
+        make,
+        model,
+        equipmentName: name || INSTRUMENT_TYPE_INFO[type].label,
+        rangeText,
+        quantities: quantitiesFrom(rangeText, type),
+      });
+    }
+    return key;
+  };
+
+  /** The QA Tech ID this occurrence imports under, or null when it can't be imported. */
+  const resolveInstrument = (o: {
+    code: string;
+    serialNo: string;
+    make: string;
+    model: string;
+    name: string;
+    rangeText: string;
+    where: string;
+  }): string | null => {
+    const type = instrumentTypeFromText(o.name) ?? options.defaultType;
+    if (!o.code) {
+      const known = bySerial.get(o.serialNo) ?? [];
+      if (known.length === 1) {
+        if (!counted.has(known[0]!.id)) plan.alreadyRegistered += 1;
+        counted.add(known[0]!.id);
+        return known[0]!.code;
+      }
+      if (known.length > 1) {
+        plan.skipped.push({
+          row: o.where,
+          reason: `Serial ${o.serialNo} is registered more than once; add the ID to the file.`,
+        });
+        return null;
+      }
+      const planned = plannedBySerial.get(o.serialNo);
+      if (planned) return planned.code;
+      if (!options.assign) {
+        if (!plan.unassigned.some((u) => u.serialNo === o.serialNo)) {
+          plan.unassigned.push({
+            serialNo: o.serialNo,
+            make: o.make,
+            model: o.model,
+            row: o.where,
+          });
+        }
+        return null;
+      }
+      const make = o.make || assignModel?.make || "";
+      const model = o.model || assignModel?.model || "";
+      const instrument: PlannedInstrument = {
+        code: nextAssignedCode(),
+        serialNo: o.serialNo,
+        make,
+        model,
+        type,
+        equipmentName: o.name,
+        rangeText: o.rangeText,
+        modelKey: ensureModel(make, model, type, o.name, o.rangeText),
+        row: o.where,
+        generated: true,
+      };
+      plannedByCode.set(instrument.code.toLowerCase(), instrument);
+      plannedBySerial.set(o.serialNo, instrument);
+      plan.instruments.push(instrument);
+      return instrument.code;
+    }
+
+    const existing = byCode.get(o.code.toLowerCase());
+    const sameSerial = o.serialNo
+      ? (bySerial.get(o.serialNo) ?? []).find(
+          (i) => !o.make || !i.make || norm(i.make) === norm(o.make),
+        )
+      : undefined;
+    if (sameSerial && (!existing || existing.id !== sameSerial.id)) {
+      plan.skipped.push({
+        row: o.where,
+        reason: `Serial ${o.serialNo} is already registered as ${sameSerial.code}, not ${o.code}.`,
+      });
+      return null;
+    }
+    const planned = plannedByCode.get(o.code.toLowerCase());
+    if (planned && o.serialNo && planned.serialNo && planned.serialNo !== o.serialNo) {
+      plan.skipped.push({
+        row: o.where,
+        reason: `${o.code} appears twice with different serials (${planned.serialNo} at ${planned.row}, ${o.serialNo} here).`,
+      });
+      return null;
+    }
+    if (existing) {
+      if (!counted.has(existing.id)) plan.alreadyRegistered += 1;
+      counted.add(existing.id);
+      return existing.code;
+    }
+    if (planned) return planned.code;
+    const instrument: PlannedInstrument = {
+      code: o.code,
+      serialNo: o.serialNo,
+      make: o.make,
+      model: o.model,
+      type,
+      equipmentName: o.name,
+      rangeText: o.rangeText,
+      modelKey: ensureModel(o.make, o.model, type, o.name, o.rangeText),
+      row: o.where,
+      generated: false,
+    };
+    plannedByCode.set(o.code.toLowerCase(), instrument);
+    if (o.serialNo) plannedBySerial.set(o.serialNo, instrument);
+    plan.instruments.push(instrument);
+    return instrument.code;
+  };
+
+  const siteFor = (number: string) => {
+    const parsed = parseCertificateNumber(number);
+    const site = parsed.site
+      ? snapshot.sites.find(
+          (s) =>
+            s.name.toUpperCase().replace(/[^A-Z0-9]/g, "") ===
+              parsed.site.toUpperCase().replace(/[^A-Z0-9]/g, "") ||
+            norm(s.code) === norm(parsed.site),
+        )
+      : undefined;
+    return { kind: parsed.kind, siteId: site?.id ?? null };
+  };
   const existingCerts = new Map(
     snapshot.certificates
       .filter((c) => c.labName.toLowerCase() === snapshot.labName.toLowerCase())
       .map((c) => [c.number.toLowerCase(), c]),
   );
 
+  // Lists.
+  const certs = new Map<string, PlannedCertificate>();
   for (const row of read.rows) {
     const where = `${row.sheet} row ${row.row}`;
-    if (!row.code) {
-      plan.skipped.push({
-        row: where,
-        reason: `Serial ${row.serialNo} has no ID No.; add QA Tech's ID and import again.`,
-      });
-      continue;
-    }
+    const code = resolveInstrument({ ...row, where });
+    if (!code || !row.calibratedOn) continue;
     const type = instrumentTypeFromText(row.name) ?? options.defaultType;
-    const existing = byCode.get(row.code.toLowerCase());
-    const sameSerial = row.serialNo ? bySerial.get(`${norm(row.make)}|${row.serialNo}`) : undefined;
-    if (sameSerial && (!existing || existing.id !== sameSerial.id)) {
-      plan.skipped.push({
-        row: where,
-        reason: `Serial ${row.serialNo} is already registered as ${sameSerial.code}, not ${row.code}.`,
-      });
-      continue;
-    }
-    const planned = newCodes.get(row.code.toLowerCase());
-    if (planned && planned.serialNo !== row.serialNo) {
-      plan.skipped.push({
-        row: where,
-        reason: `${row.code} appears twice with different serials (${planned.serialNo} at ${planned.row}, ${row.serialNo} here).`,
-      });
-      continue;
-    }
-    if (existing) plan.alreadyRegistered += 1;
-    else if (!planned) {
-      let key: string | null = null;
-      if (row.make && row.model) {
-        key = modelKey(row.make, row.model);
-        if (!models.has(key) && !plan.models.some((m) => m.key === key)) {
-          plan.models.push({
-            key,
-            type,
-            make: row.make,
-            model: row.model,
-            equipmentName: row.name || INSTRUMENT_TYPE_INFO[type].label,
-            rangeText: row.rangeText,
-            quantities: quantitiesFrom(row.rangeText, type),
-          });
-        }
-      }
-      const instrument: PlannedInstrument = {
-        code: row.code,
-        serialNo: row.serialNo,
-        make: row.make,
-        model: row.model,
-        type,
-        equipmentName: row.name,
-        rangeText: row.rangeText,
-        modelKey: key,
-        row: where,
-      };
-      newCodes.set(row.code.toLowerCase(), instrument);
-      plan.instruments.push(instrument);
-    }
-
-    if (!row.calibratedOn) continue;
     const unnumbered = !row.certificateNo;
     const number =
       row.certificateNo ||
@@ -284,17 +580,12 @@ export function planInstrumentImport(
     const key = number.toLowerCase();
     let cert = certs.get(key);
     if (!cert) {
-      const parsed = parseCertificateNumber(row.certificateNo);
-      const site = parsed.site
-        ? snapshot.sites.find(
-            (s) => norm(s.name) === norm(parsed.site) || norm(s.code) === norm(parsed.site),
-          )
-        : undefined;
+      const { kind, siteId } = siteFor(row.certificateNo);
       cert = {
         number,
         unnumbered,
-        certificateKind: parsed.kind || INSTRUMENT_TYPE_INFO[type].certificateKind,
-        siteId: site?.id ?? null,
+        certificateKind: kind || INSTRUMENT_TYPE_INFO[type].certificateKind,
+        siteId,
         calibratedOn: row.calibratedOn,
         validUntil: row.validUntil,
         existingId: existingCerts.get(key)?.id ?? null,
@@ -307,9 +598,83 @@ export function planInstrumentImport(
         `${number}: ${where} has calibration date ${row.calibratedOn}, other rows ${cert.calibratedOn}. The first date is used.`,
       );
     }
-    if (!cert.codes.some((c) => c.toLowerCase() === row.code.toLowerCase()))
-      cert.codes.push(row.code);
+    if (!cert.codes.some((c) => c.toLowerCase() === code.toLowerCase())) cert.codes.push(code);
   }
+
+  // Certificate workbooks: one full certificate per number.
+  const workbookNumbers = new Set<string>();
+  for (const wc of mergeWorkbookCertificates(read.workbookCertificates, plan.problems)) {
+    const key = wc.number.toLowerCase();
+    workbookNumbers.add(key);
+    if (existingCerts.has(key)) {
+      plan.alreadyRecorded.push(wc.number);
+      // Still register any of its instruments that are new.
+      for (const i of wc.instruments) {
+        resolveInstrument({
+          ...i,
+          make: wc.make,
+          model: wc.model,
+          name: wc.equipmentName,
+          rangeText: wc.rangeText,
+          where: `${wc.number}`,
+        });
+      }
+      continue;
+    }
+    const type = instrumentTypeFromText(wc.equipmentName) ?? options.defaultType;
+    const codes: string[] = [];
+    const columns: number[] = [];
+    wc.instruments.forEach((i, index) => {
+      const code = resolveInstrument({
+        code: i.code,
+        serialNo: i.serialNo,
+        make: wc.make,
+        model: wc.model,
+        name: wc.equipmentName,
+        rangeText: wc.rangeText,
+        where: `${wc.number} (${wc.sheets.join(", ")})`,
+      });
+      if (code && !codes.includes(code)) {
+        codes.push(code);
+        columns.push(index);
+      }
+    });
+    const { kind, siteId } = siteFor(wc.number);
+    const masters = wc.masters.map((m) => {
+      // Linked when that master's certificate is recorded (by number), else by serial.
+      const cert = snapshot.certificates.find(
+        (c) => c.number.toLowerCase() === m.certificateNo.toLowerCase(),
+      );
+      const master =
+        snapshot.instruments.find(
+          (i) => cert?.itemIds.includes(i.id) && (i.tier ?? "master") === "master",
+        ) ??
+        snapshot.instruments.find(
+          (i) => i.tier === "master" && i.serialNo.length >= 4 && m.serialNo.includes(i.serialNo),
+        );
+      return {
+        label: `${m.name} (${m.make} ${m.model}, S/N ${m.serialNo})`.replace(/\s+/g, " "),
+        certificateNo: m.certificateNo,
+        serialNo: m.serialNo,
+        validUntil: m.validUntil,
+        instrumentId: master?.id ?? null,
+        certificateId: master && cert?.itemIds.includes(master.id) ? cert.id : null,
+      };
+    });
+    plan.fullCertificates.push({
+      ...wc,
+      certificateKind: kind || INSTRUMENT_TYPE_INFO[type].certificateKind,
+      siteId,
+      modelKey: ensureModel(wc.make, wc.model, type, wc.equipmentName, wc.rangeText),
+      codes,
+      readings: wc.readings.map((row) => columns.map((c) => row[c] ?? "")),
+      masters,
+      missing: wc.instruments.length - codes.length,
+    });
+  }
+
+  // A list naming a certificate that a workbook in the same file brings in full: the full one wins.
+  plan.certificates = plan.certificates.filter((c) => !workbookNumbers.has(c.number.toLowerCase()));
   // Certificates already recorded keep their items; only add what is new.
   for (const cert of plan.certificates) {
     if (!cert.existingId) continue;
@@ -320,6 +685,7 @@ export function planInstrumentImport(
     });
   }
   plan.certificates = plan.certificates.filter((c) => !c.existingId || c.codes.length > 0);
+  plan.fullCertificates = plan.fullCertificates.filter((c) => c.codes.length > 0);
   return plan;
 }
 
@@ -327,10 +693,25 @@ export function planSummary(plan: ImportPlan) {
   return {
     models: plan.models.length,
     instruments: plan.instruments.length,
+    idsGiven: plan.instruments.filter((i) => i.generated).length,
     alreadyRegistered: plan.alreadyRegistered,
-    certificates: plan.certificates.filter((c) => !c.existingId).length,
-    certificateLinks: plan.certificates.reduce((n, c) => n + c.codes.length, 0),
+    certificates:
+      plan.certificates.filter((c) => !c.existingId).length + plan.fullCertificates.length,
+    certificatesWithReadings: plan.fullCertificates.length,
+    readings: plan.fullCertificates.reduce(
+      (n, c) => n + c.readings.flat().filter(Boolean).length,
+      0,
+    ),
+    certificateLinks:
+      plan.certificates.reduce((n, c) => n + c.codes.length, 0) +
+      plan.fullCertificates.reduce((n, c) => n + c.codes.length, 0),
     unnumbered: plan.certificates.filter((c) => c.unnumbered).length,
+    alreadyRecorded: plan.alreadyRecorded.length,
+    unassigned: plan.unassigned.length,
+    unlinkedMasters: plan.fullCertificates.reduce(
+      (n, c) => n + c.masters.filter((m) => !m.certificateId).length,
+      0,
+    ),
     skipped: plan.skipped.length,
   };
 }

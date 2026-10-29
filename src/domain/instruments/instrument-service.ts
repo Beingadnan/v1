@@ -18,6 +18,7 @@ import type { SessionUser } from "@/domain/auth/session-service";
 import { diff, isUuid, rethrowUnique } from "@/domain/clients/shared";
 import { recordAudit } from "@/lib/audit";
 
+import { nextCodes } from "./codes";
 import { InstrumentsError } from "./errors";
 import {
   instrumentSchema,
@@ -275,20 +276,7 @@ export async function updateInstrument(
   );
 }
 
-/**
- * Next IDs in a series: "E-TRH0533" → E-TRH0534, E-TRH0535… keeping the
- * zero padding. Used when a batch of new loggers arrives.
- */
-export function nextCodes(lastCode: string, count: number): string[] {
-  const match = /^(.*?)(\d+)$/.exec(lastCode.trim());
-  if (!match) return [];
-  const [, prefix = "", digits = "0"] = match;
-  const start = Number(digits);
-  return Array.from(
-    { length: count },
-    (_, i) => `${prefix}${String(start + i + 1).padStart(digits.length, "0")}`,
-  );
-}
+export { nextCodes };
 
 /** The highest existing ID with this prefix, e.g. "E-TRH" → "E-TRH0533". */
 export async function lastCodeWithPrefix(

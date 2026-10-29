@@ -6,7 +6,7 @@ import path from "node:path";
 import { and, eq } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { auditLog, certificateItems, signatures, sites, users } from "@/db/schema";
+import { auditLog, certificateItems, certificates, signatures, sites, users } from "@/db/schema";
 import { ensureOrganisation } from "@/db/seed/ensure-organisation";
 import { hashPassword } from "@/domain/auth/password";
 import { ForbiddenError } from "@/domain/auth/permissions";
@@ -742,5 +742,31 @@ describe("cancelling", () => {
       .from(certificateItems)
       .where(eq(certificateItems.certificateId, cert.id));
     expect(items).toHaveLength(1);
+  });
+});
+
+describe("numbers already used before QTech", () => {
+  it("skips a number an imported certificate already has", async () => {
+    const [logger] = await listInstruments(db, lab, { q: "E-TRH0523" });
+    // An imported record that took the next number of the April 2026 PDL series.
+    await db.insert(certificates).values({
+      organisationId: lab.organisationId,
+      kind: "imported",
+      status: "issued",
+      number: "QATECH/BHIWANDI/04/26/PDL-01",
+      labName: "QA Tech",
+      calibratedOn: "2026-04-02",
+    });
+    const cert = await createCalibration(
+      db,
+      lab,
+      {
+        header: { ...header("2026-04-10"), siteId },
+        instrumentIds: [logger!.id],
+        masterIds: [ssprtId],
+      },
+      req,
+    );
+    expect(cert.number).toBe("QATECH/BHIWANDI/04/26/PDL-02");
   });
 });

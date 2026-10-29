@@ -19,6 +19,7 @@ import { InstrumentsError } from "@/domain/instruments/errors";
 import {
   applyInstrumentImport,
   previewInstrumentImport,
+  type ImportChoices,
   type InstrumentImportPreview,
 } from "@/domain/instruments/instrument-import-service";
 import {
@@ -359,15 +360,15 @@ export async function cancelCertificateAction(
 
 export async function previewInstrumentImportAction(
   fileId: string,
-  defaultType: string,
+  choices: ImportChoices,
 ): Promise<ActionResult<InstrumentImportPreview>> {
   const actor = await requireUser();
-  return runAction(() => previewInstrumentImport(db, blobStore, actor, fileId, defaultType));
+  return runAction(() => previewInstrumentImport(db, blobStore, actor, fileId, choices));
 }
 
 export async function applyInstrumentImportAction(
   fileId: string,
-  defaultType: string,
+  choices: ImportChoices,
 ): Promise<ActionResult> {
   const actor = await requireUser();
   const result = await runAction(async () => {
@@ -376,11 +377,11 @@ export async function applyInstrumentImportAction(
       blobStore,
       actor,
       fileId,
-      defaultType,
+      choices,
       await getRequestInfo(),
     );
     const n = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
-    return `Imported ${n(s.instruments, "instrument")} and ${n(s.certificates, "certificate")}${s.skipped ? `; ${n(s.skipped, "row")} skipped` : ""}.`;
+    return `Imported ${n(s.instruments, "instrument")} and ${n(s.certificates, "certificate")}${s.readings ? ` with ${n(s.readings, "reading")}` : ""}${s.skipped ? `; ${n(s.skipped, "row")} skipped` : ""}.`;
   });
   if (!result.ok) return result;
   refresh("/instruments/certificates");

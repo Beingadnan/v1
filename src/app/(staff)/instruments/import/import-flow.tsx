@@ -6,6 +6,7 @@ import { useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 import { FileDrop } from "@/components/ui/file-drop";
+import { Input } from "@/components/ui/form-controls";
 import { StatusBadge } from "@/components/ui/status-badge";
 import {
   Table,
@@ -15,7 +16,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { InstrumentImportPreview } from "@/domain/instruments/instrument-import-service";
+import type {
+  ImportChoices,
+  InstrumentImportPreview,
+} from "@/domain/instruments/instrument-import-service";
 import { INSTRUMENT_TYPE_INFO, INSTRUMENT_TYPES } from "@/domain/instruments/types";
 import { formatDate } from "@/lib/format";
 
@@ -40,15 +44,27 @@ async function upload(file: File): Promise<{ id: string } | { error: string }> {
   }
 }
 
-export function InstrumentImportFlow({ maxSizeMb }: { maxSizeMb: number }) {
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+export function InstrumentImportFlow({
+  maxSizeMb,
+  models,
+}: {
+  maxSizeMb: number;
+  models: { id: string; label: string }[];
+}) {
   const [stage, setStage] = useState<Stage>({ name: "choose" });
-  const [defaultType, setDefaultType] = useState("portable_logger");
+  const [choices, setChoices] = useState<ImportChoices>({
+    defaultType: "portable_logger",
+    assignPrefix: "",
+    assignModelId: models[0]?.id ?? "",
+  });
   const [pending, startTransition] = useTransition();
 
-  const check = (fileId: string, fileName: string, type: string) =>
+  const check = (fileId: string, fileName: string, next: ImportChoices) =>
     startTransition(async () => {
       setStage({ name: "checking", fileName });
-      const result = await previewInstrumentImportAction(fileId, type);
+      const result = await previewInstrumentImportAction(fileId, next);
       setStage(
         result.ok
           ? { name: "preview", preview: result.data }
@@ -64,7 +80,7 @@ export function InstrumentImportFlow({ maxSizeMb }: { maxSizeMb: number }) {
         setStage({ name: "choose", error: uploaded.error });
         return;
       }
-      const result = await previewInstrumentImportAction(uploaded.id, defaultType);
+      const result = await previewInstrumentImportAction(uploaded.id, choices);
       setStage(
         result.ok
           ? { name: "preview", preview: result.data }
@@ -74,7 +90,7 @@ export function InstrumentImportFlow({ maxSizeMb }: { maxSizeMb: number }) {
 
   const apply = (preview: InstrumentImportPreview) =>
     startTransition(async () => {
-      const result = await applyInstrumentImportAction(preview.fileId, defaultType);
+      const result = await applyInstrumentImportAction(preview.fileId, choices);
       setStage(
         result.ok
           ? { name: "done", message: result.message ?? "Imported." }
@@ -82,14 +98,15 @@ export function InstrumentImportFlow({ maxSizeMb }: { maxSizeMb: number }) {
       );
     });
 
-  const typeSelect = (onChange?: (v: string) => void) => (
+  const typeSelect = (onChange?: (next: ImportChoices) => void) => (
     <label className="flex flex-col gap-1 text-sm">
-      <span className="font-medium">Type, when a row doesn&apos;t name the instrument</span>
+      <span className="font-medium">Type, when the file doesn&apos;t name the instrument</span>
       <select
-        value={defaultType}
+        value={choices.defaultType}
         onChange={(e) => {
-          setDefaultType(e.target.value);
-          onChange?.(e.target.value);
+          const next = { ...choices, defaultType: e.target.value };
+          setChoices(next);
+          onChange?.(next);
         }}
         className="h-9 rounded-md border border-input bg-surface px-3 text-sm"
       >
@@ -117,7 +134,7 @@ export function InstrumentImportFlow({ maxSizeMb }: { maxSizeMb: number }) {
             <Link href="/instruments">Open the register</Link>
           </Button>
           <Button variant="secondary" onClick={() => setStage({ name: "choose" })}>
-            Import another list
+            Import another file
           </Button>
         </div>
       </section>
@@ -127,6 +144,8 @@ export function InstrumentImportFlow({ maxSizeMb }: { maxSizeMb: number }) {
   if (stage.name === "preview") {
     const { preview } = stage;
     const s = preview.summary;
+    const recheck = (next: ImportChoices) => check(preview.fileId, preview.fileName, next);
+    const nothing = s.instruments + s.certificateLinks === 0;
     return (
       <div className="flex flex-col gap-5">
         <section className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
@@ -134,6 +153,7 @@ export function InstrumentImportFlow({ maxSizeMb }: { maxSizeMb: number }) {
           <ul className="grid gap-2 text-sm sm:grid-cols-3">
             <li>
               <strong className="tabular text-lg">{s.instruments}</strong> new instruments
+              {s.idsGiven ? ` (${s.idsGiven} given IDs)` : ""}
             </li>
             <li>
               <strong className="tabular text-lg">{s.alreadyRegistered}</strong> already registered
@@ -145,17 +165,138 @@ export function InstrumentImportFlow({ maxSizeMb }: { maxSizeMb: number }) {
               <strong className="tabular text-lg">{s.certificates}</strong> certificates to record
             </li>
             <li>
-              <strong className="tabular text-lg">{s.unnumbered}</strong> without a number in the
-              list
+              <strong className="tabular text-lg">{s.readings}</strong> readings with them
             </li>
             <li>
-              <strong className="tabular text-lg">{s.skipped}</strong> rows skipped
+              <strong className="tabular text-lg">{s.skipped + s.unassigned}</strong> rows need
+              attention
             </li>
           </ul>
-          <div className="max-w-sm">
-            {typeSelect((v) => check(preview.fileId, preview.fileName, v))}
-          </div>
+          <div className="max-w-sm">{typeSelect(recheck)}</div>
         </section>
+
+        {s.unassigned > 0 || choices.assignPrefix ? (
+          <section
+            aria-labelledby="ids"
+            className="flex flex-col gap-3 rounded-lg border border-attention/30 bg-attention-soft p-4"
+          >
+            <h2 id="ids" className="font-semibold">
+              {s.unassigned > 0
+                ? `${plural(s.unassigned, "serial number")} without a QA Tech ID`
+                : "IDs given to serial numbers"}
+            </h2>
+            <p className="text-sm">
+              Give them the next IDs of a prefix, for example E-TRH (ebro) or T-TRH (Testo). The
+              numbering continues after the highest ID already used.
+            </p>
+            <form
+              className="flex flex-wrap items-end gap-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                recheck(choices);
+              }}
+            >
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="font-medium">ID prefix</span>
+                <Input
+                  className="w-32"
+                  value={choices.assignPrefix}
+                  placeholder="E-TRH"
+                  onChange={(e) => setChoices({ ...choices, assignPrefix: e.target.value })}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="font-medium">Model, when the file doesn&apos;t say</span>
+                <select
+                  value={choices.assignModelId}
+                  onChange={(e) => setChoices({ ...choices, assignModelId: e.target.value })}
+                  className="h-9 rounded-md border border-input bg-surface px-3 text-sm"
+                >
+                  <option value="">No model</option>
+                  {models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <Button type="submit" variant="secondary" disabled={pending}>
+                Check again
+              </Button>
+            </form>
+            {preview.plan.instruments.some((i) => i.generated) ? (
+              <p className="text-sm">
+                First new IDs:{" "}
+                {preview.plan.instruments
+                  .filter((i) => i.generated)
+                  .slice(0, 3)
+                  .map((i) => `${i.code} = ${i.serialNo}`)
+                  .join(", ")}
+                …
+              </p>
+            ) : null}
+          </section>
+        ) : null}
+
+        {preview.plan.fullCertificates.length > 0 ? (
+          <section aria-labelledby="full" className="flex flex-col gap-2">
+            <h2 id="full" className="font-semibold">
+              Certificates with readings
+            </h2>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Number</TableHead>
+                  <TableHead>Calibrated</TableHead>
+                  <TableHead className="text-right">Instruments</TableHead>
+                  <TableHead className="text-right">Points</TableHead>
+                  <TableHead>Masters</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {preview.plan.fullCertificates.map((c) => (
+                  <TableRow key={c.number}>
+                    <TableCell>
+                      {c.number}
+                      <p className="text-xs text-muted-foreground">
+                        {c.make} {c.model} · {c.sheets.join(", ")}
+                        {c.missing ? ` · ${c.missing} without an ID left out` : ""}
+                      </p>
+                    </TableCell>
+                    <TableCell className="tabular">{formatDate(c.calibratedOn)}</TableCell>
+                    <TableCell className="tabular text-right">{c.codes.length}</TableCell>
+                    <TableCell className="tabular text-right">{c.points.length}</TableCell>
+                    <TableCell className="text-sm">
+                      {c.masters.map((m) => (
+                        <span key={m.certificateNo} className="block">
+                          {m.certificateId ? (
+                            <StatusBadge tone="pass">Linked</StatusBadge>
+                          ) : (
+                            <StatusBadge tone="attention">Not registered</StatusBadge>
+                          )}{" "}
+                          {m.certificateNo}
+                        </span>
+                      ))}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            {s.unlinkedMasters > 0 ? (
+              <p className="text-sm text-muted-foreground">
+                A master that is not registered is kept in the certificate&apos;s remarks. For full
+                traceability, add the master and its certificate (Register → Add instrument → Record
+                outside-lab certificate) before importing.
+              </p>
+            ) : null}
+          </section>
+        ) : null}
+
+        {preview.plan.alreadyRecorded.length > 0 ? (
+          <p className="text-sm text-muted-foreground">
+            Already recorded, not imported again: {preview.plan.alreadyRecorded.join(", ")}.
+          </p>
+        ) : null}
 
         {preview.plan.skipped.length + preview.plan.problems.length > 0 ? (
           <section aria-labelledby="skipped" className="flex flex-col gap-2">
@@ -169,7 +310,7 @@ export function InstrumentImportFlow({ maxSizeMb }: { maxSizeMb: number }) {
                 </li>
               ))}
               {preview.plan.skipped.map((p) => (
-                <li key={p.row}>
+                <li key={`${p.row}-${p.reason}`}>
                   <StatusBadge tone="neutral">Skipped</StatusBadge> {p.row}: {p.reason}
                 </li>
               ))}
@@ -180,7 +321,7 @@ export function InstrumentImportFlow({ maxSizeMb }: { maxSizeMb: number }) {
         {preview.plan.certificates.length > 0 ? (
           <section aria-labelledby="certs" className="flex flex-col gap-2">
             <h2 id="certs" className="font-semibold">
-              Certificates
+              Certificates from the list (no readings)
             </h2>
             <Table>
               <TableHeader>
@@ -236,11 +377,12 @@ export function InstrumentImportFlow({ maxSizeMb }: { maxSizeMb: number }) {
           </p>
         ) : null}
         <div className="flex flex-wrap gap-2">
-          <Button
-            onClick={() => apply(preview)}
-            disabled={pending || s.instruments + s.certificateLinks === 0}
-          >
-            {pending ? "Importing…" : `Import ${s.instruments} instruments`}
+          <Button onClick={() => apply(preview)} disabled={pending || nothing}>
+            {pending
+              ? "Importing…"
+              : nothing
+                ? "Nothing new to import"
+                : `Import ${plural(s.instruments, "instrument")} and ${plural(s.certificates, "certificate")}`}
           </Button>
           <Button
             variant="secondary"
@@ -260,7 +402,7 @@ export function InstrumentImportFlow({ maxSizeMb }: { maxSizeMb: number }) {
       <div className="flex flex-col gap-3">
         <FileDrop
           accept=".xlsx"
-          description="A logger list (.xlsx)"
+          description="A logger list or FT-05 certificate workbook (.xlsx)"
           maxSizeMb={maxSizeMb}
           onFile={onFile}
           disabled={pending}
@@ -278,11 +420,15 @@ export function InstrumentImportFlow({ maxSizeMb }: { maxSizeMb: number }) {
       </div>
       <div className="flex flex-col gap-3 text-sm">
         {typeSelect()}
-        <p className="text-muted-foreground">
-          Every sheet is read. A certificate number written only on a batch&apos;s first row applies
-          to the rows below with the same date. Rows without a number are kept as “Number not
-          recorded”, never given an invented one.
-        </p>
+        <ul className="flex list-disc flex-col gap-1 pl-4 text-muted-foreground">
+          <li>Logger lists: columns are found by their headings, in any order.</li>
+          <li>
+            FT-05 certificate workbooks: every sheet&apos;s header, masters and readings are read; a
+            certificate over several sheets is joined.
+          </li>
+          <li>Plain serial lists: give them IDs from a prefix on the next screen.</li>
+          <li>Nothing changes until you press Import.</li>
+        </ul>
       </div>
     </section>
   );

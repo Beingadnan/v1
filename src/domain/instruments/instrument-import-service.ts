@@ -5,6 +5,9 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Database, DbExecutor } from "@/db/client-factory";
 import {
   certificateItems,
+  certificateMasters,
+  certificatePoints,
+  certificateReadings,
   certificates,
   instrumentModels,
   instruments,
@@ -20,11 +23,17 @@ import { isUuid, rethrowUnique } from "@/domain/clients/shared";
 import { recordAudit } from "@/lib/audit";
 import type { BlobStore } from "@/lib/storage/blob-store";
 
+import { noteUsedNumber } from "@/domain/numbering/allocate";
+
+import type { AccuracySpec } from "./calibration-math";
+import { evaluate } from "./certificate-service";
 import { InstrumentsError } from "./errors";
 import {
+  modelKey,
   planInstrumentImport,
   planSummary,
   readInstrumentList,
+  type ImportOptions,
   type ImportPlan,
   type Snapshot,
 } from "./instrument-import";
@@ -67,6 +76,7 @@ async function loadSnapshot(executor: DbExecutor, organisationId: string): Promi
       code: instruments.code,
       serialNo: instruments.serialNo,
       make: instruments.make,
+      tier: instruments.tier,
     })
     .from(instruments)
     .where(eq(instruments.organisationId, organisationId));
@@ -102,6 +112,32 @@ function typeOption(value: string): InstrumentType {
   return isInstrumentType(value) ? value : "portable_logger";
 }
 
+/** What the person chose on the import screen. */
+export type ImportChoices = {
+  defaultType: string;
+  /** Prefix for IDs given to serials that have none, e.g. "E-TRH"; blank = don't give IDs. */
+  assignPrefix?: string;
+  /** Model for those serials when the file doesn't say. */
+  assignModelId?: string;
+};
+
+function importOptions(choices: ImportChoices): ImportOptions {
+  const prefix = (choices.assignPrefix ?? "").trim();
+  if (prefix && !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,19}$/.test(prefix)) {
+    throw new InstrumentsError("The ID prefix can use letters, numbers and - _ . / (up to 20).");
+  }
+  return {
+    defaultType: typeOption(choices.defaultType),
+    assign: prefix
+      ? {
+          prefix,
+          modelId:
+            choices.assignModelId && isUuid(choices.assignModelId) ? choices.assignModelId : null,
+        }
+      : null,
+  };
+}
+
 export type InstrumentImportPreview = {
   fileId: string;
   fileName: string;
@@ -114,17 +150,16 @@ export async function previewInstrumentImport(
   blobs: BlobStore,
   actor: SessionUser,
   fileId: string,
-  defaultType: string,
+  choices: ImportChoices,
 ): Promise<InstrumentImportPreview> {
   assertCan(actor, "instruments.manage");
+  const options = importOptions(choices);
   const { file, bytes } = await loadFile(db, blobs, actor, fileId);
   const read = await readInstrumentList(bytes);
-  if (read.rows.length === 0) {
+  if (read.rows.length === 0 && read.workbookCertificates.length === 0) {
     throw new InstrumentsError(read.problems[0] ?? "No instruments found in this file.");
   }
-  const plan = planInstrumentImport(read, await loadSnapshot(db, actor.organisationId), {
-    defaultType: typeOption(defaultType),
-  });
+  const plan = planInstrumentImport(read, await loadSnapshot(db, actor.organisationId), options);
   return { fileId, fileName: file.firstFileName, summary: planSummary(plan), plan };
 }
 
@@ -137,10 +172,11 @@ export async function applyInstrumentImport(
   blobs: BlobStore,
   actor: SessionUser,
   fileId: string,
-  defaultType: string,
+  choices: ImportChoices,
   request: RequestInfo,
 ): Promise<ReturnType<typeof planSummary>> {
   assertCan(actor, "instruments.manage");
+  const options = importOptions(choices);
   const { file, bytes } = await loadFile(db, blobs, actor, fileId);
   const read = await readInstrumentList(bytes);
   try {
@@ -148,10 +184,21 @@ export async function applyInstrumentImport(
       await tx.execute(
         sql`select pg_advisory_xact_lock(hashtext(${`instruments-import:${actor.organisationId}`}))`,
       );
+      if (options.assign) {
+        // Same lock as "Add a batch", so the two can't hand out the same IDs.
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(hashtext(${`instrument-codes:${actor.organisationId}:${options.assign.prefix.toLowerCase()}`}))`,
+        );
+      }
       const snapshot = await loadSnapshot(tx, actor.organisationId);
-      const plan = planInstrumentImport(read, snapshot, { defaultType: typeOption(defaultType) });
+      const plan = planInstrumentImport(read, snapshot, options);
       const summary = planSummary(plan);
       if (summary.instruments === 0 && summary.certificateLinks === 0) {
+        if (summary.unassigned > 0) {
+          throw new InstrumentsError(
+            `${summary.unassigned} serial number${summary.unassigned === 1 ? " has" : "s have"} no QA Tech ID. Enter an ID prefix to give ${summary.unassigned === 1 ? "it an ID" : "them IDs"}.`,
+          );
+        }
         throw new InstrumentsError(
           "Nothing new to import: every instrument in the file is already registered.",
         );
@@ -163,6 +210,7 @@ export async function applyInstrumentImport(
         .select({
           legalName: organisationSettings.legalName,
           address: organisationSettings.address,
+          certificateNumberFormat: organisationSettings.certificateNumberFormat,
         })
         .from(organisationSettings)
         .where(eq(organisationSettings.organisationId, actor.organisationId));
@@ -171,10 +219,7 @@ export async function applyInstrumentImport(
         .from(instrumentModels)
         .where(eq(instrumentModels.organisationId, actor.organisationId));
       const modelByKey = new Map<string, InstrumentModel>(
-        existingModels.map((m) => [
-          `${m.make.toLowerCase().trim()}|${m.model.toLowerCase().trim()}`,
-          m,
-        ]),
+        existingModels.map((m) => [modelKey(m.make, m.model), m]),
       );
       if (plan.models.length > 0) {
         const created = await tx
@@ -192,8 +237,7 @@ export async function applyInstrumentImport(
             })),
           )
           .returning();
-        for (const m of created)
-          modelByKey.set(`${m.make.toLowerCase().trim()}|${m.model.toLowerCase().trim()}`, m);
+        for (const m of created) modelByKey.set(modelKey(m.make, m.model), m);
       }
 
       const idByCode = new Map(snapshot.instruments.map((i) => [i.code.toLowerCase(), i.id]));
@@ -286,17 +330,142 @@ export async function applyInstrumentImport(
       });
       for (const part of chunks(items)) await tx.insert(certificateItems).values(part);
 
+      // Full certificates from FT-05 workbooks: header, points, readings, masters.
+      for (const c of plan.fullCertificates) {
+        const model = c.modelKey ? modelByKey.get(c.modelKey) : undefined;
+        const unlinked = c.masters.filter((m) => !m.certificateId);
+        const [cert] = await tx
+          .insert(certificates)
+          .values({
+            organisationId: actor.organisationId,
+            kind: "imported",
+            status: "issued",
+            number: c.number,
+            labName: snapshot.labName,
+            certificateKind: c.certificateKind,
+            siteId: c.siteId,
+            calibratedOn: c.calibratedOn!,
+            validUntil: c.validUntil,
+            issuedOn: null,
+            customerName: c.customerName || settings?.legalName || "",
+            customerAddress: c.customerAddress || (c.customerName ? "" : (settings?.address ?? "")),
+            title: `${c.make} ${c.equipmentName} (${c.codes.length})`.replace(/\s+/g, " ").trim(),
+            location: c.location,
+            department: c.department,
+            equipmentName: c.equipmentName,
+            make: c.make,
+            model: c.model,
+            rangeText: c.rangeText,
+            resolutionText: c.resolutionText,
+            accuracy: model?.accuracy ?? {},
+            accuracyText: c.accuracyText,
+            sopNo: c.sopNo,
+            conditionOnReceipt: c.conditionOnReceipt,
+            environmentTemperature: c.environmentTemperature,
+            environmentHumidity: c.environmentHumidity,
+            remarks: [
+              `Imported from ${file.firstFileName} (${c.sheets.join(", ")}).`,
+              ...unlinked.map(
+                (m) =>
+                  `Reference standard as printed: ${m.label}, certificate ${m.certificateNo}${m.validUntil ? `, due ${m.validUntil}` : ""}.`,
+              ),
+            ].join("\n"),
+            createdByUserId: actor.id,
+          })
+          .returning({ id: certificates.id });
+        const certId = cert!.id;
+        const ids = c.codes.map((code) => idByCode.get(code.toLowerCase())!);
+        const points = c.points.map((p, i) => ({
+          seq: i + 1,
+          quantity: p.quantity,
+          reference: p.reference,
+        }));
+        const readings = c.points.flatMap((_, pi) =>
+          ids.flatMap((instrumentId, ii) => {
+            const reading = c.readings[pi]?.[ii] ?? "";
+            return reading ? [{ seq: pi + 1, instrumentId, reading }] : [];
+          }),
+        );
+        const evaluated = evaluate((model?.accuracy ?? {}) as AccuracySpec, points, readings);
+        await tx.insert(certificateItems).values(
+          ids.map((instrumentId, position) => ({
+            organisationId: actor.organisationId,
+            certificateId: certId,
+            instrumentId,
+            position,
+            result:
+              readings.filter((r) => r.instrumentId === instrumentId).length === points.length
+                ? (evaluated.results.get(instrumentId) ?? null)
+                : null,
+          })),
+        );
+        await tx.insert(certificatePoints).values(
+          c.points.map((p, i) => ({
+            organisationId: actor.organisationId,
+            certificateId: certId,
+            seq: i + 1,
+            quantity: p.quantity,
+            reference: p.reference,
+            condition: p.condition,
+          })),
+        );
+        for (const part of chunks(evaluated.readings)) {
+          await tx.insert(certificateReadings).values(
+            part.map((r) => ({
+              organisationId: actor.organisationId,
+              certificateId: certId,
+              seq: r.seq,
+              instrumentId: r.instrumentId,
+              reading: r.reading,
+              deviation: r.deviation,
+              tolerance: r.tolerance === null ? null : String(r.tolerance),
+              judgement: r.judgement,
+            })),
+          );
+        }
+        const linked = c.masters.filter((m) => m.instrumentId && m.certificateId);
+        if (linked.length > 0) {
+          await tx.insert(certificateMasters).values(
+            linked.map((m, position) => ({
+              organisationId: actor.organisationId,
+              certificateId: certId,
+              instrumentId: m.instrumentId!,
+              masterCertificateId: m.certificateId!,
+              position,
+            })),
+          );
+        }
+      }
+
+      // Numbers issued before QTech are never handed out again: each series continues after them.
+      if (settings) {
+        for (const number of [
+          ...plan.certificates.filter((c) => !c.unnumbered).map((c) => c.number),
+          ...plan.fullCertificates.map((c) => c.number),
+        ]) {
+          await noteUsedNumber(tx, {
+            organisationId: actor.organisationId,
+            kind: "certificate",
+            format: settings.certificateNumberFormat,
+            number,
+            sites: snapshot.sites,
+          });
+        }
+      }
+
       await recordAudit(tx, {
         organisationId: actor.organisationId,
         actor: { type: "user", userId: actor.id },
         action: "instruments.imported",
         entityType: "stored_file",
         entityId: file.id,
-        summary: `${actor.name} imported ${file.firstFileName}: ${summary.instruments} instruments, ${summary.models} models, ${summary.certificates} certificates (${summary.skipped} rows skipped)`,
+        summary: `${actor.name} imported ${file.firstFileName}: ${summary.instruments} instruments${summary.idsGiven ? ` (${summary.idsGiven} given new IDs)` : ""}, ${summary.models} models, ${summary.certificates} certificates${summary.readings ? ` with ${summary.readings} readings` : ""} (${summary.skipped} rows skipped)`,
         after: {
           ...summary,
-          instruments: plan.instruments.map((i) => i.code),
-          certificates: plan.certificates.map((c) => c.number),
+          instruments: plan.instruments.map((i) =>
+            i.generated ? `${i.code}=${i.serialNo}` : i.code,
+          ),
+          certificates: [...plan.certificates, ...plan.fullCertificates].map((c) => c.number),
           skipped: plan.skipped,
         },
         request,

@@ -5,7 +5,7 @@ import { sql } from "drizzle-orm";
 import type { Transaction } from "@/db/client-factory";
 import { numberSeries } from "@/db/schema";
 
-import { formatNumber, seriesScope } from "./format";
+import { formatNumber, parseNumber, seriesScope } from "./format";
 
 /**
  * Take the next number in a series and format it.
@@ -81,4 +81,60 @@ export async function allocateNumber(
     year,
     month,
   };
+}
+
+/**
+ * Records that `number` is already used (a certificate issued before QTech,
+ * brought in by an import), so the series continues after it instead of
+ * handing it out again. Numbers that don't follow the format are ignored.
+ */
+export async function noteUsedNumber(
+  tx: Transaction,
+  input: {
+    organisationId: string;
+    kind: "job" | "certificate";
+    format: string;
+    number: string;
+    /** QA Tech's sites, to turn BHIWANDI back into the site code BHW. */
+    sites: { code: string; name: string }[];
+  },
+): Promise<boolean> {
+  const parsed = parseNumber(input.format, input.number);
+  if (!parsed) return false;
+  let siteCode = "";
+  if (parsed.site) {
+    const plain = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const site = input.sites.find(
+      (s) => plain(s.name) === parsed.site || plain(s.code) === parsed.site,
+    );
+    if (!site) return false;
+    siteCode = site.code;
+  }
+  const { period, series } = seriesScope(input.format, {
+    month: parsed.month ?? 1,
+    kind: parsed.kind,
+  });
+  await tx
+    .insert(numberSeries)
+    .values({
+      organisationId: input.organisationId,
+      kind: input.kind,
+      siteCode,
+      year: parsed.year,
+      period,
+      series,
+      lastValue: parsed.sequence,
+    })
+    .onConflictDoUpdate({
+      target: [
+        numberSeries.organisationId,
+        numberSeries.kind,
+        numberSeries.siteCode,
+        numberSeries.year,
+        numberSeries.period,
+        numberSeries.series,
+      ],
+      set: { lastValue: sql`greatest(${numberSeries.lastValue}, ${parsed.sequence})` },
+    });
+  return true;
 }

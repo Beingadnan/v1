@@ -106,3 +106,60 @@ export function seriesScope(format: string, values: { month: number; kind?: stri
     series: format.includes("{KIND}") ? (values.kind ?? "") : "",
   };
 }
+
+export type ParsedNumber = {
+  year: number;
+  month?: number;
+  site?: string;
+  kind?: string;
+  sequence: number;
+};
+
+/**
+ * Reads a number back with its format: "QATECH/BHIWANDI/09/26/PDL-01" →
+ * { year: 2026, month: 9, site: "BHIWANDI", kind: "PDL", sequence: 1 }.
+ * Used so that numbers issued before QTech (imported) are never handed out again.
+ * The sequence may have more digits than the format pads to (TC-001).
+ */
+export function parseNumber(format: string, number: string): ParsedNumber | null {
+  const names: string[] = [];
+  let pattern = "^";
+  let last = 0;
+  for (const m of format.matchAll(TOKEN)) {
+    pattern += format.slice(last, m.index).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    last = m.index + m[0].length;
+    const name = m[1]!.startsWith("SEQ") ? "SEQ" : m[1]!;
+    names.push(name);
+    pattern +=
+      name === "YYYY"
+        ? "(\\d{4})"
+        : name === "YY" || name === "MM"
+          ? "(\\d{2})"
+          : name === "SEQ"
+            ? "(\\d+)"
+            : name === "KIND"
+              ? "([A-Za-z]+)"
+              : "([A-Za-z0-9]+)";
+  }
+  pattern += `${format.slice(last).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`;
+  const match = new RegExp(pattern, "i").exec(number.trim());
+  if (!match) return null;
+  const out: ParsedNumber = { year: 0, sequence: 0 };
+  names.forEach((name, i) => {
+    const v = match[i + 1]!;
+    if (name === "YYYY") out.year = Number(v);
+    else if (name === "YY") out.year = 2000 + Number(v);
+    else if (name === "MM") out.month = Number(v);
+    else if (name === "SEQ") out.sequence = Number(v);
+    else if (name === "KIND") out.kind = v.toUpperCase();
+    else out.site = v.toUpperCase();
+  });
+  if (
+    !out.year ||
+    !out.sequence ||
+    (out.month !== undefined && (out.month < 1 || out.month > 12))
+  ) {
+    return null;
+  }
+  return out;
+}

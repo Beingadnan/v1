@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { checkNumberFormat, formatNumber } from "../numbering/format";
+import { checkNumberFormat, formatNumber, parseNumber } from "../numbering/format";
 
 import { hashPassword, verifyPassword, checkPasswordStrength, needsRehash } from "./password";
 import { ACTIONS, can, permissionMatrix } from "./permissions";
@@ -209,5 +209,31 @@ describe("number formats", () => {
     expect(checkNumberFormat("<script>{YYYY}{SEQ:4}", { needsSite: false })).toMatchObject({
       ok: false,
     });
+  });
+});
+
+describe("reading certificate numbers back", () => {
+  const format = "QATECH/{SITE_NAME}/{MM}/{YY}/{KIND}-{SEQ:2}";
+  it("splits a number into its site, month, year, kind and sequence", () => {
+    expect(parseNumber(format, "QATECH/BHIWANDI/03/26/PDL-17")).toEqual({
+      year: 2026,
+      month: 3,
+      site: "BHIWANDI",
+      kind: "PDL",
+      sequence: 17,
+    });
+  });
+  it("accepts the irregular numbers QA Tech has issued", () => {
+    // More digits than the format pads to, as on TC-001 and PDL-010.
+    expect(parseNumber(format, "QATECH/BHIWANDI/05/26/TC-001")).toMatchObject({
+      kind: "TC",
+      sequence: 1,
+    });
+    expect(parseNumber(format, "QATECH/BHIWANDI/01/26/PDL-010")).toMatchObject({ sequence: 10 });
+  });
+  it("ignores numbers in another format or with an impossible month", () => {
+    expect(parseNumber(format, "SAN/25/1165/TH/1")).toBeNull();
+    expect(parseNumber(format, "Number not recorded (18.08.2025)")).toBeNull();
+    expect(parseNumber(format, "QATECH/BHIWANDI/13/26/PDL-01")).toBeNull();
   });
 });

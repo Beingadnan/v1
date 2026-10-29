@@ -2,7 +2,7 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { Database, Transaction } from "@/db/client-factory";
@@ -211,15 +211,30 @@ export async function createCalibration(
       data.header.certificateKind ||
       INSTRUMENT_TYPE_INFO[first.type as InstrumentType]?.certificateKind ||
       "CAL";
-    const { number } = await allocateNumber(tx, {
-      organisationId: actor.organisationId,
-      kind: "certificate",
-      format: settings.certificateNumberFormat,
-      date: new Date(`${calibratedOn}T12:00:00+05:30`),
-      siteCode: site.code,
-      siteName: site.name,
-      certificateKind,
-    });
+    // Skip numbers already on a certificate (e.g. imported from before QTech), so none repeats.
+    let number = "";
+    for (let attempt = 0; attempt < 100; attempt++) {
+      ({ number } = await allocateNumber(tx, {
+        organisationId: actor.organisationId,
+        kind: "certificate",
+        format: settings.certificateNumberFormat,
+        date: new Date(`${calibratedOn}T12:00:00+05:30`),
+        siteCode: site.code,
+        siteName: site.name,
+        certificateKind,
+      }));
+      const [taken] = await tx
+        .select({ id: certificates.id })
+        .from(certificates)
+        .where(
+          and(
+            eq(certificates.organisationId, actor.organisationId),
+            sql`lower(${certificates.labName}) = lower(${settings.shortName})`,
+            sql`lower(${certificates.number}) = lower(${number})`,
+          ),
+        );
+      if (!taken) break;
+    }
 
     const interval = first.intervalMonths ?? model?.intervalMonths ?? 12;
     const pick = <K extends keyof typeof data.header>(key: K, fallback: string) =>
