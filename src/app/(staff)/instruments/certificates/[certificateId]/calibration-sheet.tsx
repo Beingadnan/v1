@@ -2,7 +2,15 @@
 
 import { Plus, Save, Trash2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, useTransition, type ClipboardEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+  type ClipboardEvent,
+} from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/form-controls";
@@ -14,6 +22,7 @@ import {
   toleranceAt,
   type AccuracySpec,
 } from "@/domain/instruments/calibration-math";
+import { applyPaste } from "@/domain/instruments/paste";
 import { QUANTITIES, QUANTITY_UNITS, type Quantity } from "@/domain/instruments/types";
 import type { ActionResult } from "@/lib/action-result";
 import { cn } from "@/lib/utils";
@@ -67,13 +76,25 @@ const HEADER_FIELDS: [keyof Header, string, string?][] = [
   ["accuracyText", "Accuracy (as printed)"],
 ];
 
-/** Splits text copied from Excel into rows of cells. */
-function parseClipboard(text: string): string[][] {
-  return text
-    .replace(/\r/g, "")
-    .replace(/\n$/, "")
-    .split("\n")
-    .map((line) => line.split("\t").map((c) => c.trim()));
+/** Saved by itself this long after the last change. */
+const AUTOSAVE_MS = 30_000;
+const backupKey = (id: string) => `qtech:calibration:${id}`;
+type Backup = {
+  at: number;
+  header: Header;
+  points: Point[];
+  masters: Ref[];
+  instruments: Ref[];
+  grid: string[][];
+};
+
+function readBackup(id: string): Backup | null {
+  try {
+    const raw = window.localStorage.getItem(backupKey(id));
+    return raw ? (JSON.parse(raw) as Backup) : null;
+  } catch {
+    return null;
+  }
 }
 
 export function CalibrationSheet({ data }: { data: SheetData }) {
@@ -86,6 +107,32 @@ export function CalibrationSheet({ data }: { data: SheetData }) {
   const [dirty, setDirty] = useState(false);
   const [result, setResult] = useState<ActionResult<{ missing: number; failed: number }>>();
   const [saving, startSaving] = useTransition();
+  const [notice, setNotice] = useState("");
+  const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [backup, setBackup] = useState<Backup | null>(null);
+  const changes = useRef(0);
+
+  // Readings left on this computer by a save that never happened (signed out, browser closed…).
+  useEffect(() => {
+    const kept = readBackup(data.certificateId);
+    const same =
+      kept &&
+      JSON.stringify([kept.header, kept.points, kept.instruments, kept.grid]) ===
+        JSON.stringify([data.header, data.points, data.instruments, data.readings]);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- read once from browser storage after mount
+    if (kept && !same) setBackup(kept);
+  }, [data]);
+
+  // Every change is copied to this computer at once, so nothing typed can be lost.
+  useEffect(() => {
+    if (!dirty) return;
+    try {
+      const copy: Backup = { at: Date.now(), header, points, masters, instruments, grid };
+      window.localStorage.setItem(backupKey(data.certificateId), JSON.stringify(copy));
+    } catch {
+      // Storage unavailable (private window): autosave still protects the work.
+    }
+  }, [dirty, header, points, masters, instruments, grid, data.certificateId]);
 
   useEffect(() => {
     if (!dirty) return;
@@ -95,8 +142,10 @@ export function CalibrationSheet({ data }: { data: SheetData }) {
   }, [dirty]);
 
   const touch = () => {
+    changes.current += 1;
     setDirty(true);
     setResult(undefined);
+    setNotice("");
   };
   const cell = (pi: number, ii: number) => grid[pi]?.[ii] ?? "";
   const setCell = (pi: number, ii: number, value: string) => {
@@ -107,20 +156,35 @@ export function CalibrationSheet({ data }: { data: SheetData }) {
       return next;
     });
   };
-  const paste = (pi: number, ii: number) => (e: ClipboardEvent<HTMLInputElement>) => {
-    const rows = parseClipboard(e.clipboardData.getData("text"));
-    if (rows.length <= 1 && (rows[0]?.length ?? 0) <= 1) return; // a single value: normal paste
+  /** Paste from Excel into a reading (column ≥ 0) or the master column (-1). */
+  const paste = (pi: number, column: number) => (e: ClipboardEvent<HTMLInputElement>) => {
+    const text = e.clipboardData.getData("text");
+    if (!/[\t\n]/.test(text.trim())) return; // a single value: normal paste
     e.preventDefault();
     touch();
-    setGrid((g) => {
-      const next = points.map((_, p) => instruments.map((_, i) => g[p]?.[i] ?? ""));
-      rows.forEach((row, r) =>
-        row.forEach((value, c) => {
-          if (next[pi + r] && ii + c < instruments.length) next[pi + r]![ii + c] = value;
-        }),
-      );
-      return next;
+    const r = applyPaste({
+      text,
+      at: { point: pi, column },
+      instruments,
+      grid: points.map((_, p) => instruments.map((_, i) => grid[p]?.[i] ?? "")),
+      references: points.map((p) => p.reference),
     });
+    setGrid(r.grid);
+    setPoints(points.map((p, i) => ({ ...p, reference: r.references[i] ?? p.reference })));
+    setNotice(
+      [
+        `Pasted ${r.placed} value${r.placed === 1 ? "" : "s"}`,
+        r.byHeader ? "matched to the loggers by their serial numbers" : "",
+        r.skippedRows
+          ? `skipped ${r.skippedRows} deviation row${r.skippedRows === 1 ? "" : "s"}`
+          : "",
+        r.overflow
+          ? `${r.overflow} value${r.overflow === 1 ? " didn't" : "s didn't"} fit and ${r.overflow === 1 ? "was" : "were"} left out`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(", ") + ".",
+    );
   };
 
   const preview = useMemo(
@@ -141,28 +205,56 @@ export function CalibrationSheet({ data }: { data: SheetData }) {
   const entered = preview.flat().filter(Boolean).length;
   const total = points.length * instruments.length;
 
-  const save = () =>
-    startSaving(async () => {
-      const r = await saveCalibrationAction(data.certificateId, {
-        header,
-        points,
-        masterIds: masters.map((m) => m.id),
-        instrumentIds: instruments.map((i) => i.id),
-        readings: points.map((_, pi) => instruments.map((_, ii) => cell(pi, ii))),
-      });
-      setResult(
-        r.ok
-          ? {
-              ...r,
-              message: `Saved. ${r.data.missing ? `${r.data.missing} readings still empty.` : "All readings entered."}${r.data.failed ? ` ${r.data.failed} outside accuracy.` : ""}`,
-            }
-          : r,
-      );
-      if (r.ok) {
-        setDirty(false);
+  const invalid =
+    points.some((p) => cleanDecimal(p.reference) === null) ||
+    grid.some((row) => row.some((v) => v.trim() !== "" && cleanDecimal(v) === null));
+
+  const save = useCallback(
+    (auto: boolean) =>
+      startSaving(async () => {
+        const before = changes.current;
+        const r = await saveCalibrationAction(data.certificateId, {
+          header,
+          points,
+          masterIds: masters.map((m) => m.id),
+          instrumentIds: instruments.map((i) => i.id),
+          readings: points.map((_, pi) => instruments.map((_, ii) => grid[pi]?.[ii] ?? "")),
+        });
+        if (!r.ok) {
+          setResult(r);
+          return;
+        }
+        setSavedAt(
+          new Intl.DateTimeFormat("en-IN", { hour: "2-digit", minute: "2-digit" }).format(
+            new Date(),
+          ),
+        );
+        if (!auto) {
+          setResult({
+            ...r,
+            message: `Saved. ${r.data.missing ? `${r.data.missing} readings still empty.` : "All readings entered."}${r.data.failed ? ` ${r.data.failed} outside accuracy.` : ""}`,
+          });
+        }
+        // Typing during the save keeps the sheet unsaved.
+        if (changes.current === before) {
+          setDirty(false);
+          try {
+            window.localStorage.removeItem(backupKey(data.certificateId));
+          } catch {
+            // ignore
+          }
+        }
         router.refresh();
-      }
-    });
+      }),
+    [data.certificateId, header, points, masters, instruments, grid, router],
+  );
+
+  // Autosave a while after the last change, when every value is a number.
+  useEffect(() => {
+    if (!dirty || invalid || saving) return;
+    const timer = setTimeout(() => save(true), AUTOSAVE_MS);
+    return () => clearTimeout(timer);
+  }, [dirty, invalid, saving, save, header, points, masters, instruments, grid]);
 
   const removePoint = (pi: number) => {
     touch();
@@ -178,6 +270,53 @@ export function CalibrationSheet({ data }: { data: SheetData }) {
 
   return (
     <div className="flex flex-col gap-6">
+      {backup ? (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-3 rounded-lg border border-attention/30 bg-attention-soft px-4 py-3 text-sm text-attention"
+        >
+          <span>
+            Readings typed on this computer at{" "}
+            {new Intl.DateTimeFormat("en-IN", {
+              day: "2-digit",
+              month: "short",
+              hour: "2-digit",
+              minute: "2-digit",
+            }).format(backup.at)}{" "}
+            were not saved.
+          </span>
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => {
+              setHeader(backup.header);
+              setPoints(backup.points);
+              setMasters(backup.masters);
+              setInstruments(backup.instruments);
+              setGrid(backup.grid);
+              setBackup(null);
+              touch();
+            }}
+          >
+            Restore them
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              try {
+                window.localStorage.removeItem(backupKey(data.certificateId));
+              } catch {
+                // ignore
+              }
+              setBackup(null);
+            }}
+          >
+            Discard
+          </Button>
+        </div>
+      ) : null}
       <details className="rounded-lg border border-border bg-surface p-4">
         <summary className="cursor-pointer font-medium">
           Certificate details{" "}
@@ -302,7 +441,8 @@ export function CalibrationSheet({ data }: { data: SheetData }) {
         <p className="text-sm text-muted-foreground">
           Type the master reading for each point, then each instrument&apos;s reading. You can paste
           a block copied from Excel into any cell; it fills right and down. Deviations are worked
-          out as you type and checked again on the server when you save.
+          out as you type and checked again on the server when you save. A header row of serial
+          numbers copied with the readings puts each column under the right logger.
         </p>
         <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-max min-w-full border-collapse text-sm">
@@ -398,6 +538,7 @@ export function CalibrationSheet({ data }: { data: SheetData }) {
                       inputMode="decimal"
                       className="tabular h-8 w-24 font-medium"
                       value={p.reference}
+                      onPaste={paste(pi, -1)}
                       onChange={(e) => {
                         touch();
                         setPoints(
@@ -462,14 +603,27 @@ export function CalibrationSheet({ data }: { data: SheetData }) {
         </Button>
       </section>
 
+      {notice ? (
+        <p role="status" className="rounded-md bg-info-soft px-3 py-2 text-sm text-info">
+          {notice}
+        </p>
+      ) : null}
       <FormMessage result={result} />
       <div className="sticky bottom-0 z-20 -mx-4 flex flex-wrap items-center gap-3 border-t border-border bg-background/95 px-4 py-3 backdrop-blur">
-        <Button type="button" onClick={save} disabled={saving}>
+        <Button type="button" onClick={() => save(false)} disabled={saving}>
           <Save aria-hidden="true" />
           {saving ? "Saving…" : "Save"}
         </Button>
         <span className="text-sm text-muted-foreground">
-          {dirty ? "Unsaved changes" : "All changes saved"}
+          {saving
+            ? "Saving…"
+            : dirty
+              ? invalid
+                ? "Unsaved: fix the values marked “not a number” first"
+                : `Unsaved changes; saves by itself after ${AUTOSAVE_MS / 1000} seconds`
+              : savedAt
+                ? `All changes saved at ${savedAt}`
+                : "All changes saved"}
         </span>
       </div>
     </div>

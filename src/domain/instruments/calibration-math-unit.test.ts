@@ -46,6 +46,16 @@ describe("typed values", () => {
   it("accepts the usual ways people type decimals", () => {
     expect(cleanDecimal(" −25.084 ")).toBe("-25.084");
     expect(cleanDecimal("25,5")).toBe("25.5");
+    // As pasted from QA Tech's sheets and logger software, with units.
+    expect(cleanDecimal("-20.2 °C")).toBe("-20.2");
+    expect(cleanDecimal("−20,3 °C")).toBe("-20.3");
+    expect(cleanDecimal("-20.1°C")).toBe("-20.1");
+    expect(cleanDecimal("50.6 %RH")).toBe("50.6");
+    expect(cleanDecimal("50.6% RH")).toBe("50.6");
+    expect(cleanDecimal("65.1 C")).toBe("65.1");
+    expect(cleanDecimal("20 %")).toBe("20");
+    expect(cleanDecimal("abc")).toBeNull();
+    expect(cleanDecimal("12 kg")).toBeNull();
     expect(cleanDecimal("+.5")).toBe("0.5");
     expect(cleanDecimal(-24)).toBe("-24");
     expect(cleanDecimal("abc")).toBeNull();

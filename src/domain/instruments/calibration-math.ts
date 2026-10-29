@@ -14,7 +14,12 @@ const DECIMAL = /^[+-]?\d+(\.\d+)?$/;
 export function cleanDecimal(input: unknown): string | null {
   if (typeof input === "number") return Number.isFinite(input) ? String(input) : null;
   if (typeof input !== "string") return null;
-  let s = input.trim().replace(/[−–]/g, "-").replace(/\s+/g, "");
+  // Units typed or pasted with the value ("-20.2 °C", "50 %RH", "15,2 C") are dropped.
+  let s = input
+    .trim()
+    .replace(/[−–]/g, "-")
+    .replace(/\s*(?:°\s*c|deg\.?\s*c|%\s*rh|% ?r\.?h\.?|rh|%|°|c)$/i, "")
+    .replace(/\s+/g, "");
   if (/^[+-]?\d+,\d+$/.test(s)) s = s.replace(",", ".");
   if (/^[+-]?\.\d+$/.test(s)) s = s.replace(".", "0.");
   return DECIMAL.test(s) ? s.replace(/^\+/, "") : null;
