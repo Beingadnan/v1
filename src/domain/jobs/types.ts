@@ -66,6 +66,19 @@ export const BOARD_COLUMNS: { key: string; label: string; statuses: JobStatus[] 
 
 /** Statuses after which a job no longer holds loggers or people. */
 export const FINISHED: readonly JobStatus[] = ["closed", "cancelled"];
+/**
+ * While a job is in one of these, its booked instruments are out with it (or
+ * about to be): other jobs on overlapping dates can't book them. From Data
+ * Received on the loggers are back; the bookings stay as the record of what
+ * was used.
+ */
+export const HOLDS_INSTRUMENTS: readonly JobStatus[] = [
+  "created",
+  "ready",
+  "field_work",
+  "data_issue",
+  "on_hold",
+];
 /** Before field work starts, the job can still be edited freely. */
 export const PLANNING: readonly JobStatus[] = ["created", "ready"];
 

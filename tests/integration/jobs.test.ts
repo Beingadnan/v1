@@ -1,0 +1,671 @@
+import { and, eq } from "drizzle-orm";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { auditLog, jobStatusHistory, rateCards, sites, users } from "@/db/schema";
+import { ensureOrganisation } from "@/db/seed/ensure-organisation";
+import { ForbiddenError } from "@/domain/auth/permissions";
+import { toSessionUser, type SessionUser } from "@/domain/auth/session-service";
+import { createCompany, createClientSite } from "@/domain/clients/company-service";
+import { createEquipment } from "@/domain/clients/equipment-service";
+import { getCompany } from "@/domain/clients/queries";
+import { createExternalCertificate } from "@/domain/instruments/certificate-service";
+import { createInstrument, saveModel } from "@/domain/instruments/instrument-service";
+import {
+  addStudies,
+  autoBook,
+  bookByCodes,
+  changeStatus,
+  createJob,
+  releaseInstruments,
+  removeStudy,
+  retireRateLine,
+  saveRateLine,
+  setReadiness,
+  setTeam,
+  updateJob,
+  updateStudy,
+} from "@/domain/jobs/job-service";
+import { getJob, listJobs, siteEquipment } from "@/domain/jobs/queries";
+
+import { openTestDatabase } from "../support/test-db";
+
+const { db, close } = openTestDatabase();
+const req = { ipAddress: "203.0.113.70" };
+let manager: SessionUser;
+let leader: SessionUser;
+let engineer: SessionUser;
+let accounts: SessionUser;
+let outsider: SessionUser;
+let orgId: string;
+let bhwId: string;
+let watsonId: string;
+let seawoodsId: string;
+let navalId: string;
+let wf02: string;
+let wf03: string;
+let cr01: string;
+let elsewhere: string;
+const loggerIds: Record<string, string> = {};
+
+async function makeUser(organisationId: string, email: string, role: string, name: string) {
+  const [row] = await db
+    .insert(users)
+    .values({ organisationId, email, name, role, status: "active", passwordHash: "x" })
+    .returning();
+  return toSessionUser(row!)!;
+}
+
+const company = {
+  name: "Watson Pharma Pvt Limited",
+  code: "Watson",
+  gstin: "",
+  address: "",
+  notes: "",
+  postCalRequired: false,
+  requalificationMonths: 12,
+  reportNumberFormat: "{CLIENT}/{SITE}/{MM}/{YY}/{EQUIPMENT}/{EQUIPMENT_ID}",
+};
+const site = (name: string) => ({ name, code: name, address: "", city: "", state: "", gstin: "" });
+const freezer = (siteId: string, code: string, lastStudyOn: string, type = "walk_in_freezer") => ({
+  siteId,
+  departmentId: null,
+  code,
+  name: type === "cold_room" ? "Cold Room" : "Cold Storage (Walk In Freezer)",
+  type,
+  location: "",
+  make: "Blue Star",
+  model: "",
+  serialNo: "",
+  lengthM: "",
+  widthM: "",
+  heightM: "",
+  setPointC: "-24",
+  tempMinC: "-30",
+  tempMaxC: "-15",
+  rhMinPct: "",
+  rhMaxPct: "",
+  defaultChannels: "9",
+  readingIntervalMinutes: "10",
+  studyDurationHours: "24",
+  requalificationMonths: "",
+  lastStudyOn,
+  notes: "",
+});
+
+let jobId: string;
+let jobNumber: string;
+
+beforeAll(async () => {
+  const org = (await ensureOrganisation(db, { slug: "jobs-org", name: "QA Tech Jobs" }))
+    .organisation;
+  orgId = org.id;
+  manager = await makeUser(org.id, "mgr@jobs.test", "manager", "Quality Manager");
+  leader = await makeUser(org.id, "tl@jobs.test", "team_leader", "Rahul TL");
+  engineer = await makeUser(org.id, "fe@jobs.test", "field_engineer", "Suresh FE");
+  accounts = await makeUser(org.id, "acc@jobs.test", "accounts", "Accounts");
+  const otherOrg = (await ensureOrganisation(db, { slug: "jobs-other", name: "Other" }))
+    .organisation;
+  outsider = await makeUser(otherOrg.id, "admin@jobs-other.test", "admin", "Other Admin");
+  const [bhw] = await db
+    .insert(sites)
+    .values({ organisationId: org.id, code: "BHW", name: "Bhiwandi" })
+    .returning();
+  bhwId = bhw!.id;
+
+  watsonId = (await createCompany(db, manager, { ...company, firstSite: site("Seawoods") }, req))
+    .id;
+  seawoodsId = (await getCompany(db, manager, watsonId))!.sites[0]!.id;
+  navalId = (await createClientSite(db, manager, watsonId, site("Taloja"), req)).id;
+  wf02 = (
+    await createEquipment(db, manager, watsonId, freezer(seawoodsId, "BE-WF-02", "2025-11-10"), req)
+  ).id;
+  wf03 = (await createEquipment(db, manager, watsonId, freezer(seawoodsId, "BE-WF-03", ""), req))
+    .id;
+  cr01 = (
+    await createEquipment(
+      db,
+      manager,
+      watsonId,
+      freezer(seawoodsId, "BE-CR-01", "", "cold_room"),
+      req,
+    )
+  ).id;
+  elsewhere = (await createEquipment(db, manager, watsonId, freezer(navalId, "TL-WF-01", ""), req))
+    .id;
+
+  const modelId = (
+    await saveModel(
+      db,
+      manager,
+      null,
+      {
+        type: "portable_logger",
+        make: "ebro",
+        model: "EBI 20-T1",
+        equipmentName: "Temperature Datalogger",
+        quantities: ["temperature"],
+        accuracy: { temperature: "0.5" },
+        defaultPoints: [{ quantity: "temperature", reference: "-25", condition: "" }],
+        intervalMonths: 12,
+      },
+      req,
+    )
+  ).id;
+  // T-01…T-10 valid to mid-2027; T-11, T-12 run out on 30.11.2026.
+  for (let n = 1; n <= 12; n++) {
+    const code = `T-${String(n).padStart(2, "0")}`;
+    loggerIds[code] = (
+      await createInstrument(
+        db,
+        manager,
+        { type: "portable_logger", code, serialNo: `6236${3000 + n}`, modelId, homeSiteId: bhwId },
+        req,
+      )
+    ).id;
+  }
+  const certify = (number: string, ids: string[], validUntil: string) =>
+    createExternalCertificate(
+      db,
+      manager,
+      {
+        number,
+        ulrNo: "",
+        labName: "QA Tech Lab",
+        calibratedOn: "2026-06-01",
+        validUntil,
+        instrumentIds: ids,
+      },
+      req,
+    );
+  await certify(
+    "QATECH/BHIWANDI/06/26/PDL-01",
+    Array.from({ length: 10 }, (_, i) => loggerIds[`T-${String(i + 1).padStart(2, "0")}`]!),
+    "2027-06-30",
+  );
+  await certify(
+    "QATECH/BHIWANDI/06/26/PDL-02",
+    [loggerIds["T-11"]!, loggerIds["T-12"]!],
+    "2026-11-30",
+  );
+});
+
+afterAll(close);
+
+const state = async (id: string) => (await getJob(db, manager, id))!;
+
+describe("phase 4 exit test: a Watson job with 2 freezers", () => {
+  it("prices from the rate card", async () => {
+    await saveRateLine(
+      db,
+      manager,
+      {
+        workType: "temperature_mapping",
+        equipmentType: "walk_in_freezer",
+        durationHours: "24",
+        basis: "per_study",
+        price: "₹18,000",
+        notes: "",
+      },
+      null,
+      req,
+    );
+    await expect(
+      saveRateLine(
+        db,
+        engineer,
+        { workType: "temperature_mapping", basis: "per_study", price: "1" },
+        null,
+        req,
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(
+      saveRateLine(
+        db,
+        manager,
+        {
+          workType: "temperature_mapping",
+          equipmentType: "walk_in_freezer",
+          durationHours: "24",
+          basis: "per_study",
+          price: "1",
+        },
+        null,
+        req,
+      ),
+    ).rejects.toThrow("There is already a price");
+  });
+
+  it("ticks the due freezer in the wizard", async () => {
+    const list = await siteEquipment(db, leader, seawoodsId);
+    const wf = list.find((e) => e.code === "BE-WF-02")!;
+    expect(wf).toMatchObject({ nextDue: "2026-11-09", due: "due_soon", onJob: null });
+    expect(list.find((e) => e.code === "BE-WF-03")!.due).toBe("none");
+  });
+
+  it("creates the job with studies, reserved report numbers and a team", async () => {
+    await expect(
+      createJob(
+        db,
+        accounts,
+        {
+          companyId: watsonId,
+          clientSiteId: seawoodsId,
+          plannedStart: "2026-11-02",
+          plannedEnd: "2026-11-05",
+          items: [{ equipmentId: wf02 }],
+        },
+        req,
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(
+      createJob(
+        db,
+        leader,
+        {
+          companyId: watsonId,
+          clientSiteId: seawoodsId,
+          plannedStart: "2026-11-02",
+          plannedEnd: "2026-11-05",
+          items: [{ equipmentId: wf02 }, { equipmentId: elsewhere }],
+        },
+        req,
+      ),
+    ).rejects.toThrow("TL-WF-01 is at another site of this client");
+    await expect(
+      createJob(
+        db,
+        leader,
+        {
+          companyId: watsonId,
+          clientSiteId: seawoodsId,
+          plannedStart: "2026-11-05",
+          plannedEnd: "2026-11-02",
+          items: [{ equipmentId: wf02 }],
+        },
+        req,
+      ),
+    ).rejects.toThrow("The end date is before the start.");
+    await expect(
+      createJob(
+        db,
+        leader,
+        {
+          companyId: watsonId,
+          clientSiteId: seawoodsId,
+          plannedStart: "2026-11-02",
+          plannedEnd: "2026-11-05",
+          items: [{ equipmentId: wf02 }, { equipmentId: wf02 }],
+        },
+        req,
+      ),
+    ).rejects.toThrow("BE-WF-02 is already on this job.");
+
+    const created = await createJob(
+      db,
+      leader,
+      {
+        companyId: watsonId,
+        clientSiteId: seawoodsId,
+        siteId: "",
+        title: "Annual freezer mapping",
+        poNumber: "",
+        poValue: "",
+        plannedStart: "2026-11-02",
+        plannedEnd: "2026-11-05",
+        team: [
+          { userId: leader.id, role: "team_leader" },
+          { userId: engineer.id, role: "field_engineer" },
+        ],
+        items: [{ equipmentId: wf02 }, { equipmentId: wf03 }],
+      },
+      req,
+    );
+    jobId = created.id;
+    jobNumber = created.number;
+    expect(jobNumber).toMatch(/^QT\/J\/2026\/\d{4}$/);
+
+    const job = await state(jobId);
+    expect(job.status).toBe("created");
+    // The only QA Tech site is picked by itself.
+    expect(job.qaSite?.code).toBe("BHW");
+    expect(
+      job.studies.map((s) => [s.equipment.code, s.reportNumber, s.loggerCount, s.price]),
+    ).toEqual([
+      ["BE-WF-02", "Watson/Seawoods/11/26/Cold Storage (Walk In Freezer)/BE-WF-02", 9, "18000.00"],
+      ["BE-WF-03", "Watson/Seawoods/11/26/Cold Storage (Walk In Freezer)/BE-WF-03", 9, "18000.00"],
+    ]);
+    expect(job.value).toMatchObject({ expected: 36000, source: "rate_card" });
+    expect(job.team.map((t) => t.name).sort()).toEqual(["Rahul TL", "Suresh FE"]);
+    const pending = job.readiness.items.filter((i) => i.state === "pending").map((i) => i.key);
+    expect(pending).toEqual([
+      "purchase_order",
+      "protocol",
+      "site_access",
+      "loggers_booked",
+      "loggers_valid",
+      "previous_report",
+    ]);
+    // On the due list the freezer now shows its job.
+    expect(
+      (await siteEquipment(db, leader, seawoodsId)).find((e) => e.code === "BE-WF-02")!.onJob
+        ?.number,
+    ).toBe(jobNumber);
+  });
+
+  it("is found by its PO, report number or equipment, and only in its organisation", async () => {
+    await updateJob(
+      db,
+      leader,
+      jobId,
+      {
+        siteId: bhwId,
+        title: "Annual freezer mapping",
+        poNumber: "4500098765",
+        poDate: "2026-10-20",
+        poValue: "₹ 30,000",
+        quotedValue: "",
+        plannedStart: "2026-11-02",
+        plannedEnd: "2026-11-05",
+        notes: "",
+      },
+      req,
+    );
+    for (const q of ["98765", "be-wf-03", "11/26/cold storage", "watson", jobNumber]) {
+      expect(
+        (await listJobs(db, engineer, { q })).map((j) => j.id),
+        q,
+      ).toEqual([jobId]);
+    }
+    expect(await listJobs(db, engineer, { q: "%" })).toEqual([]);
+    expect(await listJobs(db, outsider, {})).toEqual([]);
+    expect(await getJob(db, outsider, jobId)).toBeNull();
+    await expect(
+      createJob(
+        db,
+        outsider,
+        {
+          companyId: watsonId,
+          clientSiteId: seawoodsId,
+          plannedStart: "2026-11-02",
+          plannedEnd: "2026-11-05",
+          items: [{ equipmentId: wf02 }],
+        },
+        req,
+      ),
+    ).rejects.toThrow("That client does not exist.");
+  });
+
+  it("shows money to managers and accounts, not to field engineers", async () => {
+    const forEngineer = (await getJob(db, engineer, jobId))!;
+    expect(forEngineer.job.poValue).toBeNull();
+    expect(forEngineer.value).toBeNull();
+    expect(forEngineer.studies[0]!.price).toBeNull();
+    expect((await listJobs(db, engineer, { q: "98765" }))[0]!.poValue).toBeNull();
+    const forAccounts = (await getJob(db, accounts, jobId))!;
+    expect(forAccounts.value).toMatchObject({ expected: 36000, poDifference: -6000 });
+    expect(forAccounts.canManage).toBe(false);
+  });
+
+  it("books loggers in one click, skipping ones that would run out", async () => {
+    // Five loggers per freezer: 10 + 1 spare.
+    for (const s of (await state(jobId)).studies) {
+      await updateStudy(
+        db,
+        leader,
+        s.id,
+        {
+          workType: "temperature_mapping",
+          loggerCount: "5",
+          cycles: ["empty"],
+          season: "",
+          durationHours: "24",
+          intervalMinutes: "10",
+        },
+        req,
+      );
+    }
+    const booked = await autoBook(db, leader, jobId, req);
+    expect(booked.booked).toEqual([
+      "T-01",
+      "T-02",
+      "T-03",
+      "T-04",
+      "T-05",
+      "T-06",
+      "T-07",
+      "T-08",
+      "T-09",
+      "T-10",
+      "T-11",
+    ]);
+    expect(booked.short).toEqual([]);
+    // Run again: nothing more is needed.
+    expect((await autoBook(db, leader, jobId, req)).booked).toEqual([]);
+
+    await setReadiness(
+      db,
+      leader,
+      jobId,
+      { key: "protocol", state: "ready", note: "QA-PR-112 approved" },
+      req,
+    );
+    await setReadiness(db, leader, jobId, { key: "site_access", state: "ready", note: "" }, req);
+    expect((await state(jobId)).status).toBe("created");
+    await setReadiness(
+      db,
+      leader,
+      jobId,
+      { key: "previous_report", state: "ready", note: "11/25 report on file" },
+      req,
+    );
+    const ready = await state(jobId);
+    expect(ready.readiness.ready).toBe(true);
+    expect(ready.status).toBe("ready");
+    expect(ready.history.map((h) => h.toStatus)).toEqual(["created", "ready"]);
+  });
+
+  it("can't move to Field Work while a logger is out of date", async () => {
+    // The client moves the visit to December: T-11 is due on 30.11.2026.
+    await updateJob(
+      db,
+      leader,
+      jobId,
+      {
+        siteId: bhwId,
+        title: "Annual freezer mapping",
+        poNumber: "4500098765",
+        poDate: "2026-10-20",
+        poValue: "30000",
+        quotedValue: "",
+        plannedStart: "2026-12-01",
+        plannedEnd: "2026-12-04",
+        notes: "Client postponed",
+      },
+      req,
+    );
+    const job = await state(jobId);
+    expect(job.status).toBe("created");
+    expect(job.booked.find((b) => b.code === "T-11")!.problem).toBe("T-11 is due on 30.11.2026");
+    expect(job.history.at(-1)?.reason).toBe("Pending: Loggers calibrated through the study");
+    await expect(changeStatus(db, leader, jobId, "start_field_work", "", req)).rejects.toThrow(
+      "Start field work isn't possible while the job is Created.",
+    );
+
+    // Swapping in T-12 is refused for the same reason; a freshly calibrated logger is accepted.
+    await releaseInstruments(db, leader, jobId, [loggerIds["T-11"]!], req);
+    const swap = await bookByCodes(db, leader, jobId, "T-12\nNOPE-1", req);
+    expect(swap).toEqual({
+      booked: [],
+      notFound: ["NOPE-1"],
+      refused: [{ code: "T-12", reason: "is due on 30.11.2026" }],
+    });
+    const t13 = await createInstrument(
+      db,
+      manager,
+      {
+        type: "portable_logger",
+        code: "T-13",
+        serialNo: "62363013",
+        make: "ebro",
+        model: "EBI 20-T1",
+        homeSiteId: bhwId,
+      },
+      req,
+    );
+    await createExternalCertificate(
+      db,
+      manager,
+      {
+        number: "QATECH/BHIWANDI/10/26/PDL-09",
+        ulrNo: "",
+        labName: "QA Tech Lab",
+        calibratedOn: "2026-10-15",
+        validUntil: "2027-10-14",
+        instrumentIds: [t13.id],
+      },
+      req,
+    );
+    // Booked by its serial number, as it's printed on the logger.
+    expect((await bookByCodes(db, leader, jobId, "62363013", req)).booked).toEqual(["T-13"]);
+    expect((await state(jobId)).status).toBe("ready");
+
+    await expect(
+      changeStatus(db, engineer, jobId, "start_field_work", "", req),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+    expect(await changeStatus(db, leader, jobId, "start_field_work", "", req)).toBe("field_work");
+    // Studies are fixed once field work starts.
+    const first = (await state(jobId)).studies[0]!;
+    await expect(removeStudy(db, leader, first.id, req)).rejects.toThrow(
+      "before field work starts",
+    );
+  });
+});
+
+describe("clashes, holds and repeat visits", () => {
+  let second: string;
+
+  it("warns when people or loggers are already on an overlapping job", async () => {
+    second = (
+      await createJob(
+        db,
+        leader,
+        {
+          companyId: watsonId,
+          clientSiteId: seawoodsId,
+          plannedStart: "2026-12-03",
+          plannedEnd: "2026-12-06",
+          team: [{ userId: engineer.id, role: "field_engineer" }],
+          items: [{ equipmentId: cr01, loggerCount: "3" }],
+        },
+        req,
+      )
+    ).id;
+    const job = await state(second);
+    expect(job.teamClashes).toEqual([
+      { userId: engineer.id, name: "Suresh FE", jobs: [{ id: jobId, number: jobNumber }] },
+    ]);
+    const booked = await autoBook(db, leader, second, req);
+    // Every valid logger is on the first job; T-11 and T-12 run out.
+    expect(booked.booked).toEqual([]);
+    expect(booked.short).toEqual([{ type: "portable_logger", count: 3 }]);
+    expect(booked.skipped).toEqual([
+      { reason: "booked on another job", count: 11 },
+      { reason: "calibration runs out before the study ends", count: 2 },
+    ]);
+    expect((await bookByCodes(db, leader, second, "T-01", req)).refused).toEqual([
+      { code: "T-01", reason: `booked on ${jobNumber}` },
+    ]);
+  });
+
+  it("holds with a reason, resumes where it was, and frees loggers when cancelled", async () => {
+    await expect(changeStatus(db, leader, second, "hold", " ", req)).rejects.toThrow("Say why");
+    expect(await changeStatus(db, leader, second, "hold", "Client shutdown", req)).toBe("on_hold");
+    await expect(changeStatus(db, leader, second, "start_field_work", "", req)).rejects.toThrow(
+      "isn't possible",
+    );
+    expect(await changeStatus(db, leader, second, "resume", "", req)).toBe("created");
+
+    // A cancelled job no longer holds its loggers.
+    await changeStatus(db, leader, jobId, "cancel", "Test of release", req);
+    expect((await autoBook(db, leader, second, req)).booked).toEqual([
+      "T-01",
+      "T-02",
+      "T-03",
+      "T-04",
+    ]);
+    await expect(changeStatus(db, leader, jobId, "resume", "", req)).rejects.toThrow(
+      "isn't possible",
+    );
+    await expect(addStudies(db, leader, jobId, [wf02], req)).rejects.toThrow("Cancelled");
+    const hist = await db
+      .select({ to: jobStatusHistory.toStatus, reason: jobStatusHistory.reason })
+      .from(jobStatusHistory)
+      .where(eq(jobStatusHistory.jobId, second));
+    expect(hist.map((h) => h.to)).toEqual(["created", "on_hold", "created"]);
+  });
+
+  it("gives a repeat study in the same month a suffixed report number", async () => {
+    const repeat = await createJob(
+      db,
+      leader,
+      {
+        companyId: watsonId,
+        clientSiteId: seawoodsId,
+        plannedStart: "2026-11-20",
+        plannedEnd: "2026-11-21",
+        items: [{ equipmentId: wf02 }],
+      },
+      req,
+    );
+    expect((await state(repeat.id)).studies[0]!.reportNumber).toBe(
+      "Watson/Seawoods/11/26/Cold Storage (Walk In Freezer)/BE-WF-02-2",
+    );
+    // A job keeps at least one study.
+    await expect(
+      removeStudy(db, leader, (await state(repeat.id)).studies[0]!.id, req),
+    ).rejects.toThrow("at least one study");
+    await setTeam(db, leader, repeat.id, [{ userId: leader.id, role: "team_leader" }], req);
+    await expect(
+      setTeam(db, leader, repeat.id, [{ userId: outsider.id, role: "field_engineer" }], req),
+    ).rejects.toThrow("A team member does not exist.");
+  });
+
+  it("audits every change", async () => {
+    const rows = await db
+      .select({ action: auditLog.action })
+      .from(auditLog)
+      .where(and(eq(auditLog.organisationId, orgId), eq(auditLog.entityId, jobId)));
+    const actions = new Set(rows.map((r) => r.action));
+    for (const a of [
+      "job.created",
+      "job.updated",
+      "job.status_changed",
+      "job.readiness_updated",
+      "job.instruments_booked",
+      "job.instruments_released",
+    ]) {
+      expect(actions.has(a as never), a).toBe(true);
+    }
+  });
+
+  it("retires a rate so new jobs aren't priced from it", async () => {
+    const [line] = await db.select().from(rateCards).where(eq(rateCards.organisationId, orgId));
+    await retireRateLine(db, manager, line!.id, req);
+    const priced = await createJob(
+      db,
+      leader,
+      {
+        companyId: watsonId,
+        clientSiteId: seawoodsId,
+        plannedStart: "2027-01-10",
+        plannedEnd: "2027-01-11",
+        items: [{ equipmentId: wf03 }],
+      },
+      req,
+    );
+    const job = await state(priced.id);
+    expect(job.studies[0]!.price).toBeNull();
+    expect(job.studies[0]!.priceNote).toBe("No rate-card line for this work.");
+    expect(job.value).toMatchObject({ expected: null, unpriced: 1 });
+  });
+});
