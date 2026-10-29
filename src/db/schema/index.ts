@@ -1,6 +1,7 @@
 export * from "./audit-log";
 export * from "./clients";
 export * from "./instruments";
+export * from "./jobs";
 export * from "./organisations";
 export * from "./settings";
 export * from "./signatures";

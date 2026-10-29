@@ -21,6 +21,10 @@ export const ACTIONS = [
   "calibration.perform",
   "calibration.check",
   "calibration.approve",
+  "jobs.view",
+  "jobs.manage",
+  "jobs.money",
+  "ratecard.manage",
 ] as const;
 
 export type Action = (typeof ACTIONS)[number];
@@ -30,6 +34,7 @@ const FIELD_AND_OFFICE: Action[] = [
   "files.view",
   "clients.view",
   "instruments.view",
+  "jobs.view",
 ];
 
 const MATRIX: Record<Role, ReadonlySet<Action>> = {
@@ -43,6 +48,9 @@ const MATRIX: Record<Role, ReadonlySet<Action>> = {
     "calibration.perform",
     "calibration.check",
     "calibration.approve",
+    "jobs.manage",
+    "jobs.money",
+    "ratecard.manage",
     ...FIELD_AND_OFFICE,
   ]),
   team_leader: new Set<Action>([
@@ -50,13 +58,16 @@ const MATRIX: Record<Role, ReadonlySet<Action>> = {
     "instruments.manage",
     "calibration.perform",
     "calibration.check",
+    "jobs.manage",
+    "jobs.money",
     ...FIELD_AND_OFFICE,
   ]),
   report_preparer: new Set<Action>(["calibration.perform", ...FIELD_AND_OFFICE]),
   field_engineer: new Set<Action>(FIELD_AND_OFFICE),
   // The lab calibrates the fleet and keeps master certificates current.
   lab: new Set<Action>(["instruments.manage", "calibration.perform", ...FIELD_AND_OFFICE]),
-  accounts: new Set<Action>(["files.view", "clients.view"]),
+  // Accounts follow jobs to raise invoices; they see the money, not the work tools.
+  accounts: new Set<Action>(["files.view", "clients.view", "jobs.view", "jobs.money"]),
   // Client access is scoped to their own company's released records (phases 2, 9 and 13).
   client_qa: new Set<Action>(),
   client_qa_head: new Set<Action>(),

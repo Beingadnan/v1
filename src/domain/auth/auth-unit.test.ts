@@ -97,6 +97,8 @@ describe("permission matrix", () => {
         "accounts": [
           "clients.view",
           "files.view",
+          "jobs.money",
+          "jobs.view",
         ],
         "admin": [
           "audit.view",
@@ -109,6 +111,10 @@ describe("permission matrix", () => {
           "files.view",
           "instruments.manage",
           "instruments.view",
+          "jobs.manage",
+          "jobs.money",
+          "jobs.view",
+          "ratecard.manage",
           "settings.manage",
           "settings.view",
           "users.manage",
@@ -121,6 +127,7 @@ describe("permission matrix", () => {
           "files.upload",
           "files.view",
           "instruments.view",
+          "jobs.view",
         ],
         "lab": [
           "calibration.perform",
@@ -129,6 +136,7 @@ describe("permission matrix", () => {
           "files.view",
           "instruments.manage",
           "instruments.view",
+          "jobs.view",
         ],
         "manager": [
           "audit.view",
@@ -141,6 +149,10 @@ describe("permission matrix", () => {
           "files.view",
           "instruments.manage",
           "instruments.view",
+          "jobs.manage",
+          "jobs.money",
+          "jobs.view",
+          "ratecard.manage",
           "settings.view",
           "users.view",
         ],
@@ -150,6 +162,7 @@ describe("permission matrix", () => {
           "files.upload",
           "files.view",
           "instruments.view",
+          "jobs.view",
         ],
         "team_leader": [
           "calibration.check",
@@ -160,6 +173,9 @@ describe("permission matrix", () => {
           "files.view",
           "instruments.manage",
           "instruments.view",
+          "jobs.manage",
+          "jobs.money",
+          "jobs.view",
         ],
       }
     `);

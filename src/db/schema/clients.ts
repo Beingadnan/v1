@@ -229,6 +229,7 @@ export const equipment = pgTable(
     ...audited,
   },
   (t) => [
+    unique("equipment_id_org_key").on(t.id, t.organisationId),
     foreignKey({
       name: "equipment_company_fk",
       columns: [t.companyId, t.organisationId],

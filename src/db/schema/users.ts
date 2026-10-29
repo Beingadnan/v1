@@ -9,6 +9,7 @@ import {
   pgTable,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
@@ -52,6 +53,7 @@ export const users = pgTable(
     }),
   },
   (t) => [
+    unique("users_id_org_key").on(t.id, t.organisationId),
     uniqueIndex("users_email_lower_key").on(sql`lower(${t.email})`),
     index("users_org_idx").on(t.organisationId),
     check("users_role_check", sql`${t.role} in (${roleList})`),
