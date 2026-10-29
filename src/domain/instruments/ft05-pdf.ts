@@ -3,6 +3,7 @@ import "server-only";
 import PDFDocument from "pdfkit";
 
 import { decimalPlaces, DECISION_RULE_TEXT } from "./calibration-math";
+import { dmy, toPlaces } from "./display";
 import type { CertificateDetail } from "./queries";
 import { INSTRUMENT_TYPE_INFO, type InstrumentType } from "./types";
 
@@ -44,17 +45,6 @@ type CellOptions = {
   fill?: string;
   border?: boolean;
 };
-
-/** dd.mm.yyyy, as on QA Tech's paper certificates. */
-export const dmy = (iso: string | null | undefined) =>
-  iso ? iso.split("-").reverse().join(".") : "NA";
-
-/** Pads a decimal string to `places` decimals ("1.1", 2 → "1.10"); never removes digits. */
-export function toPlaces(value: string, places: number): string {
-  const have = decimalPlaces(value);
-  if (have >= places) return value;
-  return `${value}${have === 0 ? "." : ""}${"0".repeat(places - have)}`;
-}
 
 const ascii = (s: string) =>
   // The built-in PDF fonts cover Windows-1252 only: map the few characters people type.
