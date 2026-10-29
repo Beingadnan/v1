@@ -13,6 +13,7 @@ export default async function NoAccessPage() {
     <div className="mx-auto max-w-2xl">
       <EmptyState
         icon={ShieldAlert}
+        headingLevel="h1"
         title="Your role doesn't include this page"
         description="If you need it for your work, ask an admin to change your role."
         action={

@@ -115,3 +115,20 @@ export function instrumentTypeFromText(text: string): InstrumentType | null {
   ];
   return aliases.find(([pattern]) => pattern.test(key))?.[1] ?? null;
 }
+
+/**
+ * What each type of master can serve as a reference for. A certificate's
+ * %RH points need a humidity reference, its °C points a temperature one.
+ */
+export const TYPE_MEASURES: Record<InstrumentType, readonly Quantity[]> = {
+  portable_logger: ["temperature", "humidity"],
+  rtd: ["temperature"],
+  thermocouple: ["temperature"],
+  pressure_transmitter: ["pressure"],
+  temperature_indicator: ["temperature"],
+  humidity_indicator: ["temperature", "humidity"],
+  reference_thermometer: ["temperature"],
+  data_acquisition: ["temperature"],
+  calibration_bath: ["temperature"],
+  other: ["temperature", "humidity", "pressure"],
+};

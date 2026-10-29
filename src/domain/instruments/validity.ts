@@ -71,6 +71,8 @@ export const VALIDITY_LABELS: Record<ValidityState, string> = {
   valid: "Valid",
 };
 
+const dmy = (iso: string | null) => (iso ? iso.split("-").reverse().join(".") : "");
+
 /** Can this instrument be picked for work on `date`? Says why not, in plain words. */
 export function usableOn(
   instrument: { code: string; status: string },
@@ -88,10 +90,10 @@ export function usableOn(
   const latest = latestCertificate(certs);
   if (!latest) return { ok: false, message: `${instrument.code} has no calibration certificate.` };
   if (latest.calibratedOn > date) {
-    return { ok: false, message: `${instrument.code} was first calibrated after ${date}.` };
+    return { ok: false, message: `${instrument.code} was first calibrated after ${dmy(date)}.` };
   }
   return {
     ok: false,
-    message: `${instrument.code}'s calibration (${latest.number}) expired on ${latest.validUntil}.`,
+    message: `${instrument.code}'s calibration (${latest.number}) expired on ${dmy(latest.validUntil)}.`,
   };
 }

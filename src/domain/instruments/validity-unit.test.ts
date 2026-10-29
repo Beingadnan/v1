@@ -35,7 +35,7 @@ describe("which certificate covers a day", () => {
   it("explains why an instrument can't be used", () => {
     expect(usableOn({ code: "TL-38", status: "active" }, history, "2026-10-01")).toEqual({
       ok: false,
-      message: "TL-38's calibration (ARAI/CAL/2508/2925) expired on 2026-09-08.",
+      message: "TL-38's calibration (ARAI/CAL/2508/2925) expired on 08.09.2026.",
     });
     expect(usableOn({ code: "TL-38", status: "retired" }, history, "2025-09-01")).toMatchObject({
       ok: false,

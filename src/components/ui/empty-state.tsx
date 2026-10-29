@@ -11,9 +11,18 @@ type EmptyStateProps = {
   /** Usually the one primary button that fills this screen. */
   action?: ReactNode;
   className?: string;
+  /** "h1" when the empty state is the whole page (no other heading). */
+  headingLevel?: "h1" | "h2";
 };
 
-export function EmptyState({ icon: Icon, title, description, action, className }: EmptyStateProps) {
+export function EmptyState({
+  icon: Icon,
+  title,
+  description,
+  action,
+  className,
+  headingLevel: Heading = "h2",
+}: EmptyStateProps) {
   return (
     <div
       className={cn(
@@ -23,7 +32,7 @@ export function EmptyState({ icon: Icon, title, description, action, className }
     >
       <Icon className="size-6 text-primary" aria-hidden="true" />
       <div className="max-w-prose">
-        <h2 className="text-base font-semibold">{title}</h2>
+        <Heading className="text-base font-semibold">{title}</Heading>
         <p className="mt-1 text-sm text-muted-foreground">{description}</p>
       </div>
       {action}

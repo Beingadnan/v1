@@ -177,6 +177,14 @@ export const externalCertificateSchema = z
     remarks: text(2000),
   })
   .superRefine((v, ctx) => {
+    const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+    if (v.calibratedOn > today) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["calibratedOn"],
+        message: "The calibration date is in the future.",
+      });
+    }
     if (v.validUntil && v.validUntil < v.calibratedOn) {
       ctx.addIssue({
         code: "custom",

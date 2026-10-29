@@ -60,6 +60,25 @@ test("phase 3 exit test: PDL batch with a valid master, signed by three people, 
   await page.reload();
   await expect(page.getByText(`ARAI/CAL/2609/${run}`).first()).toBeVisible();
 
+  // And a humidity reference for the %RH points.
+  await page.goto("/instruments");
+  await page.getByRole("button", { name: "Add instrument" }).click();
+  dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Type").selectOption("humidity_indicator");
+  await dialog.getByLabel("QA Tech ID").fill(`QATM/CAL/TH-${run}`);
+  await dialog.getByLabel("Serial number").fill(`6047${run}`);
+  await dialog.getByLabel("Use").selectOption("master");
+  await dialog.getByRole("button", { name: "Add instrument" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: `QATM/CAL/TH-${run}` })).toBeVisible();
+  await page.getByRole("button", { name: "Record outside-lab certificate" }).click();
+  dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Laboratory").fill("Sansel");
+  await dialog.getByLabel("Certificate No.").fill(`SAN/26/${run}/TH/1`);
+  await dialog.getByLabel("Calibrated on").fill("2026-09-09");
+  await dialog.getByLabel("Due date").fill("2030-09-08");
+  await dialog.getByRole("button", { name: "Record certificate" }).click();
+  await expect(dialog).toBeHidden();
+
   // Ten new loggers from pasted serials, with consecutive IDs.
   await page.goto("/instruments");
   await page.getByRole("button", { name: "Add a batch" }).click();
@@ -84,6 +103,7 @@ test("phase 3 exit test: PDL batch with a valid master, signed by three people, 
     .getByLabel("Instruments to calibrate")
     .fill(Array.from({ length: 10 }, (_, i) => serial(i)).join("\n"));
   await lab.getByLabel(new RegExp(`QATM/CAL/SSPRT-${run}`)).check();
+  await lab.getByLabel(new RegExp(`QATM/CAL/TH-${run}`)).check();
   await lab.getByRole("button", { name: "Start certificate" }).click();
   await expect(
     lab.getByRole("heading", { level: 1, name: /^QATECH\/BHIWANDI\/\d{2}\/\d{2}\/PDL-\d{2,}$/ }),
@@ -136,8 +156,18 @@ test("phase 3 exit test: PDL batch with a valid master, signed by three people, 
     dialog.getByText("Enter the lab temperature and humidity during calibration."),
   ).toBeVisible();
   await dialog.getByRole("button", { name: "Cancel" }).click();
+  // Signed out in the middle of typing (30 minutes idle): nothing typed is lost.
+  await lab.context().clearCookies();
   await lab.getByLabel("Temperature", { exact: true }).fill("23 °C");
   await lab.getByLabel("Humidity", { exact: true }).fill("57 %RH");
+  await lab.getByRole("button", { name: "Save" }).click();
+  await expect(lab.getByText(/You were signed out/)).toBeVisible();
+  await expect(lab.getByLabel("Temperature", { exact: true })).toHaveValue("23 °C");
+  const sheetUrl = lab.url();
+  await signIn(lab, "lab");
+  await lab.goto(sheetUrl);
+  await lab.getByRole("button", { name: "Restore them" }).click();
+  await expect(lab.getByLabel("Humidity", { exact: true })).toHaveValue("57 %RH");
   await lab.getByRole("button", { name: "Save" }).click();
   await expect(lab.getByText(/Saved\./)).toBeVisible();
   await sign(lab, "Sign: calibration done by", "lab");
@@ -236,13 +266,16 @@ test("imports a logger list and shows what was skipped", async ({ page, isMobile
     buffer,
   });
   await expect(page.getByText(`QATECH/BHIWANDI/08/25/PDL-${run}`)).toBeVisible();
-  await expect(page.getByText(`Serial 9${run}3 has no ID No.`, { exact: false })).toBeVisible();
-  await page.getByRole("button", { name: "Import 2 instruments" }).click();
-  await expect(
-    page.getByText("Imported 2 instruments and 1 certificate; 1 row skipped."),
-  ).toBeVisible();
+  // The row with a serial but no ID is offered an ID from a prefix.
+  await expect(page.getByText("1 serial number without a QA Tech ID")).toBeVisible();
+  await page.getByLabel("ID prefix").fill(`T${run}-`);
+  await page.getByRole("button", { name: "Check again" }).click();
+  await expect(page.getByText(`First new IDs: T${run}-3 = 9${run}3`)).toBeVisible();
+  await page.getByRole("button", { name: "Import 3 instruments and 1 certificate" }).click();
+  await expect(page.getByText("Imported 3 instruments and 1 certificate.")).toBeVisible();
   await page.goto(`/instruments?q=T${run}-`);
   await expect(page.getByRole("link", { name: `T${run}-2` })).toBeVisible();
+  await expect(page.getByRole("link", { name: `T${run}-3` })).toBeVisible();
 });
 
 test("the register fits a phone screen", async ({ page, isMobile }) => {

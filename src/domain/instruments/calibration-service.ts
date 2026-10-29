@@ -2,7 +2,7 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { Database, Transaction } from "@/db/client-factory";
@@ -14,6 +14,7 @@ import {
   certificates,
   clientCompanies,
   instrumentModels,
+  instruments,
   organisationSettings,
   signatures,
   sites,
@@ -26,21 +27,33 @@ import type { RequestInfo } from "@/domain/auth/policy";
 import type { SessionUser } from "@/domain/auth/session-service";
 import { signRecord, type SignatureMeaning } from "@/domain/auth/signature-service";
 import { isUuid } from "@/domain/clients/shared";
-import { nextDueDate } from "@/domain/clients/requalification";
+import { nextDueDate, todayInIndia } from "@/domain/clients/requalification";
 import { allocateNumber } from "@/domain/numbering/allocate";
 import { recordAudit } from "@/lib/audit";
 
-import { cleanDecimal, type AccuracySpec } from "./calibration-math";
+import { cleanDecimal, deviation, type AccuracySpec } from "./calibration-math";
 import { certificatesOf, evaluate, lockInstruments } from "./certificate-service";
 import { InstrumentsError } from "./errors";
 import { calibrationHeaderSchema, pointSchema, type Loose } from "./schemas";
-import { INSTRUMENT_TYPE_INFO, type InstrumentType } from "./types";
+import { INSTRUMENT_TYPE_INFO, TYPE_MEASURES, type InstrumentType, type Quantity } from "./types";
 import { usableOn } from "./validity";
 
 /** Most loggers QA Tech calibrates in one batch (two FT-05 pages of 10). */
 export const MAX_BATCH = 40;
 
 const user = (actor: SessionUser) => ({ type: "user" as const, userId: actor.id });
+
+/** A calibration can't be dated in the future, and is due after it was done. */
+export function checkCalibrationDates(calibratedOn: string, validUntil: string | null | undefined) {
+  if (calibratedOn > todayInIndia()) {
+    throw new InstrumentsError(
+      "The date of calibration is in the future. Enter the day the readings were taken.",
+    );
+  }
+  if (validUntil && validUntil <= calibratedOn) {
+    throw new InstrumentsError("The due date must be after the date of calibration.");
+  }
+}
 
 async function lockCertificate(
   tx: Transaction,
@@ -88,7 +101,7 @@ async function modelOf(tx: Transaction, organisationId: string, uucs: Instrument
   const odd = uucs.find((i) => key(i) !== key(first));
   if (odd) {
     throw new InstrumentsError(
-      `${odd.code} is a ${odd.make} ${odd.model}, the others are ${first.make} ${first.model}. Put each model on its own certificate.`,
+      `${odd.code} is ${`${odd.make} ${odd.model}`.trim() || "another model"}, the others are ${`${first.make} ${first.model}`.trim() || "a different model"}. Put each model on its own certificate.`,
     );
   }
   const bad = uucs.find((i) => i.status === "retired" || i.status === "lost");
@@ -136,6 +149,7 @@ export async function createCalibration(
 ): Promise<Certificate> {
   assertCan(actor, "calibration.perform");
   const data = createSchema.parse(input);
+  checkCalibrationDates(data.header.calibratedOn, data.header.validUntil as string | null);
   const instrumentIds = [...new Set(data.instrumentIds)];
   return db.transaction(async (tx) => {
     const uucs = await lockInstruments(tx, actor.organisationId, instrumentIds);
@@ -358,6 +372,7 @@ export async function saveCalibration(
 ): Promise<{ missing: number; failed: number }> {
   assertCan(actor, "calibration.perform");
   const data = saveSchema.parse(input);
+  checkCalibrationDates(data.header.calibratedOn, data.header.validUntil as string | null);
   return db.transaction(async (tx) => {
     const cert = await lockCertificate(tx, actor, certificateId);
     if (cert.status !== "draft") {
@@ -393,6 +408,13 @@ export async function saveCalibration(
         const reading = cleanDecimal(raw);
         if (reading === null)
           throw new InstrumentsError(`${uuc.code}, point ${pi + 1}: “${raw}” is not a number.`);
+        // A serial number or a slip of the keyboard, not a calibration result.
+        const off = Math.abs(Number(deviation(reading, point.reference)));
+        if (point.quantity !== "pressure" && off > 50) {
+          throw new InstrumentsError(
+            `${uuc.code}, point ${pi + 1}: ${raw} is ${off.toFixed(0)} away from the master reading ${point.reference}. Is it a serial number or a typo?`,
+          );
+        }
         readings.push({ seq: point.seq, instrumentId: uuc.id, reading });
       }
     }
@@ -690,6 +712,26 @@ async function assertComplete(tx: Transaction, actor: SessionUser, cert: Certifi
   const missing = items.length * points.length - readings.length;
   if (missing > 0)
     throw new InstrumentsError(`${missing} reading${missing === 1 ? " is" : "s are"} still empty.`);
+  // Each quantity measured needs a master that measures it (a %RH point needs a humidity reference).
+  const masterRows = await tx
+    .select({ type: instruments.type, code: instruments.code, modelId: instruments.modelId })
+    .from(instruments)
+    .where(
+      inArray(
+        instruments.id,
+        masters.map((m) => m.instrumentId),
+      ),
+    );
+  for (const quantity of new Set(points.map((p) => p.quantity as Quantity))) {
+    const covered = masterRows.some((m) =>
+      TYPE_MEASURES[m.type as InstrumentType]?.includes(quantity),
+    );
+    if (!covered) {
+      throw new InstrumentsError(
+        `There are ${quantity === "humidity" ? "%RH" : quantity === "pressure" ? "pressure" : "°C"} points but no master for ${quantity}. Add the ${quantity === "humidity" ? "humidity indicator" : "reference"} used.`,
+      );
+    }
+  }
   // Masters must still be valid on the calibration date (their certificate may have been cancelled since).
   await resolveMasters(
     tx,

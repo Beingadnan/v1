@@ -582,7 +582,7 @@ describe("masters must be valid on the calibration date", () => {
         },
         req,
       ),
-    ).rejects.toThrow(/SAN\/25\/1165\/TH\/1\) expired on 2026-09-30/);
+    ).rejects.toThrow(/SAN\/25\/1165\/TH\/1\) expired on 30.09.2026/);
   });
 
   it("refuses a working instrument as a master", async () => {
@@ -768,5 +768,76 @@ describe("numbers already used before QTech", () => {
       req,
     );
     expect(cert.number).toBe("QATECH/BHIWANDI/04/26/PDL-02");
+  });
+});
+
+describe("dates a person might get wrong", () => {
+  it("refuses a calibration dated in the future, and a due date before the calibration", async () => {
+    const [logger] = await listInstruments(db, lab, { q: "E-TRH0523" });
+    const start = (calibratedOn: string, validUntil: string | null) =>
+      createCalibration(
+        db,
+        lab,
+        {
+          header: { ...header(calibratedOn), validUntil, siteId },
+          instrumentIds: [logger!.id],
+          masterIds: [ssprtId],
+        },
+        req,
+      );
+    await expect(start("2099-01-01", null)).rejects.toThrow(/in the future/);
+    await expect(start("2026-03-26", "2025-01-01")).rejects.toThrow(/due date must be after/);
+  });
+});
+
+describe("readings that can't be right", () => {
+  it("refuses a serial number pasted as a reading, and %RH points without a humidity master", async () => {
+    const [logger] = await listInstruments(db, lab, { q: "E-TRH0523" });
+    const c = await createCalibration(
+      db,
+      lab,
+      {
+        header: { ...header("2026-03-28"), siteId },
+        instrumentIds: [logger!.id],
+        masterIds: [ssprtId],
+      },
+      req,
+    );
+    const save = (reading: string, masters: string[]) =>
+      saveCalibration(
+        db,
+        lab,
+        c.id,
+        {
+          header: header("2026-03-28"),
+          points: [
+            { quantity: "temperature", reference: "15.12", condition: "" },
+            { quantity: "humidity", reference: "50.31", condition: "25 °C" },
+          ],
+          masterIds: masters,
+          instrumentIds: [logger!.id],
+          readings: [[reading], ["50.6"]],
+        },
+        req,
+      );
+    await expect(save("84028189", [ssprtId])).rejects.toThrow(/serial number or a typo/);
+    await save("15.2 °C", [ssprtId]);
+    await expect(
+      signCalibrationStep(
+        db,
+        lab,
+        { certificateId: c.id, step: "submit", password: PASSWORD },
+        req,
+      ),
+    ).rejects.toThrow(/no master for humidity/);
+    await save("15.2", [ssprtId, hygroId]);
+    expect(
+      await signCalibrationStep(
+        db,
+        lab,
+        { certificateId: c.id, step: "submit", password: PASSWORD },
+        req,
+      ),
+    ).toMatchObject({ ok: true });
   });
 });
