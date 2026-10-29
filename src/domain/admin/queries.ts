@@ -5,7 +5,7 @@ import { alias } from "drizzle-orm/pg-core";
 import { z } from "zod";
 
 import type { Database } from "@/db/client-factory";
-import { auditLog, organisationSettings, sites, users } from "@/db/schema";
+import { auditLog, clientCompanies, organisationSettings, sites, users } from "@/db/schema";
 import { assertCan } from "@/domain/auth/permissions";
 import type { SessionUser } from "@/domain/auth/session-service";
 import { AUDIT_ACTIONS } from "@/lib/audit";
@@ -23,8 +23,10 @@ export async function listUsers(db: Database, actor: SessionUser) {
       lockedUntil: users.lockedUntil,
       lastLoginAt: users.lastLoginAt,
       createdAt: users.createdAt,
+      clientCompanyName: clientCompanies.name,
     })
     .from(users)
+    .leftJoin(clientCompanies, eq(clientCompanies.id, users.clientCompanyId))
     .where(eq(users.organisationId, actor.organisationId))
     .orderBy(asc(users.status), asc(users.name));
 }

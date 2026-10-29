@@ -59,7 +59,12 @@ export default async function UsersPage() {
                   <p className="font-medium">{user.name}</p>
                   <p className="text-xs text-muted-foreground">{user.email}</p>
                 </TableCell>
-                <TableCell>{role ? ROLE_LABELS[role] : user.role}</TableCell>
+                <TableCell>
+                  {role ? ROLE_LABELS[role] : user.role}
+                  {user.clientCompanyName ? (
+                    <p className="text-xs text-muted-foreground">{user.clientCompanyName}</p>
+                  ) : null}
+                </TableCell>
                 <TableCell>
                   <UserStatus status={user.status} lockedUntil={user.lockedUntil} />
                 </TableCell>

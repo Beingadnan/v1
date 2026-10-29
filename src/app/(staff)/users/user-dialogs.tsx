@@ -21,7 +21,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ROLE_DESCRIPTIONS, ROLE_LABELS, STAFF_ROLES, type Role } from "@/domain/auth/roles";
+import {
+  isClientRole,
+  ROLE_DESCRIPTIONS,
+  ROLE_LABELS,
+  STAFF_ROLES,
+  type Role,
+} from "@/domain/auth/roles";
 import type { ActionResult } from "@/lib/action-result";
 
 import { changeRoleAction, inviteUserAction, passwordLinkAction, setActiveAction } from "./actions";
@@ -38,7 +44,7 @@ function FormError({ result }: { result: ActionResult<unknown> | undefined }) {
 }
 
 /** Shows a one-time link with a copy button. The link is never shown again. */
-function LinkReady({ data, purpose }: { data: LinkData; purpose: "invite" | "password" }) {
+export function LinkReady({ data, purpose }: { data: LinkData; purpose: "invite" | "password" }) {
   const [copied, setCopied] = useState(false);
   const expires = new Date(data.expiresAt).toLocaleString("en-IN", {
     timeZone: "Asia/Kolkata",
@@ -315,9 +321,11 @@ export function UserRowActions({ user, isSelf }: { user: UserRow; isSelf: boolea
           >
             {user.status !== "deactivated" ? (
               <>
-                <DropdownMenu.Item className={itemClass} onSelect={() => setDialog("role")}>
-                  Change role
-                </DropdownMenu.Item>
+                {isClientRole(user.role) ? null : (
+                  <DropdownMenu.Item className={itemClass} onSelect={() => setDialog("role")}>
+                    Change role
+                  </DropdownMenu.Item>
+                )}
                 <DropdownMenu.Item className={itemClass} onSelect={() => setDialog("link")}>
                   {user.status === "invited" ? "New set-up link" : "New password link"}
                 </DropdownMenu.Item>

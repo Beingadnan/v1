@@ -1,8 +1,10 @@
+import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { SidebarContent } from "@/components/shell/sidebar";
 import { Topbar } from "@/components/shell/topbar";
 import { ACTIONS, can } from "@/domain/auth/permissions";
+import { isClientRole } from "@/domain/auth/roles";
 import { requireUser, toUserSummary } from "@/lib/auth/dal";
 
 /**
@@ -12,6 +14,8 @@ import { requireUser, toUserSummary } from "@/lib/auth/dal";
  */
 export default async function StaffLayout({ children }: { children: ReactNode }) {
   const user = await requireUser();
+  // Client QA users have their own, much smaller area.
+  if (isClientRole(user.role)) redirect("/client");
   const allowed = ACTIONS.filter((action) => can(user, action));
 
   return (
