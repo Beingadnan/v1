@@ -39,6 +39,7 @@ export const AUDIT_ACTIONS = [
   "equipment.created",
   "equipment.updated",
   "clients.imported",
+  "gstin.looked_up",
   "record.signed",
   "signature.failed",
 ] as const;

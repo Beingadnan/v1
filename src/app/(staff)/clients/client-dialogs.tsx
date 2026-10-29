@@ -1,8 +1,8 @@
 "use client";
 
-import { MapPin, Pencil, Plus, UserPlus } from "lucide-react";
+import { MapPin, Pencil, Plus, Search, UserPlus } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -20,18 +20,22 @@ import {
   TextField,
   useFormAction,
 } from "@/components/ui/form-kit";
+import type { GstFill } from "@/domain/clients/gst-lookup-service";
 import { checkGstin } from "@/domain/clients/gstin";
+import { cn } from "@/lib/utils";
 import { DEFAULT_REPORT_NUMBER_FORMAT, formatReportNumber } from "@/domain/clients/report-number";
 
 import { LinkReady } from "../users/user-dialogs";
 import {
   createCompanyAction,
   inviteClientUserAction,
+  lookupGstinAction,
   saveContactAction,
   saveDepartmentAction,
   saveSiteAction,
   updateCompanyAction,
 } from "./actions";
+import { useGstLookupEnabled } from "./gst-context";
 
 /** A dialog opened by a trigger button; the form inside remounts fresh each time. */
 function FormDialog({
@@ -81,48 +85,157 @@ function useCloseOnSuccess(ok: boolean | undefined, close: () => void) {
 
 // ---------------------------------------------------------------- GSTIN
 
+/** Sets a form field the way typing would, so React sees the change. */
+function setFieldValue(
+  form: HTMLFormElement,
+  name: string,
+  value: string,
+  onlyIfEmpty = true,
+): boolean {
+  const field = form.elements.namedItem(name);
+  if (!(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement)) return false;
+  if (!value || (onlyIfEmpty && field.value.trim() !== "")) return false;
+  const proto =
+    field instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, "value")?.set?.call(field, value);
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+  return true;
+}
+
+/** Which form field gets which GST detail. */
+type FillMap = Partial<Record<string, keyof GstFill>>;
+
 /**
  * GSTIN with a live check: shows the state and PAN it contains, or what looks
- * wrong. With fillState, an empty State field in the same form is filled in.
+ * wrong. When the GST lookup is set up, a valid GSTIN fetches the registered
+ * details and fills the empty fields named in `fill` (never overwriting typing).
  */
 function GstinField({
   label = "GSTIN",
   defaultValue,
   result,
-  fillState,
+  fill,
 }: {
   label?: string;
   defaultValue?: string;
   result: Parameters<typeof TextField>[0]["result"];
-  fillState?: boolean;
+  fill: FillMap;
 }) {
+  const lookupEnabled = useGstLookupEnabled();
   const [value, setValue] = useState(defaultValue ?? "");
-  const check = value.trim().length >= 15 ? checkGstin(value) : null;
-  const hint = !value.trim()
-    ? "Optional. The state is read from it."
+  const [lookup, setLookup] = useState<
+    | { state: "idle" }
+    | { state: "loading"; gstin: string }
+    | { state: "done"; fill: GstFill; filled: number }
+    | { state: "error"; message: string }
+  >({ state: "idle" });
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const triedRef = useRef<string | null>(defaultValue?.toUpperCase() ?? null);
+
+  const gstin = value.trim().toUpperCase();
+  const check = gstin.length >= 15 ? checkGstin(gstin) : null;
+  const hint = !gstin
+    ? lookupEnabled
+      ? "Type the GSTIN first: the company's registered name and address are filled in for you."
+      : "Optional. The state is read from it."
     : !check
-      ? `${value.trim().length} of 15 characters`
+      ? `${gstin.length} of 15 characters`
       : check.ok
         ? `${check.state} · PAN ${check.pan}`
         : check.message;
+
+  async function runLookup(target: string) {
+    triedRef.current = target;
+    setLookup({ state: "loading", gstin: target });
+    const response = await lookupGstinAction(target);
+    if (!response.ok) {
+      setLookup({ state: "error", message: response.error });
+      return;
+    }
+    const form = inputRef.current?.form;
+    let filled = 0;
+    if (form) {
+      for (const [field, key] of Object.entries(fill)) {
+        if (key && setFieldValue(form, field, String(response.data[key] ?? ""))) filled += 1;
+      }
+    }
+    setLookup({ state: "done", fill: response.data, filled });
+  }
+
   return (
-    <TextField
-      name="gstin"
-      label={label}
-      defaultValue={defaultValue}
-      result={result}
-      hint={hint}
-      autoComplete="off"
-      onChange={(e) => {
-        const next = e.currentTarget.value;
-        setValue(next);
-        const found = next.trim().length === 15 ? checkGstin(next) : null;
-        if (fillState && found?.ok) {
-          const state = e.currentTarget.form?.elements.namedItem("state");
-          if (state instanceof HTMLInputElement && !state.value) state.value = found.state;
-        }
-      }}
-    />
+    <div className="flex flex-col gap-2 sm:col-span-2">
+      <div className="flex items-end gap-2">
+        <div className="flex-1">
+          <TextField
+            ref={inputRef}
+            name="gstin"
+            label={label}
+            defaultValue={defaultValue}
+            result={result}
+            hint={hint}
+            autoComplete="off"
+            onChange={(e) => {
+              const next = e.currentTarget.value.trim().toUpperCase();
+              setValue(next);
+              const found = next.length === 15 ? checkGstin(next) : null;
+              if (found?.ok && fill.state === "state") {
+                // Even without the lookup service, the state comes from the GSTIN itself.
+                const form = e.currentTarget.form;
+                if (form) setFieldValue(form, "state", found.state);
+              }
+              // A real-looking GSTIN is looked up once, straight away.
+              if (lookupEnabled && found?.ok && triedRef.current !== next) void runLookup(next);
+            }}
+          />
+        </div>
+        {lookupEnabled && gstin.length === 15 ? (
+          <Button
+            type="button"
+            variant="secondary"
+            className="mb-[1.375rem]"
+            disabled={lookup.state === "loading"}
+            onClick={() => void runLookup(gstin)}
+          >
+            <Search aria-hidden="true" />
+            {lookup.state === "loading" ? "Looking up…" : "Fill from GST"}
+          </Button>
+        ) : null}
+      </div>
+      {lookup.state === "done" ? (
+        <div
+          role="status"
+          className={cn(
+            "rounded-md px-3 py-2 text-sm",
+            lookup.fill.status && lookup.fill.status.toLowerCase() !== "active"
+              ? "bg-attention-soft text-attention"
+              : "bg-brand-soft text-primary",
+          )}
+        >
+          <p className="font-medium">
+            {lookup.fill.legalName}
+            {lookup.fill.tradeName && lookup.fill.tradeName !== lookup.fill.legalName
+              ? ` (trading as ${lookup.fill.tradeName})`
+              : ""}
+          </p>
+          <p className="text-xs">
+            GST status: {lookup.fill.status || "unknown"}
+            {lookup.fill.constitution ? ` · ${lookup.fill.constitution}` : ""}
+            {lookup.fill.registeredOn ? ` · registered ${lookup.fill.registeredOn}` : ""}
+            {" · "}
+            {lookup.filled > 0
+              ? `filled ${lookup.filled} empty field${lookup.filled === 1 ? "" : "s"} — check them`
+              : "nothing to fill (fields already typed)"}
+            {lookup.fill.status && lookup.fill.status.toLowerCase() !== "active"
+              ? ". This GSTIN is not active: check with the client before adding."
+              : ""}
+          </p>
+        </div>
+      ) : lookup.state === "error" ? (
+        <p role="alert" className="text-xs text-attention">
+          {lookup.message}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -174,6 +287,19 @@ function CompanyFields({
   const [code, setCode] = useState(values?.code ?? "");
   return (
     <div className="grid gap-4 sm:grid-cols-2">
+      <GstinField
+        defaultValue={values?.gstin}
+        result={result}
+        fill={{
+          name: "legalName",
+          code: "shortName",
+          address: "address",
+          siteName: "city",
+          siteAddress: "address",
+          siteCity: "city",
+          siteState: "state",
+        }}
+      />
       <TextField
         className="sm:col-span-2"
         name="name"
@@ -192,7 +318,6 @@ function CompanyFields({
         result={result}
         required
       />
-      <GstinField defaultValue={values?.gstin} result={result} />
       <TextField
         className="sm:col-span-2"
         name="address"
@@ -419,6 +544,12 @@ function SiteForm({
       <input type="hidden" name="companyId" value={companyId} />
       <input type="hidden" name="siteId" value={site?.id ?? ""} />
       <div className="grid gap-4 sm:grid-cols-2">
+        <GstinField
+          label="GSTIN for this site"
+          defaultValue={site?.gstin}
+          result={result}
+          fill={{ address: "address", city: "city", state: "state" }}
+        />
         <TextField
           name="name"
           label="Site name"
@@ -444,12 +575,6 @@ function SiteForm({
         />
         <TextField name="city" label="City" defaultValue={site?.city} result={result} />
         <TextField name="state" label="State" defaultValue={site?.state} result={result} />
-        <GstinField
-          label="GSTIN for this site"
-          defaultValue={site?.gstin}
-          result={result}
-          fillState
-        />
       </div>
       {site ? <ActiveSelect defaultActive={site.active} noun="site" /> : null}
       <FormMessage result={result} />

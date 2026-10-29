@@ -37,6 +37,15 @@ npm run dev                     # http://localhost:3000
 Invite everyone else from **Users** in the app. If the only admin is locked out, run the
 same command again with their email to get a fresh link.
 
+### Fill client details from a GSTIN (optional)
+
+With Cashfree keys in `.env.local` (see `.env.example`), typing a valid GSTIN in the client or
+site form fetches the registered legal name, address and state and fills the empty fields.
+Use sandbox keys and Cashfree's test GSTINs (e.g. `29AAICP2912R1ZR`) first. Lookups are cached
+for 30 days per GSTIN, limited to 30 per person per hour, and recorded in the audit trail.
+If Cashfree answers "refused this server", whitelist your server's IP address in the Cashfree
+dashboard or set `CASHFREE_PUBLIC_KEY`.
+
 The design system is browsable at `/dev/components` in development (hidden in production).
 
 ## Checks

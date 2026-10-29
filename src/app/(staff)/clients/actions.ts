@@ -19,6 +19,9 @@ import {
   setEquipmentActive,
   updateEquipment,
 } from "@/domain/clients/equipment-service";
+import { ClientsError } from "@/domain/clients/errors";
+import type { GstLookupConfig } from "@/domain/clients/gst-lookup";
+import { lookupGstin, type GstFill } from "@/domain/clients/gst-lookup-service";
 import { runAction, type ActionResult } from "@/lib/action-result";
 import { requireUser } from "@/lib/auth/dal";
 import { env } from "@/lib/env";
@@ -316,4 +319,25 @@ export async function inviteClientUserAction(
     revalidatePath("/users");
   }
   return result;
+}
+
+/** Cashfree keys from the server's environment; null when the lookup is switched off. */
+function gstConfig(): GstLookupConfig | null {
+  if (!env.CASHFREE_CLIENT_ID || !env.CASHFREE_CLIENT_SECRET) return null;
+  return {
+    clientId: env.CASHFREE_CLIENT_ID,
+    clientSecret: env.CASHFREE_CLIENT_SECRET,
+    environment: env.CASHFREE_ENV,
+    publicKey: env.CASHFREE_PUBLIC_KEY,
+  };
+}
+
+/** Details for a GSTIN from the GST lookup service, to fill a form. Changes no client record. */
+export async function lookupGstinAction(gstin: string): Promise<ActionResult<GstFill>> {
+  const actor = await requireUser();
+  return runAction(async () => {
+    const result = await lookupGstin(db, actor, String(gstin), gstConfig(), await getRequestInfo());
+    if (!result.ok) throw new ClientsError(result.message);
+    return result.fill;
+  });
 }

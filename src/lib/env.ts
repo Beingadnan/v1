@@ -40,6 +40,35 @@ const envSchema = z.object({
     .enum(["true", "false"])
     .default("false")
     .transform((v) => v === "true"),
+  /**
+   * Cashfree Verification Suite, for filling client details from a GSTIN.
+   * Optional: without both keys the lookup is switched off and nothing else changes.
+   * Keys come from merchant.cashfree.com → Verification Suite → Developers → API keys.
+   */
+  CASHFREE_CLIENT_ID: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => v || undefined),
+  CASHFREE_CLIENT_SECRET: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => v || undefined),
+  /** "sandbox" (test data only) or "production" (real lookups, charged). */
+  CASHFREE_ENV: z.preprocess(
+    (v) => v || undefined,
+    z.enum(["sandbox", "production"]).default("sandbox"),
+  ),
+  /**
+   * Only if your Cashfree account uses "Public Key" two-factor authentication
+   * instead of IP whitelisting: the public key (PEM) from the dashboard.
+   * Line breaks may be written as \n.
+   */
+  CASHFREE_PUBLIC_KEY: z
+    .string()
+    .optional()
+    .transform((v) => (v ? v.replace(/\\n/g, "\n") : undefined)),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -7,6 +7,7 @@ import {
   foreignKey,
   index,
   integer,
+  jsonb,
   numeric,
   pgTable,
   primaryKey,
@@ -297,6 +298,23 @@ export const equipmentTypeDefaults = pgTable(
     check("equipment_type_defaults_type_check", sql`${t.type} in (${typeList})`),
     check("equipment_type_defaults_cycles_check", sql`${t.cycles} <@ ${cycleArray}`),
   ],
+);
+
+/**
+ * GSTIN lookups already paid for, so the same GSTIN isn't looked up (and
+ * charged) again within 30 days. Details are public GST registration data.
+ */
+export const gstinLookups = pgTable(
+  "gstin_lookups",
+  {
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id, { onDelete: "restrict" }),
+    gstin: text("gstin").notNull(),
+    details: jsonb("details").notNull(),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.organisationId, t.gstin] })],
 );
 
 export type ClientCompany = typeof clientCompanies.$inferSelect;
