@@ -54,5 +54,8 @@ describe("cell values", () => {
     expect(cellText({ richText: [{ text: "BE-" }, { text: "WF-02" }] })).toBe("BE-WF-02");
     expect(cellText({ formula: "A1", result: 9 } as never)).toBe("9");
     expect(cellText(null)).toBe("");
+    // A date formula Excel never calculated (seen in QA Tech's TRH-001 To TRH-040.xlsx).
+    expect(cellText(new Date(Number.NaN))).toBe("");
+    expect(cellText({ formula: "'Sheet 1'!E3", result: new Date(Number.NaN) } as never)).toBe("");
   });
 });

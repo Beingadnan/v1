@@ -31,7 +31,10 @@ export function cellText(value: ExcelJS.CellValue): string {
   if (typeof value === "string") return value.trim();
   if (typeof value === "number") return String(Number(value.toPrecision(12)));
   if (typeof value === "boolean") return value ? "Yes" : "No";
-  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  // A formula Excel never calculated comes back as an invalid date: treat it as empty.
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? "" : value.toISOString().slice(0, 10);
+  }
   if (typeof value === "object") {
     if ("richText" in value)
       return value.richText
@@ -42,7 +45,8 @@ export function cellText(value: ExcelJS.CellValue): string {
     if ("text" in value && typeof value.text === "string") return value.text.trim();
     if ("error" in value) return "";
   }
-  return String(value).trim();
+  // Anything else Excel stores (hyperlinks without text, shared formulas…) has no text to show.
+  return typeof value === "object" ? "" : String(value).trim();
 }
 
 /** "23.05.2026", "23/05/2026", "23-05-2026" (Indian day-first) → "2026-05-23". Else unchanged. */
