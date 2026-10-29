@@ -39,10 +39,10 @@ export const organisationSettings = pgTable(
     }),
     /** e.g. "QT/J/{YYYY}/{SEQ:4}" */
     jobNumberFormat: text("job_number_format").notNull().default("QT/J/{YYYY}/{SEQ:4}"),
-    /** e.g. "CERT-{SITE}-{YYYY}-{SEQ:4}" — one sequence per site per year. */
+    /** e.g. "QATECH/{SITE_NAME}/{MM}/{YY}/{KIND}-{SEQ:2}" — per site, month and kind. */
     certificateNumberFormat: text("certificate_number_format")
       .notNull()
-      .default("CERT-{SITE}-{YYYY}-{SEQ:4}"),
+      .default("QATECH/{SITE_NAME}/{MM}/{YY}/{KIND}-{SEQ:2}"),
     /** Activation energy for MKT in kJ/mol (ΔH/R = 10 000 K at 83.144). */
     mktActivationEnergyKjMol: numeric("mkt_activation_energy_kj_mol", { precision: 8, scale: 3 })
       .notNull()
@@ -100,10 +100,22 @@ export const numberSeries = pgTable(
     /** Site code, or '' for organisation-wide series (job numbers). */
     siteCode: text("site_code").notNull().default(""),
     year: integer("year").notNull(),
+    /** Month (1–12) when the format restarts monthly ({MM}), otherwise 0. */
+    period: integer("period").notNull().default(0),
+    /** Certificate kind (PDL, RTD, TC…) when the format has {KIND}, otherwise ''. */
+    series: text("series").notNull().default(""),
     lastValue: integer("last_value").notNull().default(0),
   },
   (t) => [
-    uniqueIndex("number_series_key").on(t.organisationId, t.kind, t.siteCode, t.year),
+    uniqueIndex("number_series_key").on(
+      t.organisationId,
+      t.kind,
+      t.siteCode,
+      t.year,
+      t.period,
+      t.series,
+    ),
+    check("number_series_period_check", sql`${t.period} between 0 and 12`),
     check("number_series_kind_check", sql`${t.kind} in ('job', 'certificate')`),
     check("number_series_value_check", sql`${t.lastValue} >= 0`),
   ],

@@ -58,7 +58,7 @@ describe("settings", () => {
         section: "numbers",
         values: {
           jobNumberFormat: "QT/JOB/{YYYY}/{SEQ:4}",
-          certificateNumberFormat: "CERT-{SITE}-{YYYY}-{SEQ:4}",
+          certificateNumberFormat: "QATECH/{SITE_NAME}/{MM}/{YY}/{KIND}-{SEQ:2}",
         },
       },
       req,
@@ -82,7 +82,7 @@ describe("settings", () => {
         section: "numbers",
         values: {
           jobNumberFormat: "QT/JOB/{YYYY}/{SEQ:4}",
-          certificateNumberFormat: "CERT-{SITE}-{YYYY}-{SEQ:4}",
+          certificateNumberFormat: "QATECH/{SITE_NAME}/{MM}/{YY}/{KIND}-{SEQ:2}",
         },
       },
       req,

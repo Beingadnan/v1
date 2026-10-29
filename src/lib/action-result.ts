@@ -6,6 +6,7 @@ import { AccountError } from "@/domain/auth/account-service";
 import { ForbiddenError } from "@/domain/auth/permissions";
 import { SettingsError } from "@/domain/admin/settings-service";
 import { ClientsError } from "@/domain/clients/errors";
+import { InstrumentsError } from "@/domain/instruments/errors";
 
 /** What a form's server action returns: a message for the person, or success data. */
 export type ActionResult<T = void> =
@@ -35,7 +36,8 @@ export async function runAction<T>(
     if (
       error instanceof AccountError ||
       error instanceof SettingsError ||
-      error instanceof ClientsError
+      error instanceof ClientsError ||
+      error instanceof InstrumentsError
     ) {
       return { ok: false, error: error.message };
     }

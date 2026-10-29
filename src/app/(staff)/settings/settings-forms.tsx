@@ -122,14 +122,21 @@ export function DetailsForm({ values, canEdit }: { values: Details; canEdit: boo
 }
 
 function Preview({ format, needsSite }: { format: string; needsSite: boolean }) {
-  const check = checkNumberFormat(format, { needsSite });
+  const check = checkNumberFormat(format, { needsSite, needsKind: needsSite });
   if (!check.ok) return <p className="text-xs text-fail">{check.message}</p>;
   const year = new Date().getFullYear();
   return (
     <p className="text-xs text-muted-foreground">
       Example:{" "}
       <span className="tabular font-medium text-foreground">
-        {formatNumber(format, { year, sequence: 142, siteCode: "IND" })}
+        {formatNumber(format, {
+          year,
+          month: 3,
+          sequence: 17,
+          siteCode: "BHW",
+          siteName: "Bhiwandi",
+          kind: "PDL",
+        })}
       </span>
     </p>
   );
@@ -148,7 +155,7 @@ export function NumberFormatsForm({
   return (
     <Section
       title="Number formats"
-      description="Job and certificate numbers are generated from these. Tokens: {YYYY} {YY} {SITE} {SEQ:4}. Numbers restart each year."
+      description="Job and certificate numbers are generated from these. Tokens: {YYYY} {YY} {MM} {SITE} {SITE_NAME} {KIND} {SEQ:n}. Numbers restart each year, and each month when the format has {MM}; each kind (PDL, RTD, TC) counts separately when it has {KIND}."
     >
       <form action={action} className="grid gap-4 sm:grid-cols-2">
         <div className="flex flex-col gap-1.5">

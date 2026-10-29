@@ -16,11 +16,21 @@ export const ACTIONS = [
   "files.view",
   "clients.view",
   "clients.manage",
+  "instruments.view",
+  "instruments.manage",
+  "calibration.perform",
+  "calibration.check",
+  "calibration.approve",
 ] as const;
 
 export type Action = (typeof ACTIONS)[number];
 
-const FIELD_AND_OFFICE: Action[] = ["files.upload", "files.view", "clients.view"];
+const FIELD_AND_OFFICE: Action[] = [
+  "files.upload",
+  "files.view",
+  "clients.view",
+  "instruments.view",
+];
 
 const MATRIX: Record<Role, ReadonlySet<Action>> = {
   admin: new Set(ACTIONS),
@@ -29,12 +39,23 @@ const MATRIX: Record<Role, ReadonlySet<Action>> = {
     "settings.view",
     "audit.view",
     "clients.manage",
+    "instruments.manage",
+    "calibration.perform",
+    "calibration.check",
+    "calibration.approve",
     ...FIELD_AND_OFFICE,
   ]),
-  team_leader: new Set<Action>(["clients.manage", ...FIELD_AND_OFFICE]),
-  report_preparer: new Set<Action>(FIELD_AND_OFFICE),
+  team_leader: new Set<Action>([
+    "clients.manage",
+    "instruments.manage",
+    "calibration.perform",
+    "calibration.check",
+    ...FIELD_AND_OFFICE,
+  ]),
+  report_preparer: new Set<Action>(["calibration.perform", ...FIELD_AND_OFFICE]),
   field_engineer: new Set<Action>(FIELD_AND_OFFICE),
-  lab: new Set<Action>(FIELD_AND_OFFICE),
+  // The lab calibrates the fleet and keeps master certificates current.
+  lab: new Set<Action>(["instruments.manage", "calibration.perform", ...FIELD_AND_OFFICE]),
   accounts: new Set<Action>(["files.view", "clients.view"]),
   // Client access is scoped to their own company's released records (phases 2, 9 and 13).
   client_qa: new Set<Action>(),

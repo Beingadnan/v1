@@ -528,4 +528,37 @@ describe("number allocation", () => {
     expect(ind.number).toBe("CERT-IND-2026-0001");
     expect(bhw.number).toBe("CERT-BHW-2026-0001");
   });
+
+  it("restarts certificate numbers each month and keeps one series per kind, as QA Tech does", async () => {
+    const format = "QATECH/{SITE_NAME}/{MM}/{YY}/{KIND}-{SEQ:2}";
+    const next = (date: string, kind: string) =>
+      db.transaction((tx) =>
+        allocateNumber(tx, {
+          organisationId: orgId,
+          kind: "certificate",
+          format,
+          date: new Date(`${date}T10:00:00+05:30`),
+          siteCode: "BHW",
+          siteName: "Bhiwandi",
+          certificateKind: kind,
+        }),
+      );
+    expect((await next("2026-03-26", "PDL")).number).toBe("QATECH/BHIWANDI/03/26/PDL-01");
+    expect((await next("2026-03-27", "PDL")).number).toBe("QATECH/BHIWANDI/03/26/PDL-02");
+    expect((await next("2026-03-27", "RTD")).number).toBe("QATECH/BHIWANDI/03/26/RTD-01");
+    expect((await next("2026-04-01", "PDL")).number).toBe("QATECH/BHIWANDI/04/26/PDL-01");
+    // 23:30 UTC on 31 March is already 1 April in India.
+    const lateNight = await db.transaction((tx) =>
+      allocateNumber(tx, {
+        organisationId: orgId,
+        kind: "certificate",
+        format,
+        date: new Date("2026-03-31T23:30:00Z"),
+        siteCode: "BHW",
+        siteName: "Bhiwandi",
+        certificateKind: "PDL",
+      }),
+    );
+    expect(lateNight.number).toBe("QATECH/BHIWANDI/04/26/PDL-02");
+  });
 });

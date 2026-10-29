@@ -36,7 +36,7 @@ export const numberFormatsSchema = z
   .superRefine((v, ctx) => {
     const job = checkNumberFormat(v.jobNumberFormat, { needsSite: false });
     if (!job.ok) ctx.addIssue({ code: "custom", path: ["jobNumberFormat"], message: job.message });
-    const cert = checkNumberFormat(v.certificateNumberFormat, { needsSite: true });
+    const cert = checkNumberFormat(v.certificateNumberFormat, { needsSite: true, needsKind: true });
     if (!cert.ok) {
       ctx.addIssue({ code: "custom", path: ["certificateNumberFormat"], message: cert.message });
     }

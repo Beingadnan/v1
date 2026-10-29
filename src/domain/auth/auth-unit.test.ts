@@ -100,10 +100,15 @@ describe("permission matrix", () => {
         ],
         "admin": [
           "audit.view",
+          "calibration.approve",
+          "calibration.check",
+          "calibration.perform",
           "clients.manage",
           "clients.view",
           "files.upload",
           "files.view",
+          "instruments.manage",
+          "instruments.view",
           "settings.manage",
           "settings.view",
           "users.manage",
@@ -115,31 +120,46 @@ describe("permission matrix", () => {
           "clients.view",
           "files.upload",
           "files.view",
+          "instruments.view",
         ],
         "lab": [
+          "calibration.perform",
           "clients.view",
           "files.upload",
           "files.view",
+          "instruments.manage",
+          "instruments.view",
         ],
         "manager": [
           "audit.view",
+          "calibration.approve",
+          "calibration.check",
+          "calibration.perform",
           "clients.manage",
           "clients.view",
           "files.upload",
           "files.view",
+          "instruments.manage",
+          "instruments.view",
           "settings.view",
           "users.view",
         ],
         "report_preparer": [
+          "calibration.perform",
           "clients.view",
           "files.upload",
           "files.view",
+          "instruments.view",
         ],
         "team_leader": [
+          "calibration.check",
+          "calibration.perform",
           "clients.manage",
           "clients.view",
           "files.upload",
           "files.view",
+          "instruments.manage",
+          "instruments.view",
         ],
       }
     `);
@@ -165,6 +185,24 @@ describe("number formats", () => {
     expect(checkNumberFormat("QT/J/{YYYY}/{SEQ:4}", { needsSite: false })).toEqual({ ok: true });
     expect(checkNumberFormat("QT/J/{YYYY}", { needsSite: false })).toMatchObject({ ok: false });
     expect(checkNumberFormat("QT/{SEQ:4}", { needsSite: false })).toMatchObject({ ok: false });
+    expect(
+      checkNumberFormat("QATECH/{SITE_NAME}/{MM}/{YY}/{KIND}-{SEQ:2}", {
+        needsSite: true,
+        needsKind: true,
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      checkNumberFormat("QATECH/{SITE}/{YY}/{SEQ:2}", { needsSite: true, needsKind: true }),
+    ).toMatchObject({ ok: false, message: expect.stringContaining("{KIND}") });
+    expect(
+      formatNumber("QATECH/{SITE_NAME}/{MM}/{YY}/{KIND}-{SEQ:2}", {
+        year: 2026,
+        month: 3,
+        sequence: 17,
+        siteName: "Bhiwandi",
+        kind: "PDL",
+      }),
+    ).toBe("QATECH/BHIWANDI/03/26/PDL-17");
     expect(checkNumberFormat("CERT-{YYYY}-{SEQ:4}", { needsSite: true })).toMatchObject({
       ok: false,
     });

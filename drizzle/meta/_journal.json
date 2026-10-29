@@ -57,6 +57,13 @@
       "when": 1793246333961,
       "tag": "0007_gstin_lookups",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793278248914,
+      "tag": "0008_instruments_certificates",
+      "breakpoints": true
     }
   ]
 }
