@@ -35,18 +35,19 @@ import { readImportWorkbook } from "./workbook";
 
 /** Everything the planner needs to know about what is already stored. */
 async function loadSnapshot(executor: DbExecutor, organisationId: string): Promise<Snapshot> {
-  const [companies, sites, departments, items] = await Promise.all([
-    executor
+  // Sequential: the executor may be a transaction, which is one connection.
+  const [companies, sites, departments, items] = [
+    await executor
       .select()
       .from(clientCompanies)
       .where(eq(clientCompanies.organisationId, organisationId)),
-    executor.select().from(clientSites).where(eq(clientSites.organisationId, organisationId)),
-    executor
+    await executor.select().from(clientSites).where(eq(clientSites.organisationId, organisationId)),
+    await executor
       .select()
       .from(clientDepartments)
       .where(eq(clientDepartments.organisationId, organisationId)),
-    executor.select().from(equipment).where(eq(equipment.organisationId, organisationId)),
-  ]);
+    await executor.select().from(equipment).where(eq(equipment.organisationId, organisationId)),
+  ];
   const typeDefaults = await getEffectiveTypeDefaults(executor, organisationId);
   return { companies, sites, departments, equipment: items, typeDefaults };
 }
