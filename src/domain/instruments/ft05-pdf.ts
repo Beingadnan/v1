@@ -195,19 +195,12 @@ class Sheet {
         { width: 160, align: "right", lineBreak: false },
       );
       doc.font("Helvetica").fontSize(6.5).fillColor("#333333");
-      doc.text(
-        ascii(
-          `${ctx.organisation.legalName}${ctx.organisation.address ? `, ${ctx.organisation.address.replace(/\s*\n\s*/g, ", ")}` : ""}`,
-        ),
-        PAGE.margin + 160,
-        y + 4,
-        {
-          width: CONTENT - 320,
-          align: "center",
-          height: 18,
-          ellipsis: true,
-        },
-      );
+      doc.text(ascii(ctx.organisation.legalName), PAGE.margin + 160, y + 4, {
+        width: CONTENT - 320,
+        align: "center",
+        height: 18,
+        ellipsis: true,
+      });
       doc.font("Helvetica").fontSize(6).fillColor("#555555");
       doc.text(ascii(this.number), PAGE.margin, y + 14, { width: 200, lineBreak: false });
       if (ctx.watermark) {
@@ -272,7 +265,9 @@ export async function renderFt05(cert: CertificateDetail, ctx: Ft05Context): Pro
     [cert.number, CONTENT - 360, { align: "center", bold: true }],
   ]);
   const customer = `${cert.customerName}\n${cert.customerAddress.replace(/\s*\n\s*/g, ", ")}`;
-  s.row(24, [
+  s.doc.font("Helvetica").fontSize(7);
+  const customerHeight = Math.max(24, s.doc.heightOfString(customer, { width: CONTENT - 95 }) + 6);
+  s.row(customerHeight, [
     ["Customer Name &\nAddress", 90, { bold: true, fill: SHADE }],
     [customer, CONTENT - 90],
   ]);

@@ -10,6 +10,7 @@ import { INSTRUMENT_STATUSES, INSTRUMENT_TIERS, INSTRUMENT_TYPES, QUANTITIES } f
 const bounded = (max: number) => z.string().trim().max(max, `Use at most ${max} characters.`);
 const text = (max: number) => bounded(max).default("");
 const required = (max: number, message: string) => bounded(max).min(1, message);
+const blankToUndefined = (v: unknown) => (v === "" || v === null ? undefined : v);
 const blankToNull = (v: unknown) =>
   v === undefined || v === null || (typeof v === "string" && v.trim() === "") ? null : v;
 
@@ -115,7 +116,10 @@ export const modelSchema = z.object({
   accuracyText: text(300),
   calibrationSop: text(60),
   defaultPoints: z.array(pointSchema).max(20).default([]),
-  intervalMonths: z.coerce.number().int().min(1).max(60).default(12),
+  intervalMonths: z.preprocess(
+    blankToUndefined,
+    z.coerce.number().int().min(1).max(60).default(12),
+  ),
 });
 /**
  * What a caller may pass: every field optional and unchecked, because the
@@ -130,7 +134,7 @@ export type ExternalCertificateInput = Loose<z.input<typeof externalCertificateS
 export const instrumentSchema = z.object({
   modelId: z.preprocess(blankToNull, z.string().uuid().nullable()),
   type: z.enum(INSTRUMENT_TYPES, { message: "Choose the instrument type." }),
-  tier: z.enum(INSTRUMENT_TIERS).default("working"),
+  tier: z.preprocess(blankToUndefined, z.enum(INSTRUMENT_TIERS).default("working")),
   code: required(40, "Enter QA Tech's ID number, e.g. E-TRH0524.").regex(
     /^[A-Za-z0-9][A-Za-z0-9 ._/()-]*$/,
     "The ID can use letters, numbers, spaces and - _ . / ( ) only.",
@@ -144,7 +148,7 @@ export const instrumentSchema = z.object({
   accuracyText: text(300),
   homeSiteId: z.preprocess(blankToNull, z.string().uuid().nullable()),
   ownerCompanyId: z.preprocess(blankToNull, z.string().uuid().nullable()),
-  status: z.enum(INSTRUMENT_STATUSES).default("active"),
+  status: z.preprocess(blankToUndefined, z.enum(INSTRUMENT_STATUSES).default("active")),
   intervalMonths: z.preprocess(blankToNull, z.coerce.number().int().min(1).max(60).nullable()),
   notes: text(2000),
 });

@@ -8,6 +8,13 @@ export const USERS = {
     name: "Ravi Engineer",
     password: "logger placement walk 2",
   },
+  lab: { email: "lab@e2e.test", name: "Lata Lab", password: "dry block at minus twenty 3" },
+  lead: { email: "lead@e2e.test", name: "Tarun Lead", password: "checked twice at fifteen 4" },
+  manager: {
+    email: "manager@e2e.test",
+    name: "Meera Manager",
+    password: "approved and issued now 5",
+  },
 } as const;
 
 export function e2eDatabaseUrl(): string {

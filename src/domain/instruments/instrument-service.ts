@@ -19,7 +19,13 @@ import { diff, isUuid, rethrowUnique } from "@/domain/clients/shared";
 import { recordAudit } from "@/lib/audit";
 
 import { InstrumentsError } from "./errors";
-import { instrumentSchema, modelSchema, type InstrumentInput, type ModelInput } from "./schemas";
+import {
+  instrumentSchema,
+  modelSchema,
+  type InstrumentInput,
+  type Loose,
+  type ModelInput,
+} from "./schemas";
 import { INSTRUMENT_TYPE_INFO } from "./types";
 
 const MODEL_UNIQUE = { instrument_models_org_make_model_key: "This make and model already exist." };
@@ -339,7 +345,7 @@ export function parseSerials(text: string): string[] {
 export async function bulkAddInstruments(
   db: Database,
   actor: SessionUser,
-  input: z.input<typeof bulkAddSchema>,
+  input: Loose<z.input<typeof bulkAddSchema>>,
   request: RequestInfo,
 ): Promise<Instrument[]> {
   assertCan(actor, "instruments.manage");

@@ -668,6 +668,9 @@ async function assertComplete(tx: Transaction, actor: SessionUser, cert: Certifi
     await tx.select().from(certificateMasters).where(eq(certificateMasters.certificateId, cert.id)),
   ];
   if (masters.length === 0) throw new InstrumentsError("Add the master standard(s) used.");
+  if (!cert.environmentTemperature.trim() || !cert.environmentHumidity.trim()) {
+    throw new InstrumentsError("Enter the lab temperature and humidity during calibration.");
+  }
   if (points.length === 0) throw new InstrumentsError("Add the test points.");
   const missing = items.length * points.length - readings.length;
   if (missing > 0)

@@ -85,7 +85,11 @@ export function TextField({
     <div className={className}>
       <Field id={name} label={label} hint={hint} error={error} required={required}>
         {multiline ? (
-          <Textarea {...shared} defaultValue={defaultValue as string | undefined} />
+          <Textarea
+            {...shared}
+            {...(input as ComponentProps<"textarea">)}
+            defaultValue={defaultValue as string | undefined}
+          />
         ) : suffix ? (
           <div className="relative">
             <Input {...shared} {...input} defaultValue={defaultValue} className="pr-12" />
@@ -151,28 +155,34 @@ export function CheckboxField({
   hint,
   defaultChecked,
   disabled,
+  value,
+  id = value ? `${name}-${value}` : name,
 }: {
   name: string;
   label: string;
   hint?: string;
   defaultChecked?: boolean;
   disabled?: boolean;
+  /** For a group of checkboxes sharing one name. */
+  value?: string;
+  id?: string;
 }) {
   return (
-    <label htmlFor={name} className="flex items-start gap-3 rounded-md border border-border p-3">
+    <label htmlFor={id} className="flex items-start gap-3 rounded-md border border-border p-3">
       <input
-        id={name}
+        id={id}
         name={name}
         type="checkbox"
+        value={value}
         defaultChecked={defaultChecked}
         disabled={disabled}
         className="mt-0.5 size-4 accent-primary"
-        aria-describedby={hint ? `${name}-desc` : undefined}
+        aria-describedby={hint ? `${id}-desc` : undefined}
       />
       <span className="flex flex-col gap-0.5">
         <span className="text-sm font-medium">{label}</span>
         {hint ? (
-          <span id={`${name}-desc`} className="text-xs text-muted-foreground">
+          <span id={`${id}-desc`} className="text-xs text-muted-foreground">
             {hint}
           </span>
         ) : null}

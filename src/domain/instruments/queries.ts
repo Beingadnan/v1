@@ -466,3 +466,49 @@ export async function calibrationIndex(
       ),
     }));
 }
+
+/**
+ * Instruments from a pasted list of IDs or serial numbers (one per line, or
+ * separated by commas/tabs, as copied from Excel), in the order given.
+ */
+export async function resolveInstrumentList(
+  db: DbExecutor,
+  actor: SessionUser,
+  text: string,
+): Promise<{ ids: string[]; unknown: string[]; ambiguous: string[] }> {
+  assertCan(actor, "instruments.view");
+  const tokens = [
+    ...new Set(
+      text
+        .split(/[\n\r,;\t]+/)
+        .map((t) => t.trim())
+        .filter(Boolean),
+    ),
+  ].slice(0, 200);
+  if (tokens.length === 0) return { ids: [], unknown: [], ambiguous: [] };
+  const lower = tokens.map((t) => t.toLowerCase());
+  const rows = await db
+    .select({ id: instruments.id, code: instruments.code, serialNo: instruments.serialNo })
+    .from(instruments)
+    .where(
+      and(
+        eq(instruments.organisationId, actor.organisationId),
+        or(
+          inArray(sql`lower(${instruments.code})`, lower),
+          inArray(sql`lower(${instruments.serialNo})`, lower),
+        ),
+      ),
+    );
+  const ids: string[] = [];
+  const unknown: string[] = [];
+  const ambiguous: string[] = [];
+  for (const [i, token] of tokens.entries()) {
+    const byCode = rows.filter((r) => r.code.toLowerCase() === lower[i]);
+    const matches =
+      byCode.length > 0 ? byCode : rows.filter((r) => r.serialNo.toLowerCase() === lower[i]);
+    if (matches.length === 0) unknown.push(token);
+    else if (matches.length > 1) ambiguous.push(token);
+    else if (!ids.includes(matches[0]!.id)) ids.push(matches[0]!.id);
+  }
+  return { ids, unknown, ambiguous };
+}

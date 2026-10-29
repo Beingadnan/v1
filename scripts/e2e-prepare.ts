@@ -19,6 +19,13 @@ export const E2E_USERS = {
     name: "Ravi Engineer",
     password: "logger placement walk 2",
   },
+  lab: { email: "lab@e2e.test", name: "Lata Lab", password: "dry block at minus twenty 3" },
+  lead: { email: "lead@e2e.test", name: "Tarun Lead", password: "checked twice at fifteen 4" },
+  manager: {
+    email: "manager@e2e.test",
+    name: "Meera Manager",
+    password: "approved and issued now 5",
+  },
 } as const;
 
 async function main(): Promise<void> {
@@ -80,6 +87,18 @@ async function main(): Promise<void> {
       req,
     );
     if (!engineerSet.ok) throw new Error(engineerSet.message);
+
+    // Three different people for the calibration sign-off (done by → checked by → approved by).
+    for (const [key, role] of [
+      ["lab", "lab"],
+      ["lead", "team_leader"],
+      ["manager", "manager"],
+    ] as const) {
+      const u = E2E_USERS[key];
+      const inv = await inviteUser(db, admin, { name: u.name, email: u.email, role }, req);
+      const done = await setPasswordWithToken(db, { token: inv.token, password: u.password }, req);
+      if (!done.ok) throw new Error(done.message);
+    }
     console.log("e2e database ready");
   } finally {
     await pool.end();
