@@ -44,7 +44,7 @@ const DEPARTMENT_UNIQUE = {
   client_departments_site_name_key: "This site already has a department with that name.",
 };
 
-const LABELS: Record<string, string> = {
+export const CLIENT_FIELD_LABELS: Record<string, string> = {
   name: "name",
   code: "short name",
   gstin: "GSTIN",
@@ -62,7 +62,7 @@ const LABELS: Record<string, string> = {
   signatory: "report signatory",
   siteId: "site",
 };
-const labelled = (keys: string[]) => keys.map((k) => LABELS[k] ?? k).join(", ");
+const labelled = (keys: string[]) => keys.map((k) => CLIENT_FIELD_LABELS[k] ?? k).join(", ");
 
 const user = (actor: SessionUser) => ({ type: "user" as const, userId: actor.id });
 
@@ -89,25 +89,64 @@ export async function createCompany(
 
   return guarded({ ...COMPANY_UNIQUE, ...SITE_UNIQUE }, () =>
     db.transaction(async (tx) => {
-      const [company] = await tx
-        .insert(clientCompanies)
-        .values({ ...values, organisationId: actor.organisationId, createdByUserId: actor.id })
-        .returning();
-      if (!company) throw new Error("Company insert returned no row");
-      await recordAudit(tx, {
-        organisationId: actor.organisationId,
-        actor: user(actor),
-        action: "client.created",
-        entityType: "client_company",
-        entityId: company.id,
-        summary: `${actor.name} added client ${company.name} (${company.code})`,
-        after: values,
-        request,
-      });
+      const company = await insertCompany(tx, actor, values, request);
       if (firstSite) await insertSite(tx, actor, company, firstSite, request);
       return company;
     }),
   );
+}
+
+/** Inside a transaction; shared with the Excel import. */
+export async function insertCompany(
+  tx: Transaction,
+  actor: SessionUser,
+  values: z.output<typeof companySchema>,
+  request: RequestInfo,
+): Promise<ClientCompany> {
+  const [company] = await tx
+    .insert(clientCompanies)
+    .values({ ...values, organisationId: actor.organisationId, createdByUserId: actor.id })
+    .returning();
+  if (!company) throw new Error("Company insert returned no row");
+  await recordAudit(tx, {
+    organisationId: actor.organisationId,
+    actor: user(actor),
+    action: "client.created",
+    entityType: "client_company",
+    entityId: company.id,
+    summary: `${actor.name} added client ${company.name} (${company.code})`,
+    after: values,
+    request,
+  });
+  return company;
+}
+
+/** Applies changed fields only, audited; inside a transaction. Shared with the import. */
+export async function patchCompany(
+  tx: Transaction,
+  actor: SessionUser,
+  company: ClientCompany,
+  values: Partial<z.output<typeof companySchema>> & { active?: boolean },
+  request: RequestInfo,
+): Promise<string[]> {
+  const { before, after, changed } = diff(company, values);
+  if (changed.length === 0) return changed;
+  await tx
+    .update(clientCompanies)
+    .set({ ...after, updatedAt: new Date() })
+    .where(eq(clientCompanies.id, company.id));
+  await recordAudit(tx, {
+    organisationId: actor.organisationId,
+    actor: user(actor),
+    action: "client.updated",
+    entityType: "client_company",
+    entityId: company.id,
+    summary: `${actor.name} changed ${labelled(changed)} for ${values.name ?? company.name}`,
+    before,
+    after,
+    request,
+  });
+  return changed;
 }
 
 export async function updateCompany(
@@ -123,31 +162,15 @@ export async function updateCompany(
   return guarded(COMPANY_UNIQUE, () =>
     db.transaction(async (tx) => {
       const company = await lockCompany(tx, actor, companyId);
-      const { before, after, changed } = diff(company, values);
-      if (changed.length === 0) return { changed };
-      await tx
-        .update(clientCompanies)
-        .set({ ...after, updatedAt: new Date() })
-        .where(eq(clientCompanies.id, company.id));
-      await recordAudit(tx, {
-        organisationId: actor.organisationId,
-        actor: user(actor),
-        action: "client.updated",
-        entityType: "client_company",
-        entityId: company.id,
-        summary: `${actor.name} changed ${labelled(changed)} for ${values.name}`,
-        before,
-        after,
-        request,
-      });
-      return { changed };
+      return { changed: await patchCompany(tx, actor, company, values, request) };
     }),
   );
 }
 
 // ---------------------------------------------------------------- sites
 
-async function insertSite(
+/** Inside a transaction; shared with the Excel import. */
+export async function insertSite(
   tx: Transaction,
   actor: SessionUser,
   company: ClientCompany,
@@ -217,26 +240,37 @@ export async function updateClientSite(
   return guarded(SITE_UNIQUE, () =>
     db.transaction(async (tx) => {
       const site = await lockSite(tx, actor, siteId);
-      const { before, after, changed } = diff(site, values);
-      if (changed.length === 0) return { changed };
-      await tx
-        .update(clientSites)
-        .set({ ...after, updatedAt: new Date() })
-        .where(eq(clientSites.id, site.id));
-      await recordAudit(tx, {
-        organisationId: actor.organisationId,
-        actor: user(actor),
-        action: "client_site.updated",
-        entityType: "client_site",
-        entityId: site.id,
-        summary: `${actor.name} changed ${labelled(changed)} for site ${values.name}`,
-        before,
-        after,
-        request,
-      });
-      return { changed };
+      return { changed: await patchSite(tx, actor, site, values, request) };
     }),
   );
+}
+
+/** Applies changed fields only, audited; inside a transaction. Shared with the import. */
+export async function patchSite(
+  tx: Transaction,
+  actor: SessionUser,
+  site: ClientSite,
+  values: Partial<z.output<typeof clientSiteSchema>> & { active?: boolean },
+  request: RequestInfo,
+): Promise<string[]> {
+  const { before, after, changed } = diff(site, values);
+  if (changed.length === 0) return changed;
+  await tx
+    .update(clientSites)
+    .set({ ...after, updatedAt: new Date() })
+    .where(eq(clientSites.id, site.id));
+  await recordAudit(tx, {
+    organisationId: actor.organisationId,
+    actor: user(actor),
+    action: "client_site.updated",
+    entityType: "client_site",
+    entityId: site.id,
+    summary: `${actor.name} changed ${labelled(changed)} for site ${values.name ?? site.name}`,
+    before,
+    after,
+    request,
+  });
+  return changed;
 }
 
 // ---------------------------------------------------------------- departments
