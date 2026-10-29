@@ -4,14 +4,14 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { Database, Transaction } from "@/db/client-factory";
-import { accountTokens, users, type User } from "@/db/schema";
+import { accountTokens, clientCompanies, users, type User } from "@/db/schema";
 import { recordAudit } from "@/lib/audit";
 
 import { checkCredentials } from "./credentials";
 import { checkPasswordStrength, hashPassword } from "./password";
 import { assertCan, ForbiddenError } from "./permissions";
 import { AUTH_POLICY, type RequestInfo } from "./policy";
-import { isClientRole, ROLE_LABELS, ROLES, type Role } from "./roles";
+import { CLIENT_ROLES, isClientRole, ROLE_LABELS, ROLES, type Role } from "./roles";
 import { revokeAllSessions, type SessionUser } from "./session-service";
 import { generateToken, hashToken, isWellFormedToken } from "./tokens";
 
@@ -113,9 +113,7 @@ export async function inviteUser(
   const email = emailSchema.parse(input.email);
   const role = roleSchema.parse(input.role);
   if (isClientRole(role)) {
-    throw new AccountError(
-      "Client users are added from the client's page, once client companies exist.",
-    );
+    throw new AccountError("Client users are added from the client's page.");
   }
 
   return db.transaction(async (tx) => {
@@ -148,6 +146,76 @@ export async function inviteUser(
       entityId: user.id,
       summary: `${actor.name} invited ${name} (${email}) as ${ROLE_LABELS[role]}`,
       after: { name, email, role },
+      request,
+    });
+    return { user, ...link };
+  });
+}
+
+/**
+ * Invite a client QA user. They belong to exactly one client company and,
+ * from phase 9, see and sign only that company's released reports.
+ */
+export async function inviteClientUser(
+  db: Database,
+  actor: SessionUser,
+  input: { companyId: string; name: string; email: string; role: string },
+  request: RequestInfo,
+): Promise<{ user: User; token: string; expiresAt: Date }> {
+  assertCan(actor, "users.manage");
+  const name = nameSchema.parse(input.name);
+  const email = emailSchema.parse(input.email);
+  const role = z
+    .enum(CLIENT_ROLES, { message: "Choose Client QA or Client QA head." })
+    .parse(input.role);
+  const companyId = z.string().uuid("Choose the client.").parse(input.companyId);
+
+  return db.transaction(async (tx) => {
+    await assertActorStillAllowed(tx, actor);
+    const [company] = await tx
+      .select({
+        id: clientCompanies.id,
+        name: clientCompanies.name,
+        active: clientCompanies.active,
+      })
+      .from(clientCompanies)
+      .where(
+        and(
+          eq(clientCompanies.id, companyId),
+          eq(clientCompanies.organisationId, actor.organisationId),
+        ),
+      );
+    if (!company) throw new AccountError("That client does not exist.");
+    if (!company.active) throw new AccountError("This client is inactive. Reactivate it first.");
+    const [existing] = await tx
+      .select({ id: users.id })
+      .from(users)
+      .where(sql`lower(${users.email}) = ${email}`);
+    if (existing) throw new AccountError(`${email} already has an account.`);
+
+    const [user] = await tx
+      .insert(users)
+      .values({
+        organisationId: actor.organisationId,
+        clientCompanyId: company.id,
+        email,
+        name,
+        role,
+        status: "invited",
+        createdByUserId: actor.id,
+      })
+      .returning();
+    if (!user) throw new Error("User insert returned no row");
+
+    const link = await issueToken(tx, user, "setup", actor.id);
+    await recordAudit(tx, {
+      organisationId: actor.organisationId,
+      actor: { type: "user", userId: actor.id },
+      action: "user.invited",
+      entityType: "user",
+      entityId: user.id,
+      summary: `${actor.name} invited ${name} (${email}) as ${ROLE_LABELS[role]} for ${company.name}`,
+      after: { name, email, role, clientCompanyId: company.id },
       request,
     });
     return { user, ...link };

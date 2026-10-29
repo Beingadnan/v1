@@ -36,6 +36,13 @@
       "when": 1793210012567,
       "tag": "0004_signatures_append_only",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793241452792,
+      "tag": "0005_clients_equipment",
+      "breakpoints": true
     }
   ]
 }

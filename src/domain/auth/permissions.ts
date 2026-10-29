@@ -14,20 +14,28 @@ export const ACTIONS = [
   "audit.view",
   "files.upload",
   "files.view",
+  "clients.view",
+  "clients.manage",
 ] as const;
 
 export type Action = (typeof ACTIONS)[number];
 
-const FIELD_AND_OFFICE: Action[] = ["files.upload", "files.view"];
+const FIELD_AND_OFFICE: Action[] = ["files.upload", "files.view", "clients.view"];
 
 const MATRIX: Record<Role, ReadonlySet<Action>> = {
   admin: new Set(ACTIONS),
-  manager: new Set<Action>(["users.view", "settings.view", "audit.view", ...FIELD_AND_OFFICE]),
-  team_leader: new Set<Action>(FIELD_AND_OFFICE),
+  manager: new Set<Action>([
+    "users.view",
+    "settings.view",
+    "audit.view",
+    "clients.manage",
+    ...FIELD_AND_OFFICE,
+  ]),
+  team_leader: new Set<Action>(["clients.manage", ...FIELD_AND_OFFICE]),
   report_preparer: new Set<Action>(FIELD_AND_OFFICE),
   field_engineer: new Set<Action>(FIELD_AND_OFFICE),
   lab: new Set<Action>(FIELD_AND_OFFICE),
-  accounts: new Set<Action>(["files.view"]),
+  accounts: new Set<Action>(["files.view", "clients.view"]),
   // Client access is scoped to their own company's released records (phases 2, 9 and 13).
   client_qa: new Set<Action>(),
   client_qa_head: new Set<Action>(),

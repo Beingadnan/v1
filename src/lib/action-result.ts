@@ -5,6 +5,7 @@ import { ZodError } from "zod";
 import { AccountError } from "@/domain/auth/account-service";
 import { ForbiddenError } from "@/domain/auth/permissions";
 import { SettingsError } from "@/domain/admin/settings-service";
+import { ClientsError } from "@/domain/clients/errors";
 
 /** What a form's server action returns: a message for the person, or success data. */
 export type ActionResult<T = void> =
@@ -31,7 +32,11 @@ export async function runAction<T>(
       }
       return { ok: false, error: error.issues[0]?.message ?? "Check the form.", fieldErrors };
     }
-    if (error instanceof AccountError || error instanceof SettingsError) {
+    if (
+      error instanceof AccountError ||
+      error instanceof SettingsError ||
+      error instanceof ClientsError
+    ) {
       return { ok: false, error: error.message };
     }
     if (error instanceof ForbiddenError) {

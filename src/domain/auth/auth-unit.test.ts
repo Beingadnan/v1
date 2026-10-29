@@ -95,10 +95,13 @@ describe("permission matrix", () => {
     expect(permissionMatrix()).toMatchInlineSnapshot(`
       {
         "accounts": [
+          "clients.view",
           "files.view",
         ],
         "admin": [
           "audit.view",
+          "clients.manage",
+          "clients.view",
           "files.upload",
           "files.view",
           "settings.manage",
@@ -109,25 +112,32 @@ describe("permission matrix", () => {
         "client_qa": [],
         "client_qa_head": [],
         "field_engineer": [
+          "clients.view",
           "files.upload",
           "files.view",
         ],
         "lab": [
+          "clients.view",
           "files.upload",
           "files.view",
         ],
         "manager": [
           "audit.view",
+          "clients.manage",
+          "clients.view",
           "files.upload",
           "files.view",
           "settings.view",
           "users.view",
         ],
         "report_preparer": [
+          "clients.view",
           "files.upload",
           "files.view",
         ],
         "team_leader": [
+          "clients.manage",
+          "clients.view",
           "files.upload",
           "files.view",
         ],

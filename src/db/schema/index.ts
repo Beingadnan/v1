@@ -1,4 +1,5 @@
 export * from "./audit-log";
+export * from "./clients";
 export * from "./organisations";
 export * from "./settings";
 export * from "./signatures";

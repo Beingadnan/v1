@@ -148,8 +148,8 @@ function InviteForm({ onDone }: { onDone: () => void }) {
       <DialogHeader>
         <DialogTitle>Invite a team member</DialogTitle>
         <DialogDescription>
-          They get a one-time link to set their own password. Client users are added later from the
-          client&apos;s page.
+          They get a one-time link to set their own password. Client users are added from the
+          client&apos;s page under Clients.
         </DialogDescription>
       </DialogHeader>
       <Field id="name" label="Full name" required>

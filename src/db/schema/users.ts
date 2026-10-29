@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
   check,
+  foreignKey,
   index,
   inet,
   integer,
@@ -12,11 +13,13 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 
-import { ROLES } from "@/domain/auth/roles";
+import { CLIENT_ROLES, ROLES } from "@/domain/auth/roles";
 
+import { clientCompanies } from "./clients";
 import { organisations } from "./organisations";
 
 const roleList = sql.raw(ROLES.map((r) => `'${r}'`).join(", "));
+const clientRoleList = sql.raw(CLIENT_ROLES.map((r) => `'${r}'`).join(", "));
 
 /**
  * People who can sign in: QA Tech staff and (from phase 2) client QA users.
@@ -34,7 +37,7 @@ export const users = pgTable(
     email: text("email").notNull(),
     name: text("name").notNull(),
     role: text("role").notNull(),
-    /** Client users belong to one client company (FK added with the companies table, phase 2). */
+    /** Client users belong to exactly one client company; staff to none. */
     clientCompanyId: uuid("client_company_id"),
     /** Null until the person sets a password from their invite link. */
     passwordHash: text("password_hash"),
@@ -58,6 +61,15 @@ export const users = pgTable(
       sql`${t.status} <> 'active' or ${t.passwordHash} is not null`,
     ),
     check("users_email_format_check", sql`${t.email} ~ '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$'`),
+    check(
+      "users_client_company_check",
+      sql`(${t.role} in (${clientRoleList})) = (${t.clientCompanyId} is not null)`,
+    ),
+    foreignKey({
+      name: "users_client_company_fk",
+      columns: [t.clientCompanyId, t.organisationId],
+      foreignColumns: [clientCompanies.id, clientCompanies.organisationId],
+    }).onDelete("restrict"),
   ],
 );
 
