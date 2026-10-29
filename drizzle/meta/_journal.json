@@ -64,6 +64,13 @@
       "when": 1793278248914,
       "tag": "0008_instruments_certificates",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793286308120,
+      "tag": "0009_backfill_imported_instruments",
+      "breakpoints": true
     }
   ]
 }

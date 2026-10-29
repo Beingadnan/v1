@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import ExcelJS from "exceljs";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { auditLog, sites, users } from "@/db/schema";
+import { auditLog, instrumentModels, sites, users } from "@/db/schema";
 import { ensureOrganisation } from "@/db/seed/ensure-organisation";
 import { toSessionUser, type SessionUser } from "@/domain/auth/session-service";
 import {
@@ -102,6 +102,17 @@ beforeAll(async () => {
     .returning();
   manager = toSessionUser(row!)!;
   await db.insert(sites).values({ organisationId: org.id, code: "BHW", name: "Bhiwandi" });
+  // A model already set up: imported loggers of it take its accuracy and resolution.
+  await db.insert(instrumentModels).values({
+    organisationId: org.id,
+    type: "portable_logger",
+    make: "Testo",
+    model: "174H",
+    equipmentName: "Portable Datalogger",
+    quantities: ["temperature", "humidity"],
+    resolutionText: "0.1 °C, 0.1 %RH",
+    accuracyText: "± 0.5 °C (-20 to 70 °C), ± 3 %RH",
+  });
   blobs = new LocalBlobStore(await mkdtemp(path.join(tmpdir(), "qtech-instr-import-")));
 });
 
@@ -120,7 +131,7 @@ describe("importing an instrument list", () => {
     fileId = stored.file.id;
     const preview = await previewInstrumentImport(db, blobs, manager, fileId, "portable_logger");
     expect(preview.summary).toMatchObject({
-      models: 1,
+      models: 0,
       instruments: 3,
       certificates: 2,
       unnumbered: 1,
@@ -151,11 +162,19 @@ describe("importing an instrument list", () => {
       validUntil: "2026-08-13",
     });
     expect(t2.serialNo).toBe("90000002");
+    expect(t2).toMatchObject({
+      accuracyText: "± 0.5 °C (-20 to 70 °C), ± 3 %RH",
+      resolutionText: "0.1 °C, 0.1 %RH",
+    });
+    expect(t2.modelId).not.toBeNull();
     expect((await listModels(db, manager)).map((m) => `${m.make} ${m.model}`)).toEqual([
       "Testo 174H",
     ]);
     const detail = await getInstrument(db, manager, t2.id);
-    expect(detail!.history[0]!.certificate.kind).toBe("imported");
+    expect(detail!.history[0]!.certificate).toMatchObject({
+      kind: "imported",
+      customerName: "QA Tech",
+    });
     const audits = await db
       .select()
       .from(auditLog)

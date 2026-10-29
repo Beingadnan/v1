@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 import type { Database, DbExecutor } from "@/db/client-factory";
 import {
@@ -11,6 +11,7 @@ import {
   organisationSettings,
   sites,
   storedFiles,
+  type InstrumentModel,
 } from "@/db/schema";
 import { assertCan } from "@/domain/auth/permissions";
 import type { RequestInfo } from "@/domain/auth/policy";
@@ -28,6 +29,14 @@ import {
   type Snapshot,
 } from "./instrument-import";
 import { isInstrumentType, type InstrumentType } from "./types";
+
+/** Rows per INSERT: well under Postgres's 65,535-parameter limit. */
+const CHUNK = 500;
+function chunks<T>(rows: T[]): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < rows.length; i += CHUNK) out.push(rows.slice(i, i + CHUNK));
+  return out;
+}
 
 async function loadFile(db: Database, blobs: BlobStore, actor: SessionUser, fileId: string) {
   if (!isUuid(fileId)) throw new InstrumentsError("Upload the file again.");
@@ -148,53 +157,81 @@ export async function applyInstrumentImport(
         );
       }
 
-      const modelIds = new Map<string, string>();
-      for (const m of snapshot.models)
-        modelIds.set(`${m.make.toLowerCase().trim()}|${m.model.toLowerCase().trim()}`, m.id);
-      for (const m of plan.models) {
-        const [row] = await tx
+      // Bulk inserts: one statement per table, so a 200-row list is a few
+      // round trips to the database instead of hundreds.
+      const [settings] = await tx
+        .select({
+          legalName: organisationSettings.legalName,
+          address: organisationSettings.address,
+        })
+        .from(organisationSettings)
+        .where(eq(organisationSettings.organisationId, actor.organisationId));
+      const existingModels = await tx
+        .select()
+        .from(instrumentModels)
+        .where(eq(instrumentModels.organisationId, actor.organisationId));
+      const modelByKey = new Map<string, InstrumentModel>(
+        existingModels.map((m) => [
+          `${m.make.toLowerCase().trim()}|${m.model.toLowerCase().trim()}`,
+          m,
+        ]),
+      );
+      if (plan.models.length > 0) {
+        const created = await tx
           .insert(instrumentModels)
-          .values({
-            organisationId: actor.organisationId,
-            type: m.type,
-            make: m.make,
-            model: m.model,
-            equipmentName: m.equipmentName,
-            quantities: m.quantities,
-            rangeText: m.rangeText,
-            createdByUserId: actor.id,
-          })
-          .returning({ id: instrumentModels.id });
-        modelIds.set(m.key, row!.id);
+          .values(
+            plan.models.map((m) => ({
+              organisationId: actor.organisationId,
+              type: m.type,
+              make: m.make,
+              model: m.model,
+              equipmentName: m.equipmentName,
+              quantities: m.quantities,
+              rangeText: m.rangeText,
+              createdByUserId: actor.id,
+            })),
+          )
+          .returning();
+        for (const m of created)
+          modelByKey.set(`${m.make.toLowerCase().trim()}|${m.model.toLowerCase().trim()}`, m);
       }
 
       const idByCode = new Map(snapshot.instruments.map((i) => [i.code.toLowerCase(), i.id]));
-      for (const i of plan.instruments) {
-        const [row] = await tx
+      for (const part of chunks(plan.instruments)) {
+        const created = await tx
           .insert(instruments)
-          .values({
-            organisationId: actor.organisationId,
-            modelId: i.modelKey ? (modelIds.get(i.modelKey) ?? null) : null,
-            type: i.type,
-            tier: "working",
-            code: i.code,
-            serialNo: i.serialNo,
-            make: i.make,
-            model: i.model,
-            equipmentName: i.equipmentName,
-            rangeText: i.rangeText,
-            createdByUserId: actor.id,
-          })
-          .returning({ id: instruments.id });
-        idByCode.set(i.code.toLowerCase(), row!.id);
+          .values(
+            part.map((i) => {
+              // Details the list doesn't give come from the model, as when adding by hand.
+              const model = i.modelKey ? modelByKey.get(i.modelKey) : undefined;
+              return {
+                organisationId: actor.organisationId,
+                modelId: model?.id ?? null,
+                type: i.type,
+                tier: "working",
+                code: i.code,
+                serialNo: i.serialNo,
+                make: i.make,
+                model: i.model,
+                equipmentName: i.equipmentName || model?.equipmentName || "",
+                rangeText: i.rangeText || model?.rangeText || "",
+                resolutionText: model?.resolutionText ?? "",
+                accuracyText: model?.accuracyText ?? "",
+                createdByUserId: actor.id,
+              };
+            }),
+          )
+          .returning({ id: instruments.id, code: instruments.code });
+        for (const row of created) idByCode.set(row.code.toLowerCase(), row.id);
       }
 
-      for (const c of plan.certificates) {
-        let certId = c.existingId;
-        if (!certId) {
-          const [row] = await tx
-            .insert(certificates)
-            .values({
+      const certIdByNumber = new Map<string, string>();
+      const fresh = plan.certificates.filter((c) => !c.existingId);
+      if (fresh.length > 0) {
+        const created = await tx
+          .insert(certificates)
+          .values(
+            fresh.map((c) => ({
               organisationId: actor.organisationId,
               kind: "imported",
               status: "issued",
@@ -204,33 +241,50 @@ export async function applyInstrumentImport(
               siteId: c.siteId,
               calibratedOn: c.calibratedOn,
               validUntil: c.validUntil,
+              // QA Tech's own loggers: QA Tech is the customer, as on the paper index.
+              customerName: settings?.legalName ?? "",
+              customerAddress: settings?.address ?? "",
               title: `${c.codes.length} instrument${c.codes.length === 1 ? "" : "s"} (imported)`,
               remarks: c.unnumbered
                 ? `Imported from ${file.firstFileName}. The list gave no certificate number for these instruments.`
                 : `Imported from ${file.firstFileName}.`,
               createdByUserId: actor.id,
-            })
-            .returning({ id: certificates.id });
-          certId = row!.id;
-        }
-        const [{ next }] = (await tx
-          .select({ next: sql<number>`coalesce(max(${certificateItems.position}) + 1, 0)::int` })
-          .from(certificateItems)
-          .where(eq(certificateItems.certificateId, certId))) as [{ next: number }];
-        const ids = c.codes
-          .map((code) => idByCode.get(code.toLowerCase()))
-          .filter((id): id is string => !!id);
-        if (ids.length > 0) {
-          await tx.insert(certificateItems).values(
-            ids.map((instrumentId, n) => ({
-              organisationId: actor.organisationId,
-              certificateId: certId!,
-              instrumentId,
-              position: next + n,
             })),
-          );
-        }
+          )
+          .returning({ id: certificates.id, number: certificates.number });
+        for (const row of created) certIdByNumber.set(row.number.toLowerCase(), row.id);
       }
+      // Existing certificates keep their instruments; new ones are added after them.
+      const existingIds = plan.certificates
+        .map((c) => c.existingId)
+        .filter((id): id is string => !!id);
+      const nextPosition = new Map<string, number>();
+      if (existingIds.length > 0) {
+        const rows = await tx
+          .select({
+            certificateId: certificateItems.certificateId,
+            next: sql<number>`coalesce(max(${certificateItems.position}) + 1, 0)::int`,
+          })
+          .from(certificateItems)
+          .where(inArray(certificateItems.certificateId, existingIds))
+          .groupBy(certificateItems.certificateId);
+        for (const r of rows) nextPosition.set(r.certificateId, r.next);
+      }
+      const items = plan.certificates.flatMap((c) => {
+        const certId = c.existingId ?? certIdByNumber.get(c.number.toLowerCase());
+        if (!certId) return [];
+        const start = nextPosition.get(certId) ?? 0;
+        return c.codes
+          .map((code) => idByCode.get(code.toLowerCase()))
+          .filter((id): id is string => !!id)
+          .map((instrumentId, n) => ({
+            organisationId: actor.organisationId,
+            certificateId: certId,
+            instrumentId,
+            position: start + n,
+          }));
+      });
+      for (const part of chunks(items)) await tx.insert(certificateItems).values(part);
 
       await recordAudit(tx, {
         organisationId: actor.organisationId,
