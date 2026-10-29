@@ -11,11 +11,13 @@ Architecture decisions: [docs/adr/](docs/adr/).
 
 ## Status
 
-**Phase 1 — Sign-in, roles and settings.** Email + password sign-in with lockout, one-time
-invite/reset links, nine roles with a permission matrix, electronic signatures, users,
-settings (letterhead details, sites, number formats, calculation defaults), audit trail
-screen and an authenticated upload endpoint. Built on phase 0: design system, append-only
-audit log, content-addressed file storage, CI.
+**Phase 2 — Clients and equipment.** Client companies → sites → departments, contacts
+and report signatories, client settings (post-calibration by SOP, requalification
+interval, report number format), the equipment register (type, ID, make/model/serial,
+size, set point, temperature and RH limits, default loggers, interval and duration, last
+study and next due date), client QA users tied to one company, and an Excel import with
+preview. Built on phase 1 (sign-in, roles, settings, audit trail, uploads) and phase 0
+(design system, append-only audit log, content-addressed file storage, CI).
 
 ## Run it locally
 
@@ -58,9 +60,11 @@ Some tests also run against real QA Tech files when they are present in `fixture
 ## Project layout
 
 ```
-src/app/(staff)/     QA Tech staff screens (shell, home)
+src/app/(staff)/     QA Tech staff screens (clients, users, settings, audit…)
+src/app/(client)/    the client QA users' area
 src/components/ui/   design-system components
 src/components/shell sidebar, top bar, navigation
+src/domain/          business rules without React (auth, clients, numbering)
 src/db/              Drizzle schema, client, seed helpers
 src/lib/             env, audit, storage
 drizzle/             SQL migrations (forward-only)
