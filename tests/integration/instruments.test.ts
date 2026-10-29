@@ -841,3 +841,61 @@ describe("readings that can't be right", () => {
     ).toMatchObject({ ok: true });
   });
 });
+
+describe("planning the week's calibration", () => {
+  it("groups loggers that need calibrating by model, most urgent first, and exports the register", async () => {
+    const { dueBatches } = await import("@/domain/instruments/queries");
+    const { exportRegisterWorkbook } = await import("@/domain/instruments/register-export");
+    const batches = await dueBatches(db, lab);
+    const ebro = batches.find((b) => b.model === "EBI 20-TH1")!;
+    expect(ebro.instruments.length).toBeGreaterThan(0);
+    // Never calibrated first.
+    expect(ebro.instruments[0]!.validity).toBe("never");
+    expect(batches.every((b) => b.instruments.every((i) => i.validity !== "valid"))).toBe(true);
+
+    const rows = await listInstruments(db, lab, { q: "E-TRH05" });
+    const bytes = await exportRegisterWorkbook(rows, "Register");
+    const wb = new (await import("exceljs")).default.Workbook();
+    await wb.xlsx.load(bytes as unknown as ArrayBuffer);
+    const sheet = wb.worksheets[0]!;
+    expect((sheet.getRow(2).values as unknown[]).slice(1, 11)).toEqual([
+      "SR. No.",
+      "Instrument Name",
+      "Make",
+      "Model",
+      "ID No.",
+      "Serial No.",
+      "Certificate No.",
+      "Range",
+      "Calibration Date",
+      "Due Date",
+    ]);
+    const pdl17 = sheet.getColumn(7).values.find((v) => v === "QATECH/BHIWANDI/03/26/PDL-17");
+    expect(pdl17).toBeDefined();
+    expect(sheet.getColumn(10).values).toContain("25.03.2027");
+  });
+
+  it("adds a batch of serials in one go with one audit entry", async () => {
+    const { bulkAddInstruments } = await import("@/domain/instruments/instrument-service");
+    const before = await db.$count(auditLog);
+    const added = await bulkAddInstruments(
+      db,
+      manager,
+      {
+        modelId,
+        homeSiteId: siteId,
+        codePrefix: "B-TRH",
+        serials: Array.from({ length: 120 }, (_, i) => 70000000 + i).join("\n"),
+      },
+      req,
+    );
+    expect(added).toHaveLength(120);
+    expect(added[0]).toMatchObject({
+      code: "B-TRH0001",
+      make: "ebro",
+      accuracyText: expect.stringContaining("± 0.5"),
+    });
+    expect(added.at(-1)!.code).toBe("B-TRH0120");
+    expect((await db.$count(auditLog)) - before).toBe(1);
+  });
+});

@@ -353,24 +353,34 @@ export async function bulkAddInstruments(
         (await lastCodeWithPrefix(tx, actor.organisationId, values.codePrefix)) ??
         `${values.codePrefix}0000`;
       const codes = nextCodes(last, serials.length);
-      const created: Instrument[] = [];
-      for (const [i, serialNo] of serials.entries()) {
-        created.push(
-          await insertInstrument(
-            tx,
-            actor,
-            instrumentSchema.parse({
-              modelId: values.modelId,
-              type: "other", // replaced by the model's type
-              tier: values.tier,
-              code: codes[i],
-              serialNo,
-              homeSiteId: values.homeSiteId,
-            }),
-            request,
-          ),
-        );
-      }
+      // One model and site for the whole batch: checked once, then one INSERT.
+      const first = instrumentSchema.parse({
+        modelId: values.modelId,
+        type: "other", // replaced by the model's type
+        tier: values.tier,
+        code: codes[0],
+        serialNo: serials[0],
+        homeSiteId: values.homeSiteId,
+      });
+      const model = await checkReferences(tx, actor, first);
+      const rows = serials.map((serialNo, i) => ({
+        ...withModelDefaults({ ...first, code: codes[i]!, serialNo }, model),
+        organisationId: actor.organisationId,
+        createdByUserId: actor.id,
+      }));
+      const created = await tx.insert(instruments).values(rows).returning();
+      await recordAudit(tx, {
+        organisationId: actor.organisationId,
+        actor: user(actor),
+        action: "instruments.batch_added",
+        entityType: "instrument_model",
+        entityId: values.modelId,
+        summary: `${actor.name} added ${created.length} ${model ? `${model.make} ${model.model}` : ""} instrument${created.length === 1 ? "" : "s"}: ${codes[0]}${codes.length > 1 ? ` to ${codes.at(-1)}` : ""}`,
+        after: {
+          instruments: created.map((r) => ({ id: r.id, code: r.code, serialNo: r.serialNo })),
+        },
+        request,
+      });
       return created;
     }),
   );

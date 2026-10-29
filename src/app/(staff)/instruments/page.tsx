@@ -1,4 +1,4 @@
-import { AlertTriangle, Gauge, Search } from "lucide-react";
+import { AlertTriangle, Download, Gauge, Search } from "lucide-react";
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,7 @@ import {
 import { db } from "@/db/client";
 import { can } from "@/domain/auth/permissions";
 import {
+  dueBatches,
   expirySummary,
   listInstruments,
   type InstrumentFilter,
@@ -53,10 +54,12 @@ export default async function InstrumentsPage({ searchParams }: PageProps<"/inst
   if (view === "master" || view === "working") filter.tier = view;
   if (view === "attention") filter.validity = "attention";
 
-  const [rows, summary, options] = await Promise.all([
+  const canCalibrate = can(actor, "calibration.perform");
+  const [rows, summary, options, batches] = await Promise.all([
     listInstruments(db, actor, filter),
     expirySummary(db, actor),
     canManage ? formOptions(actor) : Promise.resolve(null),
+    view === "attention" && canCalibrate ? dueBatches(db, actor) : Promise.resolve([]),
   ]);
   const { counts } = summary;
   const urgent = counts.expired + counts.due_7;
@@ -140,6 +143,14 @@ export default async function InstrumentsPage({ searchParams }: PageProps<"/inst
             </Link>
           ))}
         </nav>
+        <a
+          href={`/instruments/export?${new URLSearchParams({ ...(view ? { view } : {}), ...(q ? { q } : {}) }).toString()}`}
+          download
+          className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
+        >
+          <Download className="size-4" aria-hidden="true" />
+          Download as Excel
+        </a>
         <form role="search" className="flex max-w-sm flex-1 gap-2">
           {view ? <input type="hidden" name="view" value={view} /> : null}
           <label htmlFor="q" className="sr-only">
@@ -158,6 +169,52 @@ export default async function InstrumentsPage({ searchParams }: PageProps<"/inst
           </Button>
         </form>
       </div>
+
+      {batches.length > 0 ? (
+        <section
+          aria-labelledby="plan"
+          className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4"
+        >
+          <h2 id="plan" className="font-semibold">
+            Plan the calibration
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            One certificate covers one model. Batches take the most urgent first (never calibrated,
+            expired, then the earliest due), 20 at a time: two observation blocks on one FT-05 page.
+          </p>
+          <ul className="flex flex-col gap-2">
+            {batches.map((b) => {
+              const batch = b.instruments.slice(0, 20);
+              return (
+                <li
+                  key={`${b.make}|${b.model}`}
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border px-3 py-2"
+                >
+                  <span className="text-sm">
+                    <strong>{`${b.make} ${b.model}`.trim() || "No model recorded"}</strong> ·{" "}
+                    {b.instruments.length} to calibrate
+                    <span className="block text-xs text-muted-foreground">
+                      Next:{" "}
+                      {batch
+                        .map((i) => i.code)
+                        .slice(0, 4)
+                        .join(", ")}
+                      {batch.length > 4 ? `… (${batch.length})` : ""}
+                    </span>
+                  </span>
+                  <Button size="sm" asChild>
+                    <Link
+                      href={`/instruments/certificates/new?ids=${batch.map((i) => i.id).join(",")}`}
+                    >
+                      Start a batch of {batch.length}
+                    </Link>
+                  </Button>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
 
       {rows.length === 0 ? (
         <EmptyState

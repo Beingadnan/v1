@@ -512,3 +512,52 @@ export async function resolveInstrumentList(
   }
   return { ids, unknown, ambiguous };
 }
+
+export type DueBatch = {
+  make: string;
+  model: string;
+  /** Most urgent first: never calibrated, expired, then by due date. */
+  instruments: { id: string; code: string; validUntil: string | null; validity: ValidityState }[];
+};
+
+/**
+ * Working instruments that need calibrating (expired, never calibrated, or due
+ * within 30 days), grouped by make and model, since one certificate covers one
+ * model. The lab plans its week from this.
+ */
+export async function dueBatches(db: DbExecutor, actor: SessionUser): Promise<DueBatch[]> {
+  const rows = await listInstruments(db, actor, {
+    tier: "working",
+    status: "active",
+    validity: "attention",
+  });
+  const rank: Record<ValidityState, number> = {
+    never: 0,
+    expired: 1,
+    due_7: 2,
+    due_15: 3,
+    due_30: 4,
+    valid: 5,
+  };
+  const groups = new Map<string, DueBatch>();
+  for (const r of rows) {
+    const key = `${r.make.toLowerCase()}|${r.model.toLowerCase()}`;
+    const group = groups.get(key) ?? { make: r.make, model: r.model, instruments: [] };
+    group.instruments.push({
+      id: r.id,
+      code: r.code,
+      validUntil: r.latest?.validUntil ?? null,
+      validity: r.validity,
+    });
+    groups.set(key, group);
+  }
+  for (const g of groups.values()) {
+    g.instruments.sort(
+      (a, b) =>
+        rank[a.validity] - rank[b.validity] ||
+        (a.validUntil ?? "").localeCompare(b.validUntil ?? "") ||
+        a.code.localeCompare(b.code),
+    );
+  }
+  return [...groups.values()].sort((a, b) => b.instruments.length - a.instruments.length);
+}

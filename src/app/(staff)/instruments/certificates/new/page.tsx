@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { ChevronLeft } from "lucide-react";
 import Link from "next/link";
 
@@ -18,7 +18,7 @@ export default async function NewCalibrationPage({
   searchParams,
 }: PageProps<"/instruments/certificates/new">) {
   const actor = await requirePermission("calibration.perform");
-  const { from } = await searchParams;
+  const { from, ids } = await searchParams;
   const today = todayInIndia();
   const org = actor.organisationId;
 
@@ -82,6 +82,22 @@ export default async function NewCalibrationPage({
       .orderBy(desc(certificates.createdAt))
       .limit(1)
   )[0]?.siteId;
+  // A batch chosen on the register ("Start a batch of 20").
+  let preset = "";
+  if (!template && typeof ids === "string") {
+    const wanted = ids.split(",").filter(isUuid).slice(0, 40);
+    if (wanted.length > 0) {
+      const rows = await db
+        .select({ id: instruments.id, code: instruments.code })
+        .from(instruments)
+        .where(and(eq(instruments.organisationId, org), inArray(instruments.id, wanted)));
+      const byId = new Map(rows.map((r) => [r.id, r.code]));
+      preset = wanted
+        .map((id) => byId.get(id))
+        .filter(Boolean)
+        .join("\n");
+    }
+  }
   const recent = await db
     .select({ id: certificates.id, number: certificates.number, title: certificates.title })
     .from(certificates)
@@ -108,6 +124,7 @@ export default async function NewCalibrationPage({
         companies={companies.map((c) => ({ id: c.id, label: c.name }))}
         masters={masters}
         template={template}
+        preset={preset}
         defaultSiteId={
           template?.siteId ??
           lastSiteId ??

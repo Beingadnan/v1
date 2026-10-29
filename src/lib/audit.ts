@@ -45,6 +45,7 @@ export const AUDIT_ACTIONS = [
   "instrument.created",
   "instrument.updated",
   "instruments.imported",
+  "instruments.batch_added",
   "certificate.created",
   "certificate.updated",
   "certificate.submitted",

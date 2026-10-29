@@ -29,7 +29,10 @@ export function NewCalibrationForm({
   template,
   recent,
   defaultSiteId,
+  preset = "",
 }: {
+  /** Instrument IDs chosen elsewhere (the register's "Start a batch"). */
+  preset?: string;
   defaultSiteId?: string;
   today: string;
   sites: Option[];
@@ -44,7 +47,7 @@ export function NewCalibrationForm({
   recent: { id: string; number: string; title: string }[];
 }) {
   const { result, pending, onSubmit } = useFormAction(createCalibrationAction);
-  const [list, setList] = useState(template?.instruments ?? "");
+  const [list, setList] = useState(template?.instruments ?? preset);
   const count = list.split(/[\n\r,;\t]+/).filter((t) => t.trim()).length;
 
   return (
@@ -104,7 +107,7 @@ export function NewCalibrationForm({
             multiline
             required
             result={result}
-            defaultValue={template?.instruments}
+            defaultValue={template?.instruments ?? preset}
             hint={`${count ? `${count} entered. ` : ""}Paste QA Tech IDs or serial numbers from Excel, one per line. One make and model per certificate, up to 40.`}
             onInput={(e: React.FormEvent<HTMLInputElement>) =>
               setList((e.target as HTMLInputElement).value)

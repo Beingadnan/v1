@@ -510,11 +510,13 @@ export function planInstrumentImport(
         )
       : undefined;
     if (sameSerial && (!existing || existing.id !== sameSerial.id)) {
-      plan.skipped.push({
-        row: o.where,
-        reason: `Serial ${o.serialNo} is already registered as ${sameSerial.code}, not ${o.code}.`,
-      });
-      return null;
+      // The serial is the physical logger: keep its history under the ID already registered.
+      plan.problems.push(
+        `${o.where}: serial ${o.serialNo} is registered as ${sameSerial.code}; this file calls it ${o.code}. Its records were added to ${sameSerial.code}.`,
+      );
+      if (!counted.has(sameSerial.id)) plan.alreadyRegistered += 1;
+      counted.add(sameSerial.id);
+      return sameSerial.code;
     }
     const planned = plannedByCode.get(o.code.toLowerCase());
     if (planned && o.serialNo && planned.serialNo && planned.serialNo !== o.serialNo) {
