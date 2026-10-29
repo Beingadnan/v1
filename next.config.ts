@@ -29,6 +29,8 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   // Produces a self-contained server bundle for the Docker image (deployment phase).
   output: "standalone",
+  // pdfkit reads its font metrics from its own folder at run time; bundling would lose them.
+  serverExternalPackages: ["pdfkit"],
   turbopack: {
     rules: {
       "*.css": {

@@ -1,3 +1,8 @@
+import { execFileSync } from "node:child_process";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { and, eq } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 
@@ -28,9 +33,20 @@ import {
   traceChain,
 } from "@/domain/instruments/queries";
 
+import { certificatePdf } from "@/domain/instruments/pdf-service";
+import { LocalBlobStore } from "@/lib/storage/blob-store";
+
 import { openTestDatabase } from "../support/test-db";
 
 const { db } = openTestDatabase();
+const hasPdftotext = (() => {
+  try {
+    execFileSync("pdftotext", ["-v"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+})();
 const req = { ipAddress: "203.0.113.60" };
 const PASSWORD = "dry block at one fifty";
 let lab: SessionUser;
@@ -452,6 +468,42 @@ describe("PDL-17: batch calibration certificate (exit test)", () => {
     const issued = (await getCertificate(db, lab, certId))!;
     expect(issued.preparedByName).toBe("Lab Tech");
     expect(issued.issuedOn).not.toBeNull();
+  });
+
+  it("prints the FT-05 PDF with the readings, deviations and masters, and freezes it once issued", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "qtech-ft05-"));
+    const blobs = new LocalBlobStore(dir);
+    const first = (await certificatePdf(db, blobs, lab, certId))!;
+    expect(first.fileName).toBe("QATECH-BHIWANDI-03-26-PDL-17.pdf");
+    expect(Buffer.from(first.bytes).subarray(0, 5).toString()).toBe("%PDF-");
+    const again = (await certificatePdf(db, blobs, manager, certId))!;
+    expect(Buffer.from(again.bytes).equals(Buffer.from(first.bytes))).toBe(true);
+    if (!hasPdftotext) return; // the text check needs poppler's pdftotext
+    const file = path.join(dir, "pdl17.pdf");
+    await writeFile(file, first.bytes);
+    const text = execFileSync("pdftotext", ["-layout", file, "-"]).toString();
+    for (const expected of [
+      "Calibration Certificate",
+      "QATECH/BHIWANDI/03/26/PDL-17",
+      "26.03.2026",
+      "25.03.2027",
+      "ARAI/CAL/2508/2925",
+      "SAN/25/1165/TH/1",
+      "62363017",
+      "E-TRH0533",
+      "-25.084",
+      "90.27",
+      "within the specified accuracy limits",
+      "Decision rule",
+      "Lab Tech",
+      "Quality Manager",
+      "Page 01 of 01",
+      "QATM/PVAL/FT-05",
+    ]) {
+      expect(text).toContain(expected);
+    }
+    expect(text).not.toContain("DRAFT");
+    expect(text.match(/Decision rule/g)).toHaveLength(1);
   });
 
   it("stops the person who did the calibration from checking it", async () => {

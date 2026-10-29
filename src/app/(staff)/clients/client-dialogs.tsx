@@ -2,17 +2,11 @@
 
 import { MapPin, Pencil, Plus, Search, UserPlus } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { FormDialog, useCloseOnSuccess } from "@/components/ui/form-dialog";
+import { DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   CheckboxField,
   FormMessage,
@@ -36,52 +30,6 @@ import {
   updateCompanyAction,
 } from "./actions";
 import { useGstLookupEnabled } from "./gst-context";
-
-/** A dialog opened by a trigger button; the form inside remounts fresh each time. */
-function FormDialog({
-  trigger,
-  wide,
-  children,
-}: {
-  trigger: (open: () => void) => ReactNode;
-  wide?: boolean;
-  children: (close: () => void) => ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  const [round, setRound] = useState(0);
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (!next) setRound((r) => r + 1);
-      }}
-    >
-      {trigger(() => setOpen(true))}
-      <DialogContent
-        className={
-          wide ? "max-h-[90dvh] max-w-2xl overflow-y-auto" : "max-h-[90dvh] overflow-y-auto"
-        }
-      >
-        <div key={round} className="contents">
-          {children(() => {
-            setOpen(false);
-            setRound((r) => r + 1);
-          })}
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-/** Closes the dialog a moment after a successful save, so the message is seen. */
-function useCloseOnSuccess(ok: boolean | undefined, close: () => void) {
-  useEffect(() => {
-    if (!ok) return;
-    const timer = setTimeout(close, 900);
-    return () => clearTimeout(timer);
-  }, [ok, close]);
-}
 
 // ---------------------------------------------------------------- GSTIN
 

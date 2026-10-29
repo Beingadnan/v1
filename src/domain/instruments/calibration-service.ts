@@ -723,12 +723,14 @@ export async function attachIssuedPdf(
   actor: SessionUser,
   certificateId: string,
   fileId: string,
-) {
-  await db.transaction(async (tx) => {
+): Promise<string> {
+  // Returns the file that is now attached: the first one stored wins.
+  return db.transaction(async (tx) => {
     const cert = await lockCertificate(tx, actor, certificateId);
     if (cert.status !== "issued")
       throw new InstrumentsError("Only issued certificates get a final PDF.");
-    if (cert.fileId) return;
+    if (cert.fileId) return cert.fileId;
     await tx.update(certificates).set({ fileId }).where(eq(certificates.id, cert.id));
+    return fileId;
   });
 }

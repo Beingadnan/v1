@@ -1,0 +1,42 @@
+# Phase 3 research: instruments, master certificates and calibration
+
+Researched before building Phase 3 (October 2026). It covers what a calibration
+certificate must contain, how a pass/fail is decided, how traceability is
+shown, and what QA Tech's own files show about where time goes today.
+
+## What the rules require
+
+| Requirement                                                                                                                                               | Source                                                                                                                                                                                                                                                                           | What QTech does                                                                                                                                                                                                                                                |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A certificate identifies the lab, the item (make, model, serial, ID), the date of calibration, the method, the results with units, and who authorised it. | ISO/IEC 17025:2017 §7.8.2 and §7.8.4; [UKAS LAB 5](https://www.ukas.com/resources/publications/laboratory-accreditation/lab-5-reporting-calibration-results/); [NIST SOP 1](https://www.nist.gov/document/sop-1-calibration-certificate-preparation-20190506pdf)                 | The FT-05 header holds all of these. Make, model, range, resolution, accuracy and SOP come from the instrument model, so nobody types them again.                                                                                                              |
+| Results must be metrologically traceable, and the certificate states how: which reference standards were used and their certificates.                     | ISO/IEC 17025 §6.5 and §7.8.4.1                                                                                                                                                                                                                                                  | Each certificate stores its masters _and the master certificate that covered the calibration date_. The traceability view follows that link up to the outside lab (ARAI, Sansel).                                                                              |
+| A due date is optional, and is shown only when the customer asks or the lab's procedure says so.                                                          | ISO/IEC 17025 §7.8.4.3                                                                                                                                                                                                                                                           | The due date defaults to calibration date + interval − 1 day (26.03.2026 → 25.03.2027, as on QA Tech's certificates), can be edited, and can be blank ("NA").                                                                                                  |
+| A statement of conformity (pass/fail) needs a stated decision rule.                                                                                       | ISO/IEC 17025 §7.8.6; [ILAC-G8 via UKAS LAB 48](https://ukas.com/wp-content/uploads/2023/05/LAB-48-Decision-rules-and-statements-of-conformity.pdf); [Fluke on decision rules](https://www.fluke.com/en-us/learn/blog/calibration-software/decision-rules-conformity-assessment) | QA Tech applies simple acceptance: pass when \|deviation\| ≤ the manufacturer's accuracy at that point. The rule is printed on the certificate (`DECISION_RULE_TEXT`). Guard-banding can be added later without changing the stored readings.                  |
+| NABL-accredited certificates carry a Unique Laboratory Report (ULR) number.                                                                               | [NABL ULR clarification](https://teamleaseregtech.com/updates/article/57767/nabl-issues-clarification-on-unique-laboratory-report-ulr-number-for-a)                                                                                                                              | Outside-lab certificates record the ULR, checked against the pattern CC + lab code + year + running number + F/P (e.g. CC287926000000394F).                                                                                                                    |
+| Electronic records are signed, attributable and tamper-evident.                                                                                           | 21 CFR Part 11 §11.50/§11.70; EU GMP Annex 11 §14                                                                                                                                                                                                                                | Done by → checked by → approved by. Each step re-enters a password, and each signature stores a SHA-256 of the certificate content, so a signature can't move onto changed content. The checker and approver must be different people from whoever calibrated. |
+
+## What QA Tech's files showed
+
+Studied: Calibration Index-2026.xlsx, the FT-05 PDFs (PDL-17, Zydus 24.08.2026), the TL-38 Sansel certificate, the site logger lists (Baddi, Nagpur, Sri Lanka), and the BE-WF-02 mapping report.
+
+- **The index is typed by hand after the certificates are made**, and it has errors: a duplicated RTD-04, a January row numbered 02/26, PDL-010 next to PDL-10, and a due date of "20.03.02027". → The index is generated from the certificates and exports to Excel in the same layout.
+- **Numbers restart every month, one series per kind** (QATECH/BHIWANDI/03/26/PDL-17). → The number series is kept per site, month and kind, allocated in the database (no gaps from two people saving at once). A cancelled certificate keeps its number.
+- **Deviations are computed by hand or in Excel** (UUC − master, printed to the master's decimals). → Exact decimal arithmetic on the server; the PDL-17 deviations are reproduced exactly in tests.
+- **A batch is 10 loggers of one model** on one certificate, two blocks of 10 per page. → Batch grid of up to 40, and readings can be pasted straight from Excel.
+- **Master validity isn't checked anywhere.** Nothing stops an expired SSPRT certificate being used. → A master is refused unless it has an issued certificate covering the calibration date; the message says which certificate expired and when.
+- **Logger lists repeat the certificate number only on a batch's first row.** → Import carries it down to the following rows.
+- **New loggers arrive with consecutive serials and IDs** (62363017–26 → E-TRH0524–0533). → "Add a batch": paste the serials and the IDs continue from the highest existing one.
+
+## Features added because of this research
+
+1. Instrument models with accuracy bands, usual test points, SOP and interval, used as defaults everywhere.
+2. Batch add of loggers from pasted serials, with automatic IDs.
+3. An automatic monthly certificate series per site and kind.
+4. A draft certificate pre-filled from the model or from the previous certificate ("calibrate again").
+5. Masters validated on the calibration date, with the covering certificate stored for traceability.
+6. Pass/fail decided on the server against the accuracy bands, under a stated decision rule.
+7. Three-step signing with content hashes.
+8. An automatic Calibration Index, exportable to Excel.
+9. A traceability chain view for any instrument on any date.
+10. Expiry alerts at 30, 15 and 7 days, and expired or out-of-service instruments blocked from selection.
+11. Import of the existing logger lists and certificates.
