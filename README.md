@@ -11,13 +11,18 @@ Architecture decisions: [docs/adr/](docs/adr/).
 
 ## Status
 
-**Phase 2 — Clients and equipment.** Client companies → sites → departments, contacts
-and report signatories, client settings (post-calibration by SOP, requalification
-interval, report number format), the equipment register (type, ID, make/model/serial,
-size, set point, temperature and RH limits, default loggers, interval and duration, last
-study and next due date), client QA users tied to one company, and an Excel import with
-preview. Built on phase 1 (sign-in, roles, settings, audit trail, uploads) and phase 0
-(design system, append-only audit log, content-addressed file storage, CI).
+**Phase 3 — Instruments and calibration.** QA Tech's loggers, sensors and master
+standards with their models (accuracy bands, SOP, usual test points); outside-lab
+certificates of the masters (ULR, PDF); batch calibration certificates (FT-05) with the
+number taken from the site's monthly series, readings pasted from Excel, deviations and
+pass/fail worked out exactly, masters refused unless valid on the calibration date, and
+done by → checked by → approved by with password signatures; the FT-05 PDF (frozen once
+issued); the Calibration Index by month with Excel export; traceability for any instrument
+on any date; expiry alerts at 30/15/7 days; and import of the existing logger lists.
+
+Built on phase 2 (clients, sites, departments, equipment register, Excel import), phase 1
+(sign-in, roles, settings, audit trail, uploads) and phase 0 (design system, append-only
+audit log, content-addressed file storage, CI).
 
 ## Run it locally
 
@@ -28,7 +33,7 @@ Requires Node 22 and a Postgres database: either Neon (paste its connection stri
 npm ci                          # install packages first
 cp .env.example .env.local      # local settings; never commit .env.local
 npm run db:migrate              # create tables
-npm run db:seed                 # QA Tech organisation, settings and sites (safe to re-run)
+npm run db:seed                 # QA Tech organisation, settings, sites and logger models (safe to re-run)
 npm run user:create-admin -- --name "Your Name" --email you@qatech.co.in
 npm run dev                     # http://localhost:3000
 ```
@@ -69,11 +74,11 @@ Some tests also run against real QA Tech files when they are present in `fixture
 ## Project layout
 
 ```
-src/app/(staff)/     QA Tech staff screens (clients, users, settings, audit…)
+src/app/(staff)/     QA Tech staff screens (clients, instruments, users, settings, audit…)
 src/app/(client)/    the client QA users' area
 src/components/ui/   design-system components
 src/components/shell sidebar, top bar, navigation
-src/domain/          business rules without React (auth, clients, numbering)
+src/domain/          business rules without React (auth, clients, instruments, numbering)
 src/db/              Drizzle schema, client, seed helpers
 src/lib/             env, audit, storage
 drizzle/             SQL migrations (forward-only)
