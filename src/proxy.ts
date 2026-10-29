@@ -8,7 +8,8 @@ const SESSION_COOKIES = ["__Host-qtech_session", "qtech_session"];
 /**
  * Runs before every page request:
  * 1. sets a per-request nonce-based Content-Security-Policy;
- * 2. sends visitors without a session cookie to /login early.
+ * 2. sends visitors without a session cookie to /login early (page loads only;
+ *    server actions check the session themselves).
  *
  * Step 2 only looks at whether a cookie exists. The real check (is the session
  * valid, is the user active, may they do this) always happens on the server in
@@ -19,7 +20,12 @@ export function proxy(request: NextRequest) {
   const isPublic = PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
   const hasSessionCookie = SESSION_COOKIES.some((name) => request.cookies.has(name));
 
-  if (!isPublic && !hasSessionCookie) {
+  // A form submitting to a server action (header "Next-Action") is left to the action:
+  // it checks the session itself and can answer "you were signed out" while the
+  // page keeps everything typed. Redirecting it here would replace the page.
+  const isServerAction = request.method === "POST" && request.headers.has("next-action");
+
+  if (!isPublic && !hasSessionCookie && !isServerAction) {
     const loginUrl = new URL("/login", request.url);
     if (pathname !== "/") loginUrl.searchParams.set("next", `${pathname}${search}`);
     return NextResponse.redirect(loginUrl);

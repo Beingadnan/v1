@@ -30,7 +30,7 @@ import {
 } from "@/domain/instruments/instrument-service";
 import { resolveInstrumentList } from "@/domain/instruments/queries";
 import { runAction, type ActionResult } from "@/lib/action-result";
-import { requireUser } from "@/lib/auth/dal";
+import { requireUser, SESSION_ENDED, userForAction } from "@/lib/auth/dal";
 import { getRequestInfo } from "@/lib/request-info";
 import { blobStore } from "@/lib/storage";
 
@@ -286,7 +286,8 @@ export async function saveCalibrationAction(
   certificateId: string,
   input: CalibrationSave,
 ): Promise<ActionResult<{ missing: number; failed: number }>> {
-  const actor = await requireUser();
+  const actor = await userForAction();
+  if (!actor) return { ok: false, error: SESSION_ENDED };
   const result = await runAction(async () =>
     saveCalibration(db, actor, certificateId, input, await getRequestInfo()),
   );
@@ -298,7 +299,8 @@ export async function signStepAction(
   _prev: unknown,
   formData: FormData,
 ): Promise<ActionResult<{ status: string }>> {
-  const actor = await requireUser();
+  const actor = await userForAction();
+  if (!actor) return { ok: false, error: SESSION_ENDED };
   const certificateId = field(formData, "certificateId");
   const step = field(formData, "step");
   if (step !== "submit" && step !== "check" && step !== "approve") {

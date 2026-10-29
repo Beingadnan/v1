@@ -27,6 +27,19 @@ export async function requireUser(): Promise<SessionUser & { sessionId: string }
   return { ...session.user, sessionId: session.sessionId };
 }
 
+/**
+ * For server actions behind long forms (a readings sheet): the user, or null
+ * when the session has ended. Unlike requireUser it does not navigate away, so
+ * the form can say so and keep everything the person typed.
+ */
+export async function userForAction(): Promise<(SessionUser & { sessionId: string }) | null> {
+  const session = await getCurrentSession();
+  return session ? { ...session.user, sessionId: session.sessionId } : null;
+}
+
+export const SESSION_ENDED =
+  "You were signed out after 30 minutes without activity. Nothing you typed is lost: sign in again in a new tab, then come back here and press Save.";
+
 /** For pages: signed in and allowed, or sent to a plain "no access" page. */
 export async function requirePermission(
   action: Action,
