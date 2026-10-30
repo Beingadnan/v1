@@ -9,7 +9,11 @@ import { createCompany, createClientSite } from "@/domain/clients/company-servic
 import { createEquipment } from "@/domain/clients/equipment-service";
 import { getCompany } from "@/domain/clients/queries";
 import { createExternalCertificate } from "@/domain/instruments/certificate-service";
-import { createInstrument, saveModel } from "@/domain/instruments/instrument-service";
+import {
+  bulkAddInstruments,
+  createInstrument,
+  saveModel,
+} from "@/domain/instruments/instrument-service";
 import {
   addStudies,
   autoBook,
@@ -46,6 +50,7 @@ let wf03: string;
 let cr01: string;
 let elsewhere: string;
 const loggerIds: Record<string, string> = {};
+let loggerModelId: string;
 
 async function makeUser(organisationId: string, email: string, role: string, name: string) {
   const [row] = await db
@@ -133,7 +138,7 @@ beforeAll(async () => {
   elsewhere = (await createEquipment(db, manager, watsonId, freezer(navalId, "TL-WF-01", ""), req))
     .id;
 
-  const modelId = (
+  const modelId = (loggerModelId = (
     await saveModel(
       db,
       manager,
@@ -150,7 +155,7 @@ beforeAll(async () => {
       },
       req,
     )
-  ).id;
+  ).id);
   // T-01…T-10 valid to mid-2027; T-11, T-12 run out on 30.11.2026.
   for (let n = 1; n <= 12; n++) {
     const code = `T-${String(n).padStart(2, "0")}`;
@@ -628,6 +633,80 @@ describe("clashes, holds and repeat visits", () => {
     await expect(
       setTeam(db, leader, repeat.id, [{ userId: outsider.id, role: "field_engineer" }], req),
     ).rejects.toThrow("A team member does not exist.");
+  });
+
+  it("never books one logger twice when two people book at the same moment", async () => {
+    const make = () =>
+      createJob(
+        db,
+        leader,
+        {
+          companyId: watsonId,
+          clientSiteId: seawoodsId,
+          plannedStart: "2027-02-01",
+          plannedEnd: "2027-02-02",
+          items: [{ equipmentId: cr01, loggerCount: "6" }],
+        },
+        req,
+      );
+    const [a, b] = [await make(), await make()];
+    const [ra, rb] = await Promise.all([
+      autoBook(db, leader, a.id, req),
+      autoBook(db, manager, b.id, req),
+    ]);
+    const both = [...ra.booked, ...rb.booked];
+    expect(new Set(both).size).toBe(both.length);
+    // 13 loggers, 7 wanted each (6 + 1 spare), T-11 and T-12 expired by then: 11 to share.
+    expect(both).toHaveLength(11);
+  });
+
+  it("books a warehouse-sized kit and keeps the audit summary short", async () => {
+    const added = await bulkAddInstruments(
+      db,
+      manager,
+      {
+        modelId: loggerModelId,
+        homeSiteId: bhwId,
+        codePrefix: "W-",
+        serials: Array.from({ length: 60 }, (_, i) => `9100${String(i).padStart(3, "0")}`).join(
+          "\n",
+        ),
+      },
+      req,
+    );
+    await createExternalCertificate(
+      db,
+      manager,
+      {
+        number: "QATECH/BHIWANDI/10/26/PDL-20",
+        ulrNo: "",
+        labName: "QA Tech Lab",
+        calibratedOn: "2026-10-01",
+        validUntil: "2027-09-30",
+        instrumentIds: added.map((a) => a.id),
+      },
+      req,
+    );
+    const big = await createJob(
+      db,
+      leader,
+      {
+        companyId: watsonId,
+        clientSiteId: seawoodsId,
+        plannedStart: "2027-03-01",
+        plannedEnd: "2027-03-04",
+        items: [{ equipmentId: cr01, loggerCount: "54" }],
+      },
+      req,
+    );
+    const booked = await autoBook(db, leader, big.id, req);
+    expect(booked.booked).toHaveLength(60);
+    expect(booked.short).toEqual([]);
+    const [entry] = await db
+      .select({ summary: auditLog.summary })
+      .from(auditLog)
+      .where(and(eq(auditLog.entityId, big.id), eq(auditLog.action, "job.instruments_booked")));
+    expect(entry!.summary).toMatch(/ and 52 more for job /);
   });
 
   it("audits every change", async () => {

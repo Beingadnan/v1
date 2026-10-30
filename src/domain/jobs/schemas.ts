@@ -14,12 +14,14 @@ const blankToNull = (v: unknown) =>
   v === undefined || v === null || (typeof v === "string" && v.trim() === "") ? null : v;
 const uuid = (message: string) => z.string().uuid(message);
 
-/** Rupees as typed: "₹1,25,000", "125000.50", "1.25 lakh" is not accepted. */
+/** Rupees as typed: "₹1,25,000", "Rs. 18,000/-", "125000.50". Words ("1.25 lakh") are refused. */
 export const money = (label: string) =>
   z.preprocess(
     (v) => {
       const clean = blankToNull(v);
-      return typeof clean === "string" ? clean.replace(/[₹,\s]|rs\.?|inr/gi, "") : clean;
+      return typeof clean === "string"
+        ? clean.replace(/\/-\s*$/, "").replace(/[₹,\s]|rs\.?|inr/gi, "")
+        : clean;
     },
     z.coerce
       .number({ message: `${label} must be an amount in rupees.` })

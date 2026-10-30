@@ -33,6 +33,7 @@ import { certificatesOf } from "@/domain/instruments/certificate-service";
 import { TYPE_MEASURES, type InstrumentType } from "@/domain/instruments/types";
 import { allocateNumber } from "@/domain/numbering/allocate";
 import { recordAudit } from "@/lib/audit";
+import { shortList } from "@/lib/text";
 
 import { INSTRUMENT_FOR, parseCodes, pickInstruments, sparesFor, type Candidate } from "./booking";
 import { JobsError } from "./errors";
@@ -518,7 +519,7 @@ export async function createJob(
         action: "job.created",
         entityType: "job",
         entityId: job!.id,
-        summary: `${actor.name} created job ${number} for ${company.name}: ${codes.join(", ")}`,
+        summary: `${actor.name} created job ${number} for ${company.name}: ${shortList(codes)}`,
         after: { number, ...v },
         request,
       });
@@ -612,7 +613,7 @@ export async function addStudies(
         action: "job.study_added",
         entityType: "job",
         entityId: job.id,
-        summary: `${actor.name} added ${codes.join(", ")} to job ${job.number}`,
+        summary: `${actor.name} added ${shortList(codes)} to job ${job.number}`,
         request,
       });
       await syncReadiness(tx, actor, job, request);
@@ -935,6 +936,16 @@ async function insertBookings(tx: Transaction, actor: SessionUser, jobId: string
     .onConflictDoNothing();
 }
 
+/**
+ * One booking at a time per organisation: two people booking for overlapping
+ * jobs at the same moment would otherwise both see a logger as free.
+ */
+async function lockBookings(tx: Transaction, organisationId: string) {
+  await tx.execute(
+    sql`select pg_advisory_xact_lock(hashtext(${`job-bookings:${organisationId}`}))`,
+  );
+}
+
 function assertCanBook(job: Job) {
   const s = status(job);
   if (!(HOLDS_INSTRUMENTS as readonly string[]).includes(s)) {
@@ -961,6 +972,7 @@ export async function autoBook(
 ): Promise<AutoBookResult> {
   assertCan(actor, "jobs.manage");
   return db.transaction(async (tx) => {
+    await lockBookings(tx, actor.organisationId);
     const job = await lockJob(tx, actor, jobId);
     assertCanBook(job);
     const input = await readinessInputFor(tx, actor.organisationId, job);
@@ -1040,7 +1052,7 @@ export async function autoBook(
         action: "job.instruments_booked",
         entityType: "job",
         entityId: job.id,
-        summary: `${actor.name} booked ${[...result.booked, ...result.masters].join(", ")} for job ${job.number}`,
+        summary: `${actor.name} booked ${shortList([...result.booked, ...result.masters])} for job ${job.number}`,
         after: result,
         request,
       });
@@ -1071,6 +1083,7 @@ export async function bookByCodes(
   const codes = parseCodes(typeof text === "string" ? text : "").slice(0, 500);
   if (codes.length === 0) throw new JobsError("Paste or type at least one ID or serial number.");
   return db.transaction(async (tx) => {
+    await lockBookings(tx, actor.organisationId);
     const job = await lockJob(tx, actor, jobId);
     assertCanBook(job);
     const lower = codes.map((c) => c.toLowerCase());
@@ -1125,7 +1138,7 @@ export async function bookByCodes(
         action: "job.instruments_booked",
         entityType: "job",
         entityId: job.id,
-        summary: `${actor.name} booked ${result.booked.join(", ")} for job ${job.number}`,
+        summary: `${actor.name} booked ${shortList(result.booked)} for job ${job.number}`,
         after: result,
         request,
       });
@@ -1170,7 +1183,8 @@ export async function releaseInstruments(
         action: "job.instruments_released",
         entityType: "job",
         entityId: job.id,
-        summary: `${actor.name} released ${codes.map((c) => c.code).join(", ")} from job ${job.number}`,
+        summary: `${actor.name} released ${shortList(codes.map((c) => c.code))} from job ${job.number}`,
+        after: { released: codes.map((c) => c.code) },
         request,
       });
     }

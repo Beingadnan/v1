@@ -32,10 +32,16 @@ export const formatInr = (n: number) => `₹${inr.format(n)}`;
 export function matchRate(lines: RateLine[], study: PricedStudy): RateLine | null {
   let best: { line: RateLine; score: number } | null = null;
   for (const line of lines) {
-    if (!line.active || line.workType !== study.workType) continue;
+    if (!line.active) continue;
+    // A plain mapping price also covers mapping with RH, unless RH has its own line.
+    const exact = line.workType === study.workType;
+    const fallback =
+      study.workType === "temperature_rh_mapping" && line.workType === "temperature_mapping";
+    if (!exact && !fallback) continue;
     if (line.equipmentType && line.equipmentType !== study.equipmentType) continue;
     if (line.durationHours !== null && line.durationHours !== study.durationHours) continue;
-    const score = (line.equipmentType ? 2 : 0) + (line.durationHours !== null ? 1 : 0);
+    const score =
+      (exact ? 4 : 0) + (line.equipmentType ? 2 : 0) + (line.durationHours !== null ? 1 : 0);
     if (!best || score > best.score) best = { line, score };
   }
   return best?.line ?? null;

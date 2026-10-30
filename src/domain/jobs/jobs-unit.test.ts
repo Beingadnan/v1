@@ -9,6 +9,7 @@ import {
   type ReadinessInput,
 } from "./readiness";
 import { defaultLoggerCount, defaultWorkType, seasonFor, uniqueReportNumber } from "./studies";
+import { money } from "./schemas";
 import { canTransition } from "./types";
 
 const cert = (calibratedOn: string, validUntil: string | null, status = "issued") => ({
@@ -270,6 +271,20 @@ describe("pricing", () => {
     });
   });
 
+  it("prices RH mapping from the mapping line unless RH has its own", () => {
+    const rh = {
+      ...study,
+      workType: "temperature_rh_mapping" as const,
+      equipmentType: "warehouse",
+    };
+    const mapping = line({ equipmentType: "warehouse", basis: "per_logger", price: "650" });
+    expect(priceStudy([mapping], rh).price).toBe(9750);
+    const own = line({ workType: "temperature_rh_mapping", basis: "per_logger", price: "800" });
+    expect(priceStudy([mapping, own], rh).price).toBe(12000);
+    // Not the other way round.
+    expect(priceStudy([own], { ...study, equipmentType: "warehouse" }).price).toBeNull();
+  });
+
   it("multiplies by cycles, loggers or volume", () => {
     expect(priceStudy([line({ basis: "per_cycle", price: "4500" })], study)).toEqual({
       price: 13500,
@@ -352,5 +367,29 @@ describe("transitions", () => {
     expect(canTransition("closed", "cancel")).toBe(false);
     expect(canTransition("cancelled", "hold")).toBe(false);
     expect(canTransition("on_hold", "resume")).toBe(true);
+  });
+});
+
+describe("money", () => {
+  it("reads rupees the way people type them", () => {
+    const m = money("PO value");
+    expect(
+      ["₹1,25,000", "Rs. 18,000/-", "INR 4500.50", " 650 ", ""].map((v) => m.parse(v)),
+    ).toEqual([125000, 18000, 4500.5, 650, null]);
+    expect(() => m.parse("1.25 lakh")).toThrow("PO value must be an amount in rupees.");
+    expect(() => m.parse("-5")).toThrow("can't be negative");
+  });
+});
+
+describe("job dates", () => {
+  it("refuses an end before the start and a year typed wrong", async () => {
+    const { jobHeaderSchema } = await import("./schemas");
+    const parse = (plannedStart: string, plannedEnd: string) =>
+      jobHeaderSchema.safeParse({ plannedStart, plannedEnd }).error?.issues.map((i) => i.message);
+    expect(parse("2026-11-02", "2026-11-05")).toBeUndefined();
+    expect(parse("2026-11-05", "2026-11-02")).toEqual(["The end date is before the start."]);
+    expect(parse("2026-11-02", "2027-11-05")).toEqual([
+      "Plan at most 120 days per job. Check the year of the dates.",
+    ]);
   });
 });
