@@ -11,18 +11,24 @@ Architecture decisions: [docs/adr/](docs/adr/).
 
 ## Status
 
-**Phase 3 — Instruments and calibration.** QA Tech's loggers, sensors and master
-standards with their models (accuracy bands, SOP, usual test points); outside-lab
-certificates of the masters (ULR, PDF); batch calibration certificates (FT-05) with the
-number taken from the site's monthly series, readings pasted from Excel, deviations and
-pass/fail worked out exactly, masters refused unless valid on the calibration date, and
-done by → checked by → approved by with password signatures; the FT-05 PDF (frozen once
-issued); the Calibration Index by month with Excel export; traceability for any instrument
-on any date; expiry alerts at 30/15/7 days; and import of the existing logger lists.
+**Phase 4 — Jobs.** A job from the PO to field work: a wizard that starts from the
+client's site with the equipment due for requalification already ticked (or straight
+from the Requalification due list); one study per item with its defaults copied from the
+equipment and its report number reserved in the client's format; a readiness checklist
+worked out from the job (PO, loggers booked, loggers calibrated through the last day,
+masters for pre/post-cal) with only protocol, site access and previous report ticked by
+people, moving the job between Created and Ready by itself; one-click logger booking
+(the job's site first, one model, consecutive IDs, never a logger that runs out during
+the study or is on another job), or by pasting IDs or serials; warnings when a person is
+on two jobs at once; hold, resume and cancel with a reason; a board and a list searchable
+by job number, PO, client, equipment or report number; and a rate card that prices each
+study and flags a PO that doesn't match. Prices are shown only to managers, team leaders
+and accounts.
 
-Built on phase 2 (clients, sites, departments, equipment register, Excel import), phase 1
-(sign-in, roles, settings, audit trail, uploads) and phase 0 (design system, append-only
-audit log, content-addressed file storage, CI).
+Built on phase 3 (instruments and FT-05 calibration certificates), phase 2 (clients,
+sites, departments, equipment register, Excel import), phase 1 (sign-in, roles,
+settings, audit trail, uploads) and phase 0 (design system, append-only audit log,
+content-addressed file storage, CI).
 
 ## Run it locally
 
@@ -74,11 +80,11 @@ Some tests also run against real QA Tech files when they are present in `fixture
 ## Project layout
 
 ```
-src/app/(staff)/     QA Tech staff screens (clients, instruments, users, settings, audit…)
+src/app/(staff)/     QA Tech staff screens (jobs, clients, instruments, users, settings, audit…)
 src/app/(client)/    the client QA users' area
 src/components/ui/   design-system components
 src/components/shell sidebar, top bar, navigation
-src/domain/          business rules without React (auth, clients, instruments, numbering)
+src/domain/          business rules without React (auth, clients, instruments, jobs, numbering)
 src/db/              Drizzle schema, client, seed helpers
 src/lib/             env, audit, storage
 drizzle/             SQL migrations (forward-only)
