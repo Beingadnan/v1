@@ -22,6 +22,7 @@ import {
   acceptIssue,
   addDataFile,
   markReceived,
+  removeDataFile,
   requestData,
   setChannelMatch,
   withdrawAcceptance,
@@ -339,6 +340,10 @@ describe("phase 6: logger data in, checked, and confirmed", () => {
 
   it("confirming the data moves the job to Data received", async () => {
     expect(await markReceived(db, leader, studyId, req)).toEqual({ jobStatus: "data_received" });
+    // A second tab (or a colleague) confirming at the same time is told, not recorded twice.
+    await expect(markReceived(db, leader, studyId, req)).rejects.toThrow(
+      /^BE-WF-02's data was already confirmed by Ashraf Lead at /,
+    );
     expect((await data()).study).toMatchObject({
       dataStatus: "received",
       receivedBy: "Ashraf Lead",
@@ -478,6 +483,46 @@ describe("phase 6: logger data in, checked, and confirmed", () => {
     expect((await data()).issues.some((i) => i.kind === "gap")).toBe(false);
   });
 
+  it("a file from another study is flagged and removed, staying in the history", async () => {
+    // The site sends a fridge file from another month by mistake.
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Raw");
+    ws.addRow(["Date", "Time", "DL-01 (°C)"]);
+    for (let k = 0; k < 10; k += 1)
+      ws.addRow(["20-Sep-2025", `10:${String(k * 5).padStart(2, "0")}:00`, 4 + k / 10]);
+    const fileId = await upload(
+      "Fridge raw data.xlsx",
+      new Uint8Array(await wb.xlsx.writeBuffer()),
+    );
+    expect((await addDataFile(db, blobs, preparer, studyId, { fileId }, req)).status).toBe(
+      "issues",
+    );
+    const d = await data();
+    expect(d.issues[0]!.message).toMatch(
+      /^Fridge raw data\.xlsx has readings from 20 Sept?, 10:00 to 20 Sept?, 10:45, but the study ran .+ Is it the right file\?/,
+    );
+    const fridge = d.files.find((f) => f.name === "Fridge raw data.xlsx")!;
+    await expect(
+      removeDataFile(db, blobs as never, studyId, fridge.id, "x", req),
+    ).rejects.toThrow();
+    await expect(removeDataFile(db, preparer, studyId, fridge.id, "oops", req)).rejects.toThrow(
+      "Say why it's being removed",
+    );
+    expect(
+      await removeDataFile(
+        db,
+        preparer,
+        studyId,
+        fridge.id,
+        "Glenmark fridge file, wrong study",
+        req,
+      ),
+    ).toEqual({ status: "checked", blockers: 0 });
+    expect((await data()).files.find((f) => f.id === fridge.id)!.replaced!.reason).toBe(
+      "Removed: Glenmark fridge file, wrong study",
+    );
+  });
+
   it("confirms again, and every step is in the audit trail", async () => {
     await markReceived(db, leader, studyId, req);
     expect(await jobStatus()).toBe("data_received");
@@ -490,6 +535,7 @@ describe("phase 6: logger data in, checked, and confirmed", () => {
     for (const a of [
       "study.data_uploaded",
       "study.data_replaced",
+      "study.data_removed",
       "study.data_matched",
       "study.data_issue_accepted",
       "study.data_issue_withdrawn",
@@ -501,6 +547,6 @@ describe("phase 6: logger data in, checked, and confirmed", () => {
     // Replaced files are never deleted.
     expect(
       (await db.select().from(studyDataFiles).where(eq(studyDataFiles.studyId, studyId))).length,
-    ).toBe(4);
+    ).toBe(5);
   });
 });

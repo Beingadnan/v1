@@ -23,6 +23,7 @@ export const ISSUE_KINDS = [
   "duplicate_channel",
   "unmatched_channel",
   "interval",
+  "wrong_period",
   "not_covered",
   "gap",
   "single_missing",
@@ -165,8 +166,28 @@ export function checkData(input: CheckInput): CheckResult {
   const name = (p: PositionInfo) =>
     p.logger ? `${p.label} (${p.logger.code}, ${p.logger.serialNo})` : p.label;
 
-  // ---- files: unreadable times, interval
+  // ---- a file whose readings don't overlap any recorded window is the wrong file
+  const wrong = new Set<string>();
   for (const f of files) {
+    if (f.times.length === 0) continue;
+    const a = Math.min(...f.times);
+    const b = Math.max(...f.times);
+    const recorded = input.windows.filter((w) => w.start !== null && w.end !== null);
+    if (recorded.length > 0 && recorded.every((w) => b < w.start! || a > w.end!)) {
+      wrong.add(f.id);
+      add({
+        kind: "wrong_period",
+        severity: "blocker",
+        message: `${f.name} has readings from ${hhmm(a)} to ${hhmm(b)}, but the study ran ${recorded.map((w) => `${hhmm(w.start!)} to ${hhmm(w.end!)}`).join(", ")}. Is it the right file? Remove it if not.`,
+        cycle: null,
+        positionId: null,
+        key: f.name,
+      });
+    }
+  }
+
+  // ---- files: unreadable times, interval
+  for (const f of files.filter((x) => !wrong.has(x.id))) {
     for (const b of f.badTimeRows) {
       add({
         kind: "bad_time",
@@ -191,8 +212,9 @@ export function checkData(input: CheckInput): CheckResult {
   }
 
   // ---- channels per position
-  const used = channels.filter((c) => matches.get(c.id)?.positionId);
-  const unmatched = channels.filter((c) => matches.get(c.id)?.how === "none");
+  const live = channels.filter((c) => !wrong.has(c.fileId));
+  const used = live.filter((c) => matches.get(c.id)?.positionId);
+  const unmatched = live.filter((c) => matches.get(c.id)?.how === "none");
   for (const c of unmatched) {
     add({
       kind: "unmatched_channel",

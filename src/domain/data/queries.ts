@@ -37,9 +37,10 @@ function stats(values: (number | null)[]) {
   const v = values.filter((x): x is number => x !== null && x !== undefined);
   if (v.length === 0) return null;
   return {
-    min: Math.min(...v),
-    max: Math.max(...v),
-    avg: Math.round((v.reduce((a, b) => a + b, 0) / v.length) * 100) / 100,
+    min: Math.min(...v).toFixed(1),
+    max: Math.max(...v).toFixed(1),
+    // One decimal, as on the report's summary page.
+    avg: (v.reduce((a, b) => a + b, 0) / v.length).toFixed(1),
     count: v.length,
   };
 }
@@ -132,8 +133,8 @@ export async function getStudyData(db: Database, actor: SessionUser, studyId: st
       stats: stats(c.values),
     }));
 
-  // A few rows of the first file as read, to check at a glance.
-  const first = ctx.files[0];
+  // A few rows of the newest file as read, to check at a glance.
+  const first = ctx.files[ctx.files.length - 1];
   const preview = first
     ? {
         file: first.fileName,

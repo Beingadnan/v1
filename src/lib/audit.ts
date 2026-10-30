@@ -72,6 +72,7 @@ export const AUDIT_ACTIONS = [
   "study.status_changed",
   "study.data_uploaded",
   "study.data_replaced",
+  "study.data_removed",
   "study.data_matched",
   "study.data_issue_accepted",
   "study.data_issue_withdrawn",

@@ -8,6 +8,7 @@ import {
   addDataFile,
   closeRequest,
   markReceived,
+  removeDataFile,
   requestData,
   setChannelMatch,
   withdrawAcceptance,
@@ -89,4 +90,12 @@ export async function receivedAction(studyId: string) {
   const actor = await userForAction();
   if (!actor) return { ok: false as const, error: SESSION_ENDED };
   return act(studyId, async () => markReceived(db, actor, studyId, await getRequestInfo()));
+}
+
+export async function removeFileAction(studyId: string, dataFileId: string, reason: string) {
+  const actor = await userForAction();
+  if (!actor) return { ok: false as const, error: SESSION_ENDED };
+  return act(studyId, async () =>
+    removeDataFile(db, actor, studyId, dataFileId, reason, await getRequestInfo()),
+  );
 }

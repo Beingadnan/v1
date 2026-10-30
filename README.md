@@ -11,6 +11,24 @@ Architecture decisions: [docs/adr/](docs/adr/).
 
 ## Status
 
+**Phase 6 — Data import and validation.** The logger Excel or CSV, as it comes from site:
+
+- **Read by content:** header lines, serials over a units row, split or combined
+  date/time, text numbers, `Sr. No.` columns and summary rows. The reader says what it
+  read and where it stopped.
+- **Columns match positions by the logger serial.** Anything else is listed for a person
+  to match or ignore.
+- **Checks per logger, inside each cycle's recorded times:** missing loggers or RH,
+  gaps, wrong interval, data that doesn't cover the cycle, duplicates, impossible
+  values, a stuck sensor, and a file from another period.
+- **Problems send the job to Data issue.** A team leader can ask the site for data
+  (the request closes on the next upload) or accept a problem with a reason.
+  Confirming every study's data moves the job to Data received.
+- **The original file is kept with its hash.** Replaced or removed files stay in the
+  history. Re-saved copies of the same data are refused.
+- **Thermal cycles** gain minimum/maximum load and hold markers; **the data provider**
+  joins the job team.
+
 **Phase 5 — Field work.** On a phone, the engineer's day on site:
 
 - **My studies today** for the jobs they are on.

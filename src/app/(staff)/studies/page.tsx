@@ -19,9 +19,10 @@ export default async function StudiesPage({ searchParams }: PageProps<"/studies"
   const actor = await requirePermission("data.import");
   const everyone = (await searchParams).all === "1" && can(actor, "jobs.manage");
   const rows = await myStudies(db, actor, { everyone });
-  const today = rows.filter((r) => r.today && r.status !== "completed");
-  const later = rows.filter((r) => !r.today && r.status !== "completed");
-  const done = rows.filter((r) => r.status === "completed");
+  const data = rows.filter(waiting);
+  const today = rows.filter((r) => !waiting(r) && r.today && r.status !== "completed");
+  const later = rows.filter((r) => !waiting(r) && !r.today && r.status !== "completed");
+  const done = rows.filter((r) => !waiting(r) && r.status === "completed");
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
@@ -55,10 +56,11 @@ export default async function StudiesPage({ searchParams }: PageProps<"/studies"
         <EmptyState
           icon={ThermometerSnowflake}
           title="Nothing on site for you"
-          description="Studies appear here when you are on the team of a job that is Ready or in Field Work."
+          description="Studies appear here when you are on the team of a job that is Ready, in Field Work or waiting for data."
         />
       ) : (
         <>
+          <Group title="Data to send or check" rows={data} />
           <Group title="Today" rows={today} />
           <Group title="Coming up" rows={later} />
           <Group title="Done" rows={done} />
@@ -67,6 +69,10 @@ export default async function StudiesPage({ searchParams }: PageProps<"/studies"
     </div>
   );
 }
+
+/** Ended on site but the data isn't confirmed yet (or asked for): the data provider's list. */
+const waiting = (r: MyStudy) =>
+  r.request !== null || (r.status === "completed" && r.dataStatus !== "received");
 
 function Group({ title, rows }: { title: string; rows: MyStudy[] }) {
   if (rows.length === 0) return null;
@@ -79,11 +85,7 @@ function Group({ title, rows }: { title: string; rows: MyStudy[] }) {
         {rows.map((r) => (
           <li key={r.id}>
             <Link
-              href={
-                r.request || r.dataStatus === "issues"
-                  ? `/studies/${r.id}?tab=data`
-                  : `/studies/${r.id}`
-              }
+              href={waiting(r) ? `/studies/${r.id}?tab=data` : `/studies/${r.id}`}
               className="flex flex-col gap-1 rounded-lg border border-border bg-surface p-4 hover:border-primary"
             >
               <span className="flex items-center justify-between gap-2">
@@ -111,6 +113,10 @@ function Group({ title, rows }: { title: string; rows: MyStudy[] }) {
                 </span>
               ) : r.dataStatus === "issues" ? (
                 <span className="text-sm text-fail">The data has problems: see Data.</span>
+              ) : r.status === "completed" && r.dataStatus === "none" ? (
+                <span className="text-sm text-attention">Logger data not uploaded yet.</span>
+              ) : r.status === "completed" && r.dataStatus === "checked" ? (
+                <span className="text-sm text-info">Data checked: waiting to be confirmed.</span>
               ) : null}
               <span className="text-xs text-muted-foreground">
                 {r.jobNumber} · {dmy(r.plannedStart)}

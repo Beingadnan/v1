@@ -1,0 +1,2 @@
+ALTER TABLE "study_data_issues" DROP CONSTRAINT "study_data_issues_kind_check";--> statement-breakpoint
+ALTER TABLE "study_data_issues" ADD CONSTRAINT "study_data_issues_kind_check" CHECK ("study_data_issues"."kind" in ('missing_logger', 'missing_rh', 'duplicate_channel', 'unmatched_channel', 'interval', 'wrong_period', 'not_covered', 'gap', 'single_missing', 'duplicate_time', 'impossible', 'unreadable', 'bad_time', 'stuck', 'no_times', 'outside_window'));

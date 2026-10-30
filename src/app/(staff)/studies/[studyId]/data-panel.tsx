@@ -16,6 +16,7 @@ import {
   closeRequestAction,
   matchAction,
   receivedAction,
+  removeFileAction,
   requestDataAction,
   withdrawAction,
 } from "../data-actions";
@@ -80,6 +81,7 @@ export function DataPanel({ data: d }: { data: StudyData }) {
   const [accepting, setAccepting] = useState<{ fingerprint: string; reason: string } | null>(null);
   const [asking, setAsking] = useState<string | null>(null);
   const [closing, setClosing] = useState<{ id: string; note: string } | null>(null);
+  const [removing, setRemoving] = useState<{ id: string; reason: string } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const status = statusOf(d);
   const open = !["field_work", "data_issue", "data_received"].includes(d.study.jobStatus)
@@ -119,6 +121,13 @@ export function DataPanel({ data: d }: { data: StudyData }) {
       return;
     }
     const json = (await res.json().catch(() => ({}))) as { id?: string; error?: string };
+    if (res.status === 401) {
+      setFeedback({
+        ok: false,
+        text: `You were signed out, so ${file.name} wasn't uploaded. Sign in again (in a new tab), then choose the file again.`,
+      });
+      return;
+    }
     if (!res.ok || !json.id) {
       setFeedback({ ok: false, text: json.error ?? "The file couldn't be uploaded." });
       return;
@@ -162,6 +171,11 @@ export function DataPanel({ data: d }: { data: StudyData }) {
           </p>
         ) : null}
         {open ? <p className="text-sm text-muted-foreground">{open}</p> : null}
+        {d.study.dataStatus === "checked" && !canAccept && !open ? (
+          <p className="text-sm text-muted-foreground">
+            Nothing is wrong. A team leader or manager confirms the data next.
+          </p>
+        ) : null}
         {d.study.dataStatus === "checked" && canAccept ? (
           <div className="flex flex-col gap-1">
             <Button
@@ -689,9 +703,54 @@ export function DataPanel({ data: d }: { data: StudyData }) {
                 <p className="text-xs text-muted-foreground">
                   {f.by}, {when(f.at)} · SHA-256 {f.sha256.slice(0, 12)}…
                 </p>
+                {!f.replaced && canImport ? (
+                  removing?.id === f.id ? (
+                    <div className="flex flex-wrap gap-2">
+                      <Input
+                        aria-label="Why remove it?"
+                        placeholder="Why? e.g. wrong study's file"
+                        value={removing.reason}
+                        onChange={(e) => setRemoving({ id: f.id, reason: e.target.value })}
+                        className="min-w-48 flex-1"
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="danger"
+                        disabled={busy || removing.reason.trim().length < 5}
+                        onClick={() =>
+                          run(
+                            () => removeFileAction(d.study.id, f.id, removing.reason),
+                            () => `${f.name} removed. It stays in the history below.`,
+                            () => setRemoving(null),
+                          )
+                        }
+                      >
+                        Remove
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setRemoving(null)}
+                      >
+                        Keep
+                      </Button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="w-fit text-xs text-fail underline"
+                      onClick={() => setRemoving({ id: f.id, reason: "" })}
+                    >
+                      Wrong file? Remove it
+                    </button>
+                  )
+                ) : null}
                 {f.replaced ? (
                   <p className="text-xs text-muted-foreground">
-                    Replaced {when(f.replaced.at)}: {f.replaced.reason}
+                    {f.replaced.reason.startsWith("Removed: ") ? "" : "Replaced "}
+                    {when(f.replaced.at)}: {f.replaced.reason}
                   </p>
                 ) : (
                   <details className="text-xs text-muted-foreground">

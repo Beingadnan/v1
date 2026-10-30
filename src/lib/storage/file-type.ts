@@ -63,7 +63,12 @@ export function checkFileType(
   if (!detected || (detected === "csv" && ext !== ".csv")) {
     return {
       ok: false,
-      message: `${fileName} is not a PDF, Excel, CSV or image file.`,
+      message:
+        ext === ".xls"
+          ? `${fileName} is an old Excel file (.xls). Open it in Excel and save it as .xlsx, then upload that.`
+          : ext === ".txt" && detected === "csv"
+            ? `${fileName} is a text export. Rename it to .csv (or export as CSV) and upload that.`
+            : `${fileName} is not a PDF, Excel, CSV or image file.`,
     };
   }
   const allowedExtensions: readonly string[] = ALLOWED_FILE_TYPES[detected].extensions;

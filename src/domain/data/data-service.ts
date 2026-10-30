@@ -15,6 +15,7 @@ import {
   studyDataRequests,
   studyEvents,
   studyPositions,
+  users,
   type Job,
   type Study,
 } from "@/db/schema";
@@ -26,6 +27,7 @@ import { cycleProgress, cyclesOf } from "@/domain/field/field-service";
 import { lockJob, setStatus } from "@/domain/jobs/job-service";
 import { JOB_STATUS_LABELS, type JobStatus } from "@/domain/jobs/types";
 import { recordAudit } from "@/lib/audit";
+import { formatDateTime } from "@/lib/format";
 import type { BlobStore } from "@/lib/storage/blob-store";
 import { shortList } from "@/lib/text";
 
@@ -466,6 +468,56 @@ export async function addDataFile(
   });
 }
 
+/**
+ * Takes a file off the study (uploaded by mistake, wrong study). It stays in
+ * the history with the reason, like a replaced file; nothing is deleted.
+ */
+export async function removeDataFile(
+  db: Database,
+  actor: SessionUser,
+  studyId: string,
+  dataFileId: string,
+  reasonIn: string,
+  request?: RequestInfo,
+) {
+  assertCan(actor, "data.import");
+  if (!isUuid(dataFileId)) throw new DataError("That file does not exist.");
+  const reason = (reasonIn ?? "").trim();
+  if (reason.length < 5) throw new DataError("Say why it's being removed (at least 5 characters).");
+  return db.transaction(async (tx) => {
+    const l = await load(tx, actor, studyId);
+    assertOpen(l, "Removing a file");
+    const [f] = await tx
+      .update(studyDataFiles)
+      .set({
+        replacedAt: new Date(),
+        replacedByUserId: actor.id,
+        replaceReason: `Removed: ${reason}`,
+      })
+      .where(
+        and(
+          eq(studyDataFiles.id, dataFileId),
+          eq(studyDataFiles.studyId, l.study.id),
+          isNull(studyDataFiles.replacedAt),
+        ),
+      )
+      .returning({ fileName: studyDataFiles.fileName });
+    if (!f) throw new DataError("That file isn't on this study any more. Reload the page.");
+    await recordAudit(tx, {
+      organisationId: actor.organisationId,
+      actor: user(actor),
+      action: "study.data_removed",
+      entityType: "study",
+      entityId: l.study.id,
+      summary: `${actor.name} removed ${f.fileName} from ${l.code} (job ${l.job.number}): ${reason}`,
+      after: { dataFileId, reason },
+      request,
+    });
+    const r = await recheck(tx, actor, l, request);
+    return { status: r.status, blockers: r.open.length };
+  });
+}
+
 // ---------------------------------------------------------------- matching
 
 /** A person assigns a column to a position, or ignores it (or undoes either). */
@@ -735,6 +787,18 @@ export async function markReceived(
     assertOpen(l, "Confirming data");
     if (l.study.status !== "completed") {
       throw new DataError(`End the ${l.code} study on site (Times) before confirming its data.`);
+    }
+    if (l.study.dataStatus === "received") {
+      // Two people (or two tabs) confirming at once: the second is told, not recorded twice.
+      const [by] = l.study.dataReceivedByUserId
+        ? await tx
+            .select({ name: users.name })
+            .from(users)
+            .where(eq(users.id, l.study.dataReceivedByUserId))
+        : [];
+      throw new DataError(
+        `${l.code}'s data was already confirmed${by ? ` by ${by.name}` : ""}${l.study.dataReceivedAt ? ` at ${formatDateTime(l.study.dataReceivedAt)}` : ""}.`,
+      );
     }
     const r = await recheck(tx, actor, l, request);
     if (r.status === "none") throw new DataError("No data has been uploaded for this study.");

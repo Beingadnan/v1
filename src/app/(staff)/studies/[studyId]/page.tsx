@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { DataPanel } from "./data-panel";
 import { LayoutEditor } from "./layout-editor";
 import { RoomSize } from "./room-size";
+import { ShowActiveTab } from "./show-active-tab";
 import { LoggerPanel } from "./logger-panel";
 import { PhotosPanel } from "./photos-panel";
 import { PrecalPanel } from "./precal-panel";
@@ -58,19 +59,29 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
   const DATA_MARK: Record<string, string> = {
     none: "—",
     issues: "!",
-    checked: "✓?",
+    checked: "?",
     received: "✓",
   };
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
-      <Link
-        href="/studies"
-        className="inline-flex w-fit items-center gap-1 text-sm text-muted-foreground hover:text-primary"
-      >
-        <ChevronLeft className="size-4" aria-hidden="true" />
-        My studies
-      </Link>
+      {can(actor, "data.import") ? (
+        <Link
+          href="/studies"
+          className="inline-flex w-fit items-center gap-1 text-sm text-muted-foreground hover:text-primary"
+        >
+          <ChevronLeft className="size-4" aria-hidden="true" />
+          My studies
+        </Link>
+      ) : (
+        <Link
+          href={`/jobs/${s.job.id}`}
+          className="inline-flex w-fit items-center gap-1 text-sm text-muted-foreground hover:text-primary"
+        >
+          <ChevronLeft className="size-4" aria-hidden="true" />
+          Job {s.job.number}
+        </Link>
+      )}
       <header className="flex flex-col gap-1">
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-xl font-semibold">
@@ -105,6 +116,7 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
         </p>
       ) : null}
 
+      <ShowActiveTab />
       <nav aria-label="Study steps" className="-mx-4 flex gap-1 overflow-x-auto px-4">
         {TABS.map((t) => {
           const count =

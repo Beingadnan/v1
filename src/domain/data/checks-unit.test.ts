@@ -176,6 +176,19 @@ describe("checks", () => {
     expect(r.windows[0]).toMatchObject({ start: times[0], end: times.at(-1) });
   });
 
+  it("blocks a file from another period (the wrong study's file)", () => {
+    const later = times.map((t) => t + 120 * 86_400_000);
+    const r = checkData({
+      ...base,
+      files: [{ id: "f1", name: "Fridge.xlsx", times: later, badTimeRows: [] }],
+      channels: SERIALS.map((s) => channel(s)),
+    });
+    expect(r.issues[0]).toMatchObject({ kind: "wrong_period", severity: "blocker" });
+    expect(r.issues[0]!.message).toMatch(
+      /^Fridge\.xlsx has readings from .+ but the study ran .+ Is it the right file\?/,
+    );
+  });
+
   it("reads the interval as the usual gap", () => {
     expect(intervalOf([0, 10, 20, 40, 50].map((m) => m * MIN))).toBe(10);
   });
