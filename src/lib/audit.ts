@@ -81,7 +81,11 @@ const auditEventSchema = z
     action: z.enum(AUDIT_ACTIONS),
     entityType: z.string().regex(/^[a-z_]+$/, "entityType must be snake_case"),
     entityId: z.string().min(1).max(200),
-    summary: z.string().min(1).max(500),
+    // One readable line; the detail is in before/after. Never fail a save over its length.
+    summary: z
+      .string()
+      .min(1)
+      .transform((v) => (v.length > 500 ? `${v.slice(0, 499)}…` : v)),
     before: z.unknown().optional(),
     after: z.unknown().optional(),
     reason: z.string().trim().min(1).max(2000).optional(),

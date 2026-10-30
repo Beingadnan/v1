@@ -30,6 +30,7 @@ import { isUuid } from "@/domain/clients/shared";
 import { nextDueDate, todayInIndia } from "@/domain/clients/requalification";
 import { allocateNumber } from "@/domain/numbering/allocate";
 import { recordAudit } from "@/lib/audit";
+import { shortList } from "@/lib/text";
 
 import { cleanDecimal, deviation, type AccuracySpec } from "./calibration-math";
 import { certificatesOf, evaluate, lockInstruments } from "./certificate-service";
@@ -332,7 +333,7 @@ export async function createCalibration(
       action: "certificate.created",
       entityType: "certificate",
       entityId: cert.id,
-      summary: `${actor.name} started calibration certificate ${number} for ${uucs.length} instrument${uucs.length === 1 ? "" : "s"} (${uucs.map((i) => i.code).join(", ")})`,
+      summary: `${actor.name} started calibration certificate ${number} for ${uucs.length} instrument${uucs.length === 1 ? "" : "s"} (${shortList(uucs.map((i) => i.code))})`,
       after: {
         number,
         calibratedOn,

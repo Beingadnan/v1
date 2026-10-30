@@ -29,6 +29,20 @@ async function expectDbError(promise: Promise<unknown>, message: RegExp): Promis
 }
 
 describe("audit log", () => {
+  it("shortens an over-long summary instead of failing the save", async () => {
+    const id = await recordAudit(db, {
+      organisationId,
+      actor: { type: "system" },
+      action: "certificate.created",
+      entityType: "certificate",
+      entityId: "long",
+      summary: `Recorded for ${Array.from({ length: 90 }, (_, i) => `W-${String(i).padStart(4, "0")}`).join(", ")}`,
+    });
+    const [row] = await db.select().from(auditLog).where(eq(auditLog.id, id));
+    expect(row?.summary).toHaveLength(500);
+    expect(row?.summary.endsWith("…")).toBe(true);
+  });
+
   it("records an event with actor, entity and snapshots", async () => {
     const id = await recordAudit(db, {
       organisationId,

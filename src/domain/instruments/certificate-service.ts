@@ -18,6 +18,7 @@ import type { RequestInfo } from "@/domain/auth/policy";
 import type { SessionUser } from "@/domain/auth/session-service";
 import { isUuid, rethrowUnique } from "@/domain/clients/shared";
 import { recordAudit } from "@/lib/audit";
+import { shortList } from "@/lib/text";
 
 import { cleanDecimal, deviation, judge, toleranceAt } from "./calibration-math";
 import { InstrumentsError } from "./errors";
@@ -166,7 +167,7 @@ export async function createExternalCertificate(
         action: "certificate.created",
         entityType: "certificate",
         entityId: cert.id,
-        summary: `${actor.name} recorded ${values.labName} certificate ${values.number} for ${covered.map((i) => i.code).join(", ")} (valid until ${values.validUntil ?? "no due date"})`,
+        summary: `${actor.name} recorded ${values.labName} certificate ${values.number} for ${shortList(covered.map((i) => i.code))} (valid until ${values.validUntil ?? "no due date"})`,
         after: { ...values, instruments: covered.map((i) => i.code), fileId: input.fileId ?? null },
         request,
       });
