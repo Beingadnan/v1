@@ -1,5 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -23,7 +24,7 @@ import {
   saveLayout,
   voidEvent,
 } from "@/domain/field/field-service";
-import { getFieldStudy, myStudies } from "@/domain/field/queries";
+import { ft12Pdf, getFieldStudy, myStudies } from "@/domain/field/queries";
 import { createExternalCertificate } from "@/domain/instruments/certificate-service";
 import {
   bulkAddInstruments,
@@ -37,6 +38,14 @@ import { LocalBlobStore } from "@/lib/storage/blob-store";
 import { openTestDatabase } from "../support/test-db";
 
 const { db, close } = openTestDatabase();
+const hasPdftotext = (() => {
+  try {
+    execFileSync("pdftotext", ["-v"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+})();
 const req = { ipAddress: "203.0.113.80" };
 let leader: SessionUser;
 let engineer: SessionUser;
@@ -639,6 +648,35 @@ describe("phase 5: an engineer places 9 loggers for BE-WF-02 and records start a
         req,
       ),
     ).rejects.toThrow("Only photos");
+  });
+
+  it("prints FT-12 with the box, the positions, the loggers and the times", async () => {
+    const blobs = new LocalBlobStore(await mkdtemp(path.join(tmpdir(), "qtech-ft12-")));
+    const pdf = (await ft12Pdf(db, blobs, leader, freezerStudy))!;
+    expect(pdf.fileName).toMatch(/^FT-12 BE-WF-02 QT-J-\d{4}-\d{4}\.pdf$/);
+    expect(pdf.bytes.subarray(0, 5).toString()).toBe("%PDF-");
+    await writeFile(path.join(tmpdir(), "ft12-test.pdf"), pdf.bytes);
+    if (!hasPdftotext) return;
+    const text = execFileSync("pdftotext", [
+      "-layout",
+      path.join(tmpdir(), "ft12-test.pdf"),
+      "-",
+    ]).toString();
+    for (const want of [
+      "Sensor Location Sheet",
+      "BE-WF-02",
+      "L-3360 mm",
+      "W-6400 mm",
+      "H-2400 mm",
+      "L-09",
+      codes[8]!,
+      "62281200",
+      "QATM/PVAL/FT-12",
+      "Tarun Lead",
+    ]) {
+      expect(text, want).toContain(want);
+    }
+    expect(await ft12Pdf(db, blobs, outsider, freezerStudy)).toBeNull();
   });
 
   it("audits field work", async () => {

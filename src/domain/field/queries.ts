@@ -12,6 +12,7 @@ import {
   jobInstruments,
   jobTeam,
   jobs,
+  organisationSettings,
   storedFiles,
   studies,
   studyEvents,
@@ -27,8 +28,10 @@ import type { StudyCycle } from "@/domain/clients/study-defaults";
 import { certificatesOf } from "@/domain/instruments/certificate-service";
 import { certificateCovering } from "@/domain/instruments/validity";
 import type { JobStatus } from "@/domain/jobs/types";
+import type { BlobStore } from "@/lib/storage/blob-store";
 
 import { cycleProgress } from "./field-service";
+import { renderFt12 } from "./ft12-pdf";
 import { ROUTINE, type CycleKey, type StudyStatus } from "./types";
 
 const FIELD_JOBS: JobStatus[] = ["ready", "field_work", "data_issue"];
@@ -111,7 +114,7 @@ export async function myStudies(
 }
 
 export async function getFieldStudy(db: Database, actor: SessionUser, studyId: string) {
-  assertCan(actor, "field.perform");
+  assertCan(actor, "jobs.view");
   if (!/^[0-9a-f-]{36}$/i.test(studyId)) return null;
   const [row] = await db
     .select({
@@ -274,3 +277,47 @@ export async function getFieldStudy(db: Database, actor: SessionUser, studyId: s
   };
 }
 export type FieldStudy = NonNullable<Awaited<ReturnType<typeof getFieldStudy>>>;
+
+/** The FT-12 PDF for a study, with the organisation's letterhead and the job team. */
+export async function ft12Pdf(
+  db: Database,
+  blobs: BlobStore,
+  actor: SessionUser,
+  studyId: string,
+): Promise<{ bytes: Buffer; fileName: string } | null> {
+  const s = await getFieldStudy(db, actor, studyId);
+  if (!s) return null;
+  const [settings] = await db
+    .select()
+    .from(organisationSettings)
+    .where(eq(organisationSettings.organisationId, actor.organisationId));
+  if (!settings) return null;
+  let letterhead: Buffer | null = null;
+  if (settings.letterheadFileId) {
+    const [file] = await db
+      .select()
+      .from(storedFiles)
+      .where(
+        and(
+          eq(storedFiles.id, settings.letterheadFileId),
+          eq(storedFiles.organisationId, actor.organisationId),
+        ),
+      );
+    if (file) letterhead = Buffer.from(await blobs.get(file.storageKey));
+  }
+  const team = await db
+    .select({ name: users.name })
+    .from(jobTeam)
+    .innerJoin(users, eq(users.id, jobTeam.userId))
+    .where(
+      and(eq(jobTeam.jobId, s.job.id), sql`${jobTeam.role} in ('team_leader', 'field_engineer')`),
+    )
+    .orderBy(asc(users.name));
+  const bytes = await renderFt12(s, {
+    organisation: settings,
+    letterhead,
+    team: [...new Set(team.map((t) => t.name))],
+  });
+  const fileName = `FT-12 ${s.equipment.code} ${s.job.number}.pdf`.replace(/[\\/:*?"<>|]+/g, "-");
+  return { bytes, fileName };
+}

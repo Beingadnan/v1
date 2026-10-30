@@ -141,9 +141,11 @@ export function projector(
   const L = dims.lengthM ?? 1;
   const W = dims.widthM ?? 1;
   const H = dims.heightM ?? 1;
-  const depth = 0.5; // how much of the width shows, at 45°
-  const dx = W * depth * Math.SQRT1_2;
-  const dy = W * depth * Math.SQRT1_2;
+  // The depth is drawn shortened (at most half the length and height), so a
+  // back corner never lands on a front one, as when drawn by hand.
+  const depth = Math.min(W * 0.35, L * 0.5, H * 0.5);
+  const dx = depth;
+  const dy = depth;
   const spanX = L + dx;
   const spanY = H + dy;
   const scale = Math.min(
@@ -191,4 +193,25 @@ export const BOX_EDGES: [Point, Point][] = (() => {
 /** Sizes as QA Tech writes them on the diagram: "L-3360 mm". */
 export function mm(metres: number | null): string {
   return metres === null ? "—" : `${Math.round(metres * 1000)} mm`;
+}
+
+/**
+ * Moves labels that would print on top of each other apart (down, then
+ * right), so every position stays readable on the drawing.
+ */
+export function spreadLabels<T extends { x: number; y: number }>(
+  points: T[],
+  size: { w: number; h: number },
+): T[] {
+  const placed: T[] = [];
+  for (const p of points) {
+    let q = { ...p };
+    for (let tries = 0; tries < 12; tries++) {
+      const hit = placed.some((o) => Math.abs(o.x - q.x) < size.w && Math.abs(o.y - q.y) < size.h);
+      if (!hit) break;
+      q = tries % 2 === 0 ? { ...q, y: q.y + size.h } : { ...q, x: q.x + size.w * 0.6 };
+    }
+    placed.push(q);
+  }
+  return placed;
 }
