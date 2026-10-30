@@ -1,4 +1,4 @@
-import { CalendarClock, ChevronLeft, Download } from "lucide-react";
+import { CalendarClock, ChevronLeft, Download, Plus } from "lucide-react";
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { db } from "@/db/client";
+import { can } from "@/domain/auth/permissions";
 import { EQUIPMENT_TYPE_INFO, isEquipmentType } from "@/domain/clients/equipment-types";
 import { listDueEquipment, type DueItem } from "@/domain/clients/export-service";
 import { requirePermission } from "@/lib/auth/dal";
@@ -26,6 +27,7 @@ export const metadata = { title: "Requalification due" };
 
 export default async function DuePage({ searchParams }: PageProps<"/clients/due">) {
   const actor = await requirePermission("clients.view");
+  const canPlan = can(actor, "jobs.manage");
   const window = readDueWindow(await searchParams);
   const items = await listDueEquipment(db, actor, window);
   const overdue = items.filter((i) => i.status === "overdue").length;
@@ -117,6 +119,26 @@ export default async function DuePage({ searchParams }: PageProps<"/clients/due"
                   {group.length} item{group.length === 1 ? "" : "s"}
                 </span>
               </h2>
+              {canPlan ? (
+                <div className="flex flex-wrap gap-2">
+                  {[...new Set(group.map((i) => i.siteId))].map((siteId) => {
+                    const atSite = group.filter((i) => i.siteId === siteId);
+                    const href = `/jobs/new?${new URLSearchParams({
+                      company: first.companyId,
+                      site: siteId,
+                      equipment: atSite.map((i) => i.id).join(","),
+                    }).toString()}`;
+                    return (
+                      <Button key={siteId} variant="secondary" size="sm" asChild>
+                        <Link href={href}>
+                          <Plus aria-hidden="true" />
+                          Job for {atSite[0]!.siteName} ({atSite.length})
+                        </Link>
+                      </Button>
+                    );
+                  })}
+                </div>
+              ) : null}
               <Table>
                 <TableHeader>
                   <TableRow>

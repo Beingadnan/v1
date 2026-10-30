@@ -38,8 +38,9 @@ test("navigation marks modules that are not built yet as unavailable", async ({
   if (isMobile) await page.getByRole("button", { name: "Open menu" }).click();
   const nav = page.getByRole("navigation", { name: "Main" }).last();
   await expect(nav.getByRole("link", { name: "Home" })).toHaveAttribute("aria-current", "page");
-  await expect(nav.getByText("Jobs")).toHaveAttribute("title", "Arrives in build phase 4");
-  await expect(nav.getByRole("link", { name: "Jobs" })).toHaveCount(0);
+  await expect(nav.getByRole("link", { name: "Jobs" })).toBeVisible();
+  await expect(nav.getByText("Studies")).toHaveAttribute("title", "Arrives in build phase 5");
+  await expect(nav.getByRole("link", { name: "Studies" })).toHaveCount(0);
 });
 
 test("unknown pages show the QA Tech 404 page once signed in", async ({ page }) => {

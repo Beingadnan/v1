@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 type PageHeaderProps = {
   title: string;
-  description?: string;
+  description?: ReactNode;
   /** The one main action for this page, right-aligned. */
   action?: ReactNode;
 };

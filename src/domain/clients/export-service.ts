@@ -130,6 +130,7 @@ export type DueItem = {
   companyId: string;
   companyName: string;
   companyCode: string;
+  siteId: string;
   siteName: string;
   department: string | null;
   code: string;
@@ -161,6 +162,7 @@ export async function listDueEquipment(
       companyId: clientCompanies.id,
       companyName: clientCompanies.name,
       companyCode: clientCompanies.code,
+      siteId: clientSites.id,
       siteName: clientSites.name,
       department: clientDepartments.name,
       code: equipment.code,
