@@ -12,6 +12,7 @@ import { requirePermission } from "@/lib/auth/dal";
 import { cn } from "@/lib/utils";
 
 import { LayoutEditor } from "./layout-editor";
+import { RoomSize } from "./room-size";
 import { LoggerPanel } from "./logger-panel";
 import { PhotosPanel } from "./photos-panel";
 import { PrecalPanel } from "./precal-panel";
@@ -126,22 +127,29 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
       </nav>
 
       {tab === "layout" ? (
-        <LayoutEditor
-          key={studyId}
-          studyId={studyId}
-          dims={s.equipment.dims}
-          loggerCount={s.study.loggerCount}
-          readOnly={!canWork || !layoutOpen || done}
-          initial={s.positions.map((p) => ({
-            label: p.label,
-            x: p.x,
-            y: p.y,
-            z: p.z,
-            note: p.note,
-            ambient: p.ambient,
-            placed: !!p.instrumentId,
-          }))}
-        />
+        <div className="flex flex-col gap-4">
+          <RoomSize
+            studyId={studyId}
+            dims={s.equipment.dims}
+            readOnly={!canWork || !layoutOpen || done}
+          />
+          <LayoutEditor
+            key={studyId}
+            studyId={studyId}
+            dims={s.equipment.dims}
+            loggerCount={s.study.loggerCount}
+            readOnly={!canWork || !layoutOpen || done}
+            initial={s.positions.map((p) => ({
+              label: p.label,
+              x: p.x,
+              y: p.y,
+              z: p.z,
+              note: p.note,
+              ambient: p.ambient,
+              placed: !!p.instrumentId,
+            }))}
+          />
+        </div>
       ) : tab === "loggers" ? (
         <LoggerPanel
           studyId={studyId}

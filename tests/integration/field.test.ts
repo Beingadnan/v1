@@ -22,6 +22,7 @@ import {
   recordPrecal,
   removeLogger,
   saveLayout,
+  setRoomSize,
   voidEvent,
 } from "@/domain/field/field-service";
 import { ft12Pdf, getFieldStudy, myStudies } from "@/domain/field/queries";
@@ -329,6 +330,30 @@ describe("phase 5: an engineer places 9 loggers for BE-WF-02 and records start a
     const s = await study(freezerStudy);
     expect(s.positions.map((p) => p.label)).toEqual(template.map((p) => p.label));
     expect(s.equipment.dims).toEqual({ lengthM: 3.36, widthM: 6.4, heightM: 2.4 });
+  });
+
+  it("records a room size measured on site when the equipment has none", async () => {
+    expect((await study(roomStudy)).equipment.dims).toEqual({
+      lengthM: null,
+      widthM: null,
+      heightM: null,
+    });
+    await expect(setRoomSize(db, engineer, roomStudy, "4 x 3", req)).rejects.toThrow("three");
+    await expect(setRoomSize(db, accounts, roomStudy, "4 x 3 x 2.5", req)).rejects.toBeInstanceOf(
+      ForbiddenError,
+    );
+    expect(await setRoomSize(db, engineer, roomStudy, "4000 x 3000 x 2500 mm", req)).toEqual({
+      lengthM: 4,
+      widthM: 3,
+      heightM: 2.5,
+    });
+    const s = await study(roomStudy);
+    expect(s.equipment.dims).toEqual({ lengthM: 4, widthM: 3, heightM: 2.5 });
+    const [audit] = await db
+      .select()
+      .from(auditLog)
+      .where(and(eq(auditLog.action, "equipment.updated"), eq(auditLog.entityId, s.equipment.id)));
+    expect(audit?.summary).toContain("4 × 3 × 2.5 m");
   });
 
   it("places scanned loggers on the next empty position, refusing the wrong ones", async () => {

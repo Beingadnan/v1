@@ -215,3 +215,46 @@ export function spreadLabels<T extends { x: number; y: number }>(
   }
   return placed;
 }
+
+/**
+ * Reads a room size as people type it: "3.36 x 6.4 x 2.4", "3.36m × 6.4m × 2.4m",
+ * "3360 x 6400 x 2400 mm", "336*640*240 cm", "3,36 x 6,4 x 2,4". Returns metres
+ * (length, width, height), or a reason it can't be read.
+ */
+export function parseRoomSize(
+  text: string,
+): { ok: true; lengthM: number; widthM: number; heightM: number } | { ok: false; error: string } {
+  const raw = text.trim().toLowerCase();
+  if (!raw)
+    return {
+      ok: false,
+      error: "Type the size as length × width × height, e.g. 3.36 x 6.4 x 2.4 m.",
+    };
+  const unitOf = (s: string) =>
+    /mm/.test(s) ? 0.001 : /cm/.test(s) ? 0.01 : /(ft|feet|')/.test(s) ? 0.3048 : null;
+  const overall = unitOf(raw);
+  const parts = raw
+    .split(/\s*(?:x|×|\*|by)\s*/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (parts.length !== 3) {
+    return {
+      ok: false,
+      error: "Give three numbers, length × width × height, e.g. 3.36 x 6.4 x 2.4 m.",
+    };
+  }
+  const values: number[] = [];
+  for (const p of parts) {
+    const m = p.match(/^(\d+(?:[.,]\d+)?)\s*(mm|cm|m|ft|feet|')?$/);
+    if (!m) return { ok: false, error: `“${p}” is not a size.` };
+    const n = Number(m[1]!.replace(",", "."));
+    const unit = m[2] ? (unitOf(m[2]) ?? 1) : (overall ?? 1);
+    values.push(Math.round(n * unit * 1000) / 1000);
+  }
+  if (values.some((v) => v <= 0)) return { ok: false, error: "Sizes must be more than 0." };
+  if (values.some((v) => v > 500)) {
+    return { ok: false, error: "That is over 500 m. If it is in millimetres, add “mm”." };
+  }
+  const [lengthM, widthM, heightM] = values as [number, number, number];
+  return { ok: true, lengthM, widthM, heightM };
+}

@@ -40,7 +40,7 @@ import { storeFile } from "@/lib/storage/store-file";
 import { shortList } from "@/lib/text";
 
 import { FieldError } from "./errors";
-import { templateLayout } from "./layout";
+import { parseRoomSize, templateLayout } from "./layout";
 import { evaluatePrecal } from "./precal";
 import {
   EVENT_LABELS,
@@ -183,6 +183,51 @@ export async function saveLayout(
       request,
     });
     return { count: points.length };
+  });
+}
+
+/**
+ * Records the room's size on the equipment when it wasn't known (or was
+ * wrong), from what the engineer measured on site. The WHO grid and FT-12
+ * use it. Typed as "3.36 x 6.4 x 2.4 m", in mm, cm or m.
+ */
+export async function setRoomSize(
+  db: Database,
+  actor: SessionUser,
+  studyId: string,
+  text: string,
+  request?: RequestInfo,
+): Promise<{ lengthM: number; widthM: number; heightM: number }> {
+  assertCan(actor, "field.perform");
+  const size = parseRoomSize(typeof text === "string" ? text : "");
+  if (!size.ok) throw new FieldError(size.error);
+  return db.transaction(async (tx) => {
+    const { study, job, equipment: e } = await loadStudy(tx, actor, studyId);
+    assertJob(job, LAYOUT_OK, "Changing the size");
+    if (study.status === "completed")
+      throw new FieldError(`The ${e.code} study is done; its size is fixed.`);
+    const { lengthM, widthM, heightM } = size;
+    await tx
+      .update(equipment)
+      .set({
+        lengthM: String(lengthM),
+        widthM: String(widthM),
+        heightM: String(heightM),
+        updatedAt: new Date(),
+      })
+      .where(and(eq(equipment.id, e.id), eq(equipment.organisationId, actor.organisationId)));
+    await recordAudit(tx, {
+      organisationId: actor.organisationId,
+      actor: user(actor),
+      action: "equipment.updated",
+      entityType: "equipment",
+      entityId: e.id,
+      summary: `${actor.name} recorded the size of ${e.code} on site (job ${job.number}): ${lengthM} × ${widthM} × ${heightM} m`,
+      before: { lengthM: e.lengthM, widthM: e.widthM, heightM: e.heightM },
+      after: { lengthM, widthM, heightM },
+      request,
+    });
+    return { lengthM, widthM, heightM };
   });
 }
 

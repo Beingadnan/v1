@@ -435,7 +435,9 @@ export default async function JobPage({ params }: PageProps<"/jobs/[jobId]">) {
               Loggers and masters
             </h2>
             <p className="text-sm text-muted-foreground">
-              {loggers.length} of {needed} logger{needed === 1 ? "" : "s"} booked
+              {loggers.length > needed
+                ? `${loggers.length} loggers booked for ${needed} (${loggers.length - needed} spare)`
+                : `${loggers.length} of ${needed} logger${needed === 1 ? "" : "s"} booked`}
               {masters.length > 0
                 ? ` · ${masters.length} master${masters.length === 1 ? "" : "s"}`
                 : ""}

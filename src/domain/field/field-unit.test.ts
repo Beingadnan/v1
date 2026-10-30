@@ -6,6 +6,7 @@ import {
   label,
   mm,
   nextEmpty,
+  parseRoomSize,
   projector,
   templateLayout,
 } from "./layout";
@@ -151,5 +152,33 @@ describe("evaluatePrecal", () => {
       ok: false,
       message: "Enter the master's reading.",
     });
+  });
+});
+
+describe("parseRoomSize", () => {
+  it("reads sizes as people type them", () => {
+    const m = { ok: true, lengthM: 3.36, widthM: 6.4, heightM: 2.4 };
+    expect(parseRoomSize("3.36 x 6.4 x 2.4")).toEqual(m);
+    expect(parseRoomSize("3.36m × 6.4m × 2.4m")).toEqual(m);
+    expect(parseRoomSize("3360 x 6400 x 2400 mm")).toEqual(m);
+    expect(parseRoomSize("336*640*240 cm")).toEqual(m);
+    expect(parseRoomSize("3,36 X 6,4 X 2,4")).toEqual(m);
+    expect(parseRoomSize("3.36 by 6.4 by 2.4 m")).toEqual(m);
+  });
+  it("explains what it can't read", () => {
+    expect(parseRoomSize("")).toMatchObject({ ok: false });
+    expect(parseRoomSize("3.36 x 6.4")).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("three"),
+    });
+    expect(parseRoomSize("3.36 x abc x 2")).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("abc"),
+    });
+    expect(parseRoomSize("3360 x 6400 x 2400")).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("mm"),
+    });
+    expect(parseRoomSize("0 x 1 x 1")).toMatchObject({ ok: false });
   });
 });

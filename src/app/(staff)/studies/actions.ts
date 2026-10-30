@@ -11,6 +11,7 @@ import {
   recordPrecal,
   removeLogger,
   saveLayout,
+  setRoomSize,
   voidEvent,
   type PlaceResult,
 } from "@/domain/field/field-service";
@@ -45,6 +46,20 @@ export async function saveLayoutAction(
   const result = await runAction(
     async () => saveLayout(db, actor, studyId, points, await getRequestInfo()),
     "Layout saved.",
+  );
+  if (result.ok) refresh(studyId);
+  return result;
+}
+
+export async function roomSizeAction(
+  studyId: string,
+  text: string,
+): Promise<ActionResult<{ lengthM: number; widthM: number; heightM: number }>> {
+  const actor = await userForAction();
+  if (!actor) return { ok: false, error: SESSION_ENDED };
+  const result = await runAction(
+    async () => setRoomSize(db, actor, studyId, text, await getRequestInfo()),
+    "Size saved.",
   );
   if (result.ok) refresh(studyId);
   return result;
