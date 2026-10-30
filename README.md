@@ -11,19 +11,25 @@ Architecture decisions: [docs/adr/](docs/adr/).
 
 ## Status
 
-**Phase 4 — Jobs.** A job from the PO to field work: a wizard that starts from the
-client's site with the equipment due for requalification already ticked (or straight
-from the Requalification due list); one study per item with its defaults copied from the
-equipment and its report number reserved in the client's format; a readiness checklist
-worked out from the job (PO, loggers booked, loggers calibrated through the last day,
-masters for pre/post-cal) with only protocol, site access and previous report ticked by
-people, moving the job between Created and Ready by itself; one-click logger booking
-(the job's site first, one model, consecutive IDs, never a logger that runs out during
-the study or is on another job), or by pasting IDs or serials; warnings when a person is
-on two jobs at once; hold, resume and cancel with a reason; a board and a list searchable
-by job number, PO, client, equipment or report number; and a rate card that prices each
-study and flags a PO that doesn't match. Prices are shown only to managers, team leaders
-and accounts.
+**Phase 5 — Field work.** On a phone, the engineer's day on site:
+
+- **My studies today** for the jobs they are on.
+- **The layout** starts from a template: corners and centre as on the BE-WF-02 diagram,
+  or the WHO grid from the room size. Positions are dragged on a plan of each level.
+- **Placing loggers** by scanning with the phone camera (Chrome on Android), typing, or a
+  scanner gun. Out-of-date, busy, misplaced or pre-cal-failed loggers are refused with
+  the reason.
+- **Pre-calibration (FT-01).**
+- **Cycle start/end, door and power times** are kept on the phone when there is no signal
+  and sent later with the time they were tapped.
+- **Photos** are shrunk before upload.
+- **The FT-12 sensor location sheet** prints from what was done on site.
+- **Progress:** studies become Running and Done from their times, and jobs show "3 of 5
+  studies done".
+
+Phase 4 — Jobs: the job wizard with due equipment ticked, studies with reserved report
+numbers, the calculated readiness checklist, one-click logger booking, clash warnings,
+the board and list, and the rate card.
 
 Built on phase 3 (instruments and FT-05 calibration certificates), phase 2 (clients,
 sites, departments, equipment register, Excel import), phase 1 (sign-in, roles,
@@ -80,11 +86,11 @@ Some tests also run against real QA Tech files when they are present in `fixture
 ## Project layout
 
 ```
-src/app/(staff)/     QA Tech staff screens (jobs, clients, instruments, users, settings, audit…)
+src/app/(staff)/     QA Tech staff screens (jobs, studies, clients, instruments, users, settings, audit…)
 src/app/(client)/    the client QA users' area
 src/components/ui/   design-system components
 src/components/shell sidebar, top bar, navigation
-src/domain/          business rules without React (auth, clients, instruments, jobs, numbering)
+src/domain/          business rules without React (auth, clients, instruments, jobs, field, numbering)
 src/db/              Drizzle schema, client, seed helpers
 src/lib/             env, audit, storage
 drizzle/             SQL migrations (forward-only)

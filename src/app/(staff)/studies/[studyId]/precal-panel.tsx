@@ -73,7 +73,12 @@ export function PrecalPanel({
         label: `${code} pre-cal`,
         payload: { id: newId(), code, masterId, quantity, reference, reading },
       });
-      if (r === "queued")
+      if (r === "signed_out")
+        setFeedback({
+          ok: false,
+          text: `You were signed out. ${code} is kept on this phone: sign in again (in a new tab) and it will be sent.`,
+        });
+      else if (r === "queued")
         setFeedback({
           ok: true,
           text: `No connection: ${code} is kept on this phone and will be sent.`,

@@ -101,7 +101,12 @@ export function LoggerPanel({
           label: `${c} → ${where}`,
           payload: { code: c, positionId: target ?? undefined },
         });
-        if (r === "queued") {
+        if (r === "signed_out")
+          setFeedback({
+            ok: false,
+            text: `You were signed out. ${c} is kept on this phone: sign in again (in a new tab) and it will be sent.`,
+          });
+        else if (r === "queued") {
           setFeedback({
             ok: true,
             text: `No connection: ${c} will be placed at ${where} when the phone is back online.`,

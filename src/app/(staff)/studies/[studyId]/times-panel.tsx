@@ -121,7 +121,12 @@ export function TimesPanel({
         label,
         payload: { id: newId(), cycle: c.cycle, kind, at: at.toISOString() },
       });
-      if (r === "queued")
+      if (r === "signed_out")
+        setFeedback({
+          ok: false,
+          text: `You were signed out. ${label} is kept on this phone: sign in again (in a new tab) and it will be sent.`,
+        });
+      else if (r === "queued")
         setFeedback({
           ok: true,
           text: `No connection: ${label} is kept on this phone and will be sent.`,

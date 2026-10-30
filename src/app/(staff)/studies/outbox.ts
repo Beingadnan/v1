@@ -151,24 +151,27 @@ export function useOutbox(studyId: string, onDone?: (o: Outcome) => void) {
     };
   }, [flush]);
 
-  const run = useCallback(async (entry: NewEntry): Promise<ActionResult<unknown> | "queued"> => {
-    const full = { ...entry, id: newId() } as OutboxEntry;
-    const queue = () => {
-      write([...read(), full]);
-      return "queued" as const;
-    };
-    if (typeof navigator !== "undefined" && navigator.onLine === false) return queue();
-    try {
-      const result = await send(full);
-      if (!result.ok && result.error.startsWith(SIGNED_OUT)) {
-        setSignedOut(true);
+  const run = useCallback(
+    async (entry: NewEntry): Promise<ActionResult<unknown> | "queued" | "signed_out"> => {
+      const full = { ...entry, id: newId() } as OutboxEntry;
+      const queue = () => {
+        write([...read(), full]);
+        return "queued" as const;
+      };
+      if (typeof navigator !== "undefined" && navigator.onLine === false) return queue();
+      try {
+        const result = await send(full);
+        if (!result.ok && result.error.startsWith(SIGNED_OUT)) {
+          setSignedOut(true);
+          return queue();
+        }
+        return result;
+      } catch {
         return queue();
       }
-      return result;
-    } catch {
-      return queue();
-    }
-  }, []);
+    },
+    [],
+  );
 
   return { pending, signedOut, run, flush };
 }
