@@ -44,6 +44,8 @@ export type ReadinessItem = {
   calculated: boolean;
   /** What is missing, or what was checked, in plain words. */
   detail: string;
+  /** What a person wrote when ticking it (never the help text). */
+  note: string;
 };
 
 const dmy = (iso: string) => iso.split("-").reverse().join(".");
@@ -65,7 +67,10 @@ export function validThrough(
     // Say when it ran out, which is what the lab needs to know.
     const latest = latestCertificate(instrument.certificates);
     if (latest?.validUntil && latest.validUntil < start) {
-      return { ok: false, reason: `${instrument.code} is due on ${dmy(latest.validUntil)}` };
+      return {
+        ok: false,
+        reason: `${instrument.code} is valid only until ${dmy(latest.validUntil)}`,
+      };
     }
     if (latest && latest.calibratedOn > start) {
       return {
@@ -76,7 +81,7 @@ export function validThrough(
     return { ok: false, reason: `${instrument.code} has no valid certificate` };
   }
   if (cover.validUntil !== null && cover.validUntil < end) {
-    return { ok: false, reason: `${instrument.code} is due on ${dmy(cover.validUntil)}` };
+    return { ok: false, reason: `${instrument.code} is valid only until ${dmy(cover.validUntil)}` };
   }
   return { ok: true };
 }
@@ -175,20 +180,14 @@ export function computeReadiness(input: ReadinessInput): {
     const info = READINESS_INFO[key];
     const worked = calc[key];
     const manual = input.manual[key];
-    if (worked && info.calculated) {
-      return { key, label: info.label, calculated: true, ...worked };
-    }
+    const base = { key, label: info.label, note: manual?.note ?? "" };
+    if (worked && info.calculated) return { ...base, calculated: true, ...worked };
     // Manual items, and previous report when it doesn't apply unless someone ticked it.
-    if (manual)
-      return {
-        key,
-        label: info.label,
-        calculated: false,
-        state: manual.state,
-        detail: manual.note,
-      };
-    if (worked) return { key, label: info.label, calculated: false, ...worked };
-    return { key, label: info.label, calculated: false, state: "pending", detail: info.hint };
+    if (manual) {
+      return { ...base, calculated: false, state: manual.state, detail: manual.note || info.hint };
+    }
+    if (worked) return { ...base, calculated: false, ...worked };
+    return { ...base, calculated: false, state: "pending", detail: info.hint };
   });
   const pending = items.filter((i) => i.state === "pending").length;
   return { items, ready: pending === 0, pending };

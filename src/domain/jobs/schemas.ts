@@ -14,17 +14,40 @@ const blankToNull = (v: unknown) =>
   v === undefined || v === null || (typeof v === "string" && v.trim() === "") ? null : v;
 const uuid = (message: string) => z.string().uuid(message);
 
-/** Rupees as typed: "₹1,25,000", "Rs. 18,000/-", "125000.50". Words ("1.25 lakh") are refused. */
+const MULTIPLIERS: [RegExp, number][] = [
+  [/^(cr|crore|crores)$/, 10_000_000],
+  [/^(l|lac|lacs|lakh|lakhs)$/, 100_000],
+  [/^(k|thousand)$/, 1_000],
+];
+
+/**
+ * Rupees the way people type them: "₹1,25,000", "Rs. 18,000/-", "INR 4500.50",
+ * "15k", "1.5 lakh", "2 cr". Anything else is refused.
+ */
+export function parseRupees(text: string): number | string {
+  const clean = text
+    .trim()
+    .toLowerCase()
+    .replace(/\/-\s*$/, "")
+    .replace(/^(₹|rs\.?|inr)\s*/, "")
+    .replace(/,/g, "")
+    .trim();
+  const match = /^(\d+(?:\.\d+)?)\s*([a-z]*)$/.exec(clean);
+  if (!match) return text;
+  const [, amount, unit] = match;
+  if (!unit) return Number(amount);
+  const multiplier = MULTIPLIERS.find(([re]) => re.test(unit!))?.[1];
+  return multiplier ? Math.round(Number(amount) * multiplier * 100) / 100 : text;
+}
+
 export const money = (label: string) =>
   z.preprocess(
     (v) => {
       const clean = blankToNull(v);
-      return typeof clean === "string"
-        ? clean.replace(/\/-\s*$/, "").replace(/[₹,\s]|rs\.?|inr/gi, "")
-        : clean;
+      return typeof clean === "string" ? parseRupees(clean) : clean;
     },
-    z.coerce
-      .number({ message: `${label} must be an amount in rupees.` })
+    z
+      .number({ message: `${label} must be an amount in rupees, like 18000, 18,000 or 1.5 lakh.` })
       .min(0, `${label} can't be negative.`)
       .max(1_000_000_000, `${label} is too large.`)
       .nullable(),

@@ -22,6 +22,7 @@ import {
   createJob,
   releaseInstruments,
   removeStudy,
+  repriceJob,
   retireRateLine,
   saveRateLine,
   setReadiness,
@@ -470,7 +471,7 @@ describe("phase 4 exit test: a Watson job with 2 freezers", () => {
   });
 
   it("can't move to Field Work while a logger is out of date", async () => {
-    // The client moves the visit to December: T-11 is due on 30.11.2026.
+    // The client moves the visit to December: T-11 is valid only until 30.11.2026.
     await updateJob(
       db,
       leader,
@@ -490,7 +491,9 @@ describe("phase 4 exit test: a Watson job with 2 freezers", () => {
     );
     const job = await state(jobId);
     expect(job.status).toBe("created");
-    expect(job.booked.find((b) => b.code === "T-11")!.problem).toBe("T-11 is due on 30.11.2026");
+    expect(job.booked.find((b) => b.code === "T-11")!.problem).toBe(
+      "T-11 is valid only until 30.11.2026",
+    );
     expect(job.history.at(-1)?.reason).toBe("Pending: Loggers calibrated through the study");
     await expect(changeStatus(db, leader, jobId, "start_field_work", "", req)).rejects.toThrow(
       "Start field work isn't possible while the job is Created.",
@@ -502,7 +505,7 @@ describe("phase 4 exit test: a Watson job with 2 freezers", () => {
     expect(swap).toEqual({
       booked: [],
       notFound: ["NOPE-1"],
-      refused: [{ code: "T-12", reason: "is due on 30.11.2026" }],
+      refused: [{ code: "T-12", reason: "is valid only until 30.11.2026" }],
     });
     const t13 = await createInstrument(
       db,
@@ -574,8 +577,8 @@ describe("clashes, holds and repeat visits", () => {
     expect(booked.booked).toEqual([]);
     expect(booked.short).toEqual([{ type: "portable_logger", count: 3 }]);
     expect(booked.skipped).toEqual([
-      { reason: "booked on another job", count: 11 },
-      { reason: "calibration runs out before the study ends", count: 2 },
+      { reason: "on another job on these dates", count: 11 },
+      { reason: "not calibrated through these dates", count: 2 },
     ]);
     expect((await bookByCodes(db, leader, second, "T-01", req)).refused).toEqual([
       { code: "T-01", reason: `booked on ${jobNumber}` },
@@ -727,8 +730,45 @@ describe("clashes, holds and repeat visits", () => {
     }
   });
 
+  it("prices a planned job again after the rate card changes", async () => {
+    const j = await createJob(
+      db,
+      leader,
+      {
+        companyId: watsonId,
+        clientSiteId: seawoodsId,
+        plannedStart: "2027-04-01",
+        plannedEnd: "2027-04-02",
+        items: [{ equipmentId: cr01 }],
+      },
+      req,
+    );
+    expect((await state(j.id)).studies[0]!.price).toBeNull();
+    await saveRateLine(
+      db,
+      manager,
+      {
+        workType: "temperature_mapping",
+        equipmentType: "cold_room",
+        basis: "per_study",
+        price: "1.5 lakh",
+      },
+      null,
+      req,
+    );
+    await expect(repriceJob(db, engineer, j.id, req)).rejects.toBeInstanceOf(ForbiddenError);
+    expect(await repriceJob(db, leader, j.id, req)).toEqual({ changed: 1, unpriced: 0 });
+    expect((await state(j.id)).studies[0]!.price).toBe("150000.00");
+    expect(await repriceJob(db, leader, j.id, req)).toEqual({ changed: 0, unpriced: 0 });
+  });
+
   it("retires a rate so new jobs aren't priced from it", async () => {
-    const [line] = await db.select().from(rateCards).where(eq(rateCards.organisationId, orgId));
+    const [line] = await db
+      .select()
+      .from(rateCards)
+      .where(
+        and(eq(rateCards.organisationId, orgId), eq(rateCards.equipmentType, "walk_in_freezer")),
+      );
     await retireRateLine(db, manager, line!.id, req);
     const priced = await createJob(
       db,

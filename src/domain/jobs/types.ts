@@ -44,7 +44,7 @@ export const JOB_STATUS_LABELS: Record<JobStatus, string> = {
   cancelled: "Cancelled",
 };
 
-/** Columns of the job board, in flow order (data issue and rework share a column with their step). */
+/** Columns of the job board, in flow order (data issue and rework share a column with their step; a held job keeps its place). */
 export const BOARD_COLUMNS: { key: string; label: string; statuses: JobStatus[] }[] = [
   { key: "created", label: "Created", statuses: ["created"] },
   { key: "ready", label: "Ready", statuses: ["ready"] },
@@ -61,8 +61,13 @@ export const BOARD_COLUMNS: { key: string; label: string; statuses: JobStatus[] 
     statuses: ["sent_to_client", "client_signed", "wcr_signed"],
   },
   { key: "money", label: "Invoice & payment", statuses: ["invoiced", "paid"] },
-  { key: "on_hold", label: "On hold", statuses: ["on_hold"] },
 ];
+
+/** Where a job sits on the board: a job on hold stays in the column where it stopped. */
+export function boardStatus(status: JobStatus, heldFrom: string | null): JobStatus {
+  if (status !== "on_hold") return status;
+  return isJobStatus(heldFrom) && heldFrom !== "on_hold" ? heldFrom : "created";
+}
 
 /** Statuses after which a job no longer holds loggers or people. */
 export const FINISHED: readonly JobStatus[] = ["closed", "cancelled"];

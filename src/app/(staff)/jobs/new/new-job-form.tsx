@@ -437,10 +437,13 @@ export function NewJobForm({
 
       <FormMessage result={result} />
       <div className="flex flex-wrap gap-2">
-        <Button type="submit" disabled={pending || ticked.size === 0}>
-          {pending
-            ? "Creating…"
-            : `Create job${ticked.size > 0 ? ` with ${ticked.size} item${ticked.size === 1 ? "" : "s"}` : ""}`}
+        {/* After a save the page moves to the job: keep the button locked so it isn't made twice. */}
+        <Button type="submit" disabled={pending || result?.ok || ticked.size === 0}>
+          {result?.ok
+            ? "Opening the job…"
+            : pending
+              ? "Creating…"
+              : `Create job${ticked.size > 0 ? ` with ${ticked.size} item${ticked.size === 1 ? "" : "s"}` : ""}`}
         </Button>
         <Button variant="ghost" asChild>
           <Link href="/jobs">Cancel</Link>

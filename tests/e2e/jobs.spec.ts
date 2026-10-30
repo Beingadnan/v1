@@ -125,7 +125,7 @@ test("phase 4 exit test: a Watson job with 2 freezers, found by PO, held back by
   await dialog.getByLabel("Last day (loggers back)").fill("2030-07-03");
   await dialog.getByRole("button", { name: "Save" }).click();
   await expect(dialog).toBeHidden();
-  await expect(page.getByText("is due on 30.06.2030").first()).toBeVisible();
+  await expect(page.getByText("is valid only until 30.06.2030").first()).toBeVisible();
   await expect(page.getByText("1 item pending")).toBeVisible();
   await expect(page.getByRole("button", { name: "Start field work" })).toHaveCount(0);
 

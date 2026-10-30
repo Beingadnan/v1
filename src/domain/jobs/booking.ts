@@ -71,11 +71,11 @@ export function pickInstruments(input: {
       continue;
     }
     if (c.busyOn.length > 0) {
-      skip("booked on another job");
+      skip("on another job on these dates");
       continue;
     }
     if (!validThrough(c, input.start, input.end).ok) {
-      skip("calibration runs out before the study ends");
+      skip("not calibrated through these dates");
       continue;
     }
     usable.push(c);

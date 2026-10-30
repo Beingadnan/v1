@@ -43,6 +43,8 @@ export type JobListRow = {
   id: string;
   number: string;
   status: JobStatus;
+  /** For a job on hold: the status it was held from. */
+  heldFrom: string | null;
   title: string;
   companyId: string;
   companyName: string;
@@ -75,6 +77,7 @@ export async function listJobs(
       id: jobs.id,
       number: jobs.number,
       status: jobs.status,
+      heldFrom: jobs.heldFrom,
       title: jobs.title,
       companyId: clientCompanies.id,
       companyName: clientCompanies.name,

@@ -42,6 +42,7 @@ import {
   ReadinessSwitch,
   ReleaseButton,
   RemoveStudyButton,
+  RepriceButton,
   StatusButtons,
   TeamButton,
 } from "./job-controls";
@@ -62,6 +63,7 @@ export default async function JobPage({ params }: PageProps<"/jobs/[jobId]">) {
   const planning =
     PLANNING.includes(status) ||
     (status === "on_hold" && PLANNING.includes(job.heldFrom as JobStatus));
+  const finished = status === "closed" || status === "cancelled";
   const canBook = canManage && HOLDS_INSTRUMENTS.includes(status);
   const [staff, qaSites, equipment] = canManage
     ? await Promise.all([
@@ -147,71 +149,73 @@ export default async function JobPage({ params }: PageProps<"/jobs/[jobId]">) {
       {canManage && allowed.length > 0 ? <StatusButtons jobId={job.id} allowed={allowed} /> : null}
 
       <div className="grid gap-6 lg:grid-cols-3">
-        <section
-          aria-labelledby="ready"
-          className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 lg:col-span-2"
-        >
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <h2 id="ready" className="font-semibold">
-              Ready for field work?
-            </h2>
-            <p className={cn("text-sm", readiness.ready ? "text-pass" : "text-attention")}>
-              {readiness.ready
-                ? "Everything is in place."
-                : `${readiness.pending} item${readiness.pending === 1 ? "" : "s"} pending`}
-            </p>
-          </div>
-          <ul className="flex flex-col divide-y divide-border">
-            {readiness.items.map((item) => {
-              const Icon =
-                item.state === "ready"
-                  ? CheckCircle2
-                  : item.state === "na"
-                    ? MinusCircle
-                    : item.calculated
-                      ? AlertTriangle
-                      : Circle;
-              return (
-                <li key={item.key} className="flex flex-wrap items-start gap-3 py-2">
-                  <Icon
-                    className={cn(
-                      "mt-0.5 size-4 shrink-0",
-                      item.state === "ready"
-                        ? "text-pass"
-                        : item.state === "na"
-                          ? "text-muted-foreground"
-                          : "text-attention",
-                    )}
-                    aria-hidden="true"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium">
-                      {item.label}
-                      <span className="sr-only">
-                        : {item.state === "na" ? "not applicable" : item.state}
-                      </span>
-                    </p>
-                    {item.detail ? (
-                      <p className="text-xs text-muted-foreground">{item.detail}</p>
-                    ) : null}
-                    {item.calculated ? (
-                      <p className="text-xs text-muted-foreground italic">Worked out by QTech</p>
-                    ) : null}
-                  </div>
-                  {!item.calculated && canManage && planning ? (
-                    <ReadinessSwitch
-                      jobId={job.id}
-                      itemKey={item.key}
-                      label={item.label}
-                      state={item.state}
-                      note={item.detail}
+        {finished ? null : (
+          <section
+            aria-labelledby="ready"
+            className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 lg:col-span-2"
+          >
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 id="ready" className="font-semibold">
+                Ready for field work?
+              </h2>
+              <p className={cn("text-sm", readiness.ready ? "text-pass" : "text-attention")}>
+                {readiness.ready
+                  ? "Everything is in place."
+                  : `${readiness.pending} item${readiness.pending === 1 ? "" : "s"} pending`}
+              </p>
+            </div>
+            <ul className="flex flex-col divide-y divide-border">
+              {readiness.items.map((item) => {
+                const Icon =
+                  item.state === "ready"
+                    ? CheckCircle2
+                    : item.state === "na"
+                      ? MinusCircle
+                      : item.calculated
+                        ? AlertTriangle
+                        : Circle;
+                return (
+                  <li key={item.key} className="flex flex-wrap items-start gap-3 py-2">
+                    <Icon
+                      className={cn(
+                        "mt-0.5 size-4 shrink-0",
+                        item.state === "ready"
+                          ? "text-pass"
+                          : item.state === "na"
+                            ? "text-muted-foreground"
+                            : "text-attention",
+                      )}
+                      aria-hidden="true"
                     />
-                  ) : null}
-                </li>
-              );
-            })}
-          </ul>
-        </section>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium">
+                        {item.label}
+                        <span className="sr-only">
+                          : {item.state === "na" ? "not applicable" : item.state}
+                        </span>
+                      </p>
+                      {item.detail ? (
+                        <p className="text-xs text-muted-foreground">{item.detail}</p>
+                      ) : null}
+                      {item.calculated ? (
+                        <p className="text-xs text-muted-foreground italic">Worked out by QTech</p>
+                      ) : null}
+                    </div>
+                    {!item.calculated && canManage && planning ? (
+                      <ReadinessSwitch
+                        jobId={job.id}
+                        itemKey={item.key}
+                        label={item.label}
+                        state={item.state}
+                        note={item.note}
+                      />
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
 
         <div className="flex flex-col gap-6">
           <section
@@ -290,13 +294,16 @@ export default async function JobPage({ params }: PageProps<"/jobs/[jobId]">) {
               ) : null}
               {detail.value.unpriced > 0 && detail.value.source === "rate_card" ? (
                 <p className="text-xs text-muted-foreground">
-                  {detail.value.unpriced} study{detail.value.unpriced === 1 ? " has" : "ies have"}{" "}
+                  {detail.value.unpriced === 1
+                    ? "1 study has"
+                    : `${detail.value.unpriced} studies have`}{" "}
                   no rate.{" "}
                   <Link href="/jobs/rates" className="underline">
                     Rate card
                   </Link>
                 </p>
               ) : null}
+              {canManage && planning ? <RepriceButton jobId={job.id} /> : null}
             </section>
           ) : null}
         </div>

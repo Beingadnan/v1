@@ -1,6 +1,7 @@
 "use client";
 
 import { ClipboardPaste, Pencil, Plus, Trash2, Wand2, X } from "lucide-react";
+import Link from "next/link";
 import { startTransition, useActionState, useState, type FormEvent, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -34,6 +35,7 @@ import {
   changeStatusAction,
   releaseAction,
   removeStudyAction,
+  repriceAction,
   setReadinessAction,
   setTeamAction,
   updateJobAction,
@@ -707,27 +709,38 @@ export function AutoBookButton({ jobId, label }: { jobId: string; label: string 
   if (result?.ok) {
     const r = result.data;
     const all = [...r.booked, ...r.masters];
+    const short = r.short.reduce((n, s) => n + s.count, 0);
+    const outOfDate = r.skipped.some((s) => s.reason.startsWith("not calibrated"));
     message = (
       <div
         role="status"
         className={cn(
-          "rounded-md px-3 py-2 text-sm",
-          r.short.length ? "bg-attention-soft text-attention" : "bg-pass-soft text-pass",
+          "flex flex-col gap-0.5 rounded-md px-3 py-2 text-sm",
+          short ? "bg-attention-soft text-attention" : "bg-pass-soft text-pass",
         )}
       >
         <p>
-          {all.length > 0 ? `Booked ${all.length}: ${shortList(all)}.` : "Nothing more to book."}
+          {all.length > 0
+            ? `Booked ${all.length}: ${shortList(all)}.`
+            : short
+              ? "No logger could be booked."
+              : "Everything needed is already booked."}
         </p>
         {r.short.map((s) => (
           <p key={s.type}>
-            Short by {s.count} {s.type.replace(/_/g, " ")}
+            Still short of {s.count} {s.type.replace(/_/g, " ")}
             {s.count === 1 ? "" : "s"}.
           </p>
         ))}
         {r.skipped.length > 0 ? (
           <p className="text-xs">
-            Passed over: {r.skipped.map((s) => `${s.count} ${s.reason}`).join("; ")}.
+            Left out: {r.skipped.map((s) => `${s.count} ${s.reason}`).join("; ")}.
           </p>
+        ) : null}
+        {short && outOfDate ? (
+          <Link href="/instruments?view=attention" className="text-xs font-medium underline">
+            Plan their calibration →
+          </Link>
         ) : null}
       </div>
     );
@@ -831,6 +844,30 @@ export function ReleaseButton({
       >
         <X aria-hidden="true" />
       </Button>
+    </form>
+  );
+}
+
+export function RepriceButton({ jobId }: { jobId: string }) {
+  const { result, pending, onSubmit } = useFormAction(repriceAction);
+  return (
+    <form onSubmit={onSubmit} className="flex flex-col items-start gap-1">
+      <Hidden fields={{ jobId }} />
+      <Button type="submit" variant="link" size="sm" disabled={pending}>
+        {pending ? "Pricing…" : "Price from rate card"}
+      </Button>
+      {result?.ok ? (
+        <p role="status" className="text-xs text-muted-foreground">
+          {result.data.changed === 0
+            ? "Prices already match the rate card."
+            : `${result.data.changed} price${result.data.changed === 1 ? "" : "s"} updated.`}
+          {result.data.unpriced > 0 ? ` ${result.data.unpriced} still without a rate.` : ""}
+        </p>
+      ) : result ? (
+        <p role="alert" className="text-xs text-fail">
+          {result.error}
+        </p>
+      ) : null}
     </form>
   );
 }

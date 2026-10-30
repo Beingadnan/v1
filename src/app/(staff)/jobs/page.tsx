@@ -17,7 +17,7 @@ import {
 import { db } from "@/db/client";
 import { can } from "@/domain/auth/permissions";
 import { listJobs, type JobListRow } from "@/domain/jobs/queries";
-import { BOARD_COLUMNS, JOB_STATUS_LABELS } from "@/domain/jobs/types";
+import { BOARD_COLUMNS, boardStatus, JOB_STATUS_LABELS } from "@/domain/jobs/types";
 import { requirePermission } from "@/lib/auth/dal";
 import { cn } from "@/lib/utils";
 
@@ -181,6 +181,7 @@ function JobCard({ row }: { row: JobListRow }) {
           <strong className="font-mono text-xs">{row.number}</strong>
           {row.status === "data_issue" ||
           row.status === "rework" ||
+          row.status === "on_hold" ||
           row.status === "data_received" ? (
             <StatusBadge tone={statusTone(row.status)}>{JOB_STATUS_LABELS[row.status]}</StatusBadge>
           ) : null}
@@ -204,7 +205,7 @@ function JobCard({ row }: { row: JobListRow }) {
 function Board({ rows }: { rows: JobListRow[] }) {
   const columns = BOARD_COLUMNS.map((c) => ({
     ...c,
-    rows: rows.filter((r) => c.statuses.includes(r.status)),
+    rows: rows.filter((r) => c.statuses.includes(boardStatus(r.status, r.heldFrom))),
   }));
   const finished = rows.filter((r) => r.status === "closed" || r.status === "cancelled");
   return (

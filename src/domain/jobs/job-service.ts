@@ -678,6 +678,59 @@ export async function updateStudy(
   });
 }
 
+/**
+ * Prices every study again from today's rate card, for a job still being
+ * planned (a rate added or changed after the job was made). Returns how many
+ * prices changed and how many studies still have no rate.
+ */
+export async function repriceJob(
+  db: Database,
+  actor: SessionUser,
+  jobId: string,
+  request?: RequestInfo,
+): Promise<{ changed: number; unpriced: number }> {
+  assertCan(actor, "jobs.manage");
+  assertCan(actor, "jobs.money");
+  return db.transaction(async (tx) => {
+    const job = await lockJob(tx, actor, jobId);
+    assertPlanning(job, "Prices");
+    const rates = await activeRates(tx, actor.organisationId);
+    const rows = await tx
+      .select({ study: studies, e: equipment })
+      .from(studies)
+      .innerJoin(equipment, eq(equipment.id, studies.equipmentId))
+      .where(eq(studies.jobId, job.id));
+    const before: Record<string, string | null> = {};
+    const after: Record<string, string | null> = {};
+    let unpriced = 0;
+    for (const { study, e } of rows) {
+      const p = priceFor(rates, { ...e, department: null }, study);
+      const price = toNumeric(p.price);
+      if (p.price === null) unpriced++;
+      if (Number(study.price ?? NaN) === Number(price ?? NaN) && study.priceNote === p.note)
+        continue;
+      before[e.code] = study.price;
+      after[e.code] = price;
+      await tx.update(studies).set({ price, priceNote: p.note }).where(eq(studies.id, study.id));
+    }
+    const changed = Object.keys(after).length;
+    if (changed > 0) {
+      await recordAudit(tx, {
+        organisationId: actor.organisationId,
+        actor: user(actor),
+        action: "job.updated",
+        entityType: "job",
+        entityId: job.id,
+        summary: `${actor.name} priced job ${job.number} from the rate card (${changed} changed)`,
+        before,
+        after,
+        request,
+      });
+    }
+    return { changed, unpriced };
+  });
+}
+
 export async function removeStudy(
   db: Database,
   actor: SessionUser,

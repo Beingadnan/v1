@@ -1,6 +1,7 @@
 "use client";
 
 import { Pencil, Plus, Trash2 } from "lucide-react";
+import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -121,20 +122,33 @@ function RateForm({ rate, close }: { rate?: RateValues; close: () => void }) {
   );
 }
 
+/** Removing a rate can't be undone (it can only be added again), so it asks first. */
 export function RetireRateButton({ id }: { id: string }) {
   const { result, pending, onSubmit } = useFormAction(retireRateAction);
-  return (
-    <form onSubmit={onSubmit} className="inline">
-      <input type="hidden" name="rateId" value={id} />
+  const [asking, setAsking] = useState(false);
+  if (!asking) {
+    return (
       <Button
-        type="submit"
+        type="button"
         variant="ghost"
         size="sm"
-        disabled={pending}
+        onClick={() => setAsking(true)}
         aria-label="Remove this rate"
-        title={result && !result.ok ? result.error : "Remove this rate"}
+        title="Remove this rate"
       >
         <Trash2 aria-hidden="true" />
+      </Button>
+    );
+  }
+  return (
+    <form onSubmit={onSubmit} className="inline-flex items-center gap-1">
+      <input type="hidden" name="rateId" value={id} />
+      <span className="text-xs">{result && !result.ok ? result.error : "Remove?"}</span>
+      <Button type="submit" variant="danger" size="sm" disabled={pending}>
+        {pending ? "Removing…" : "Yes"}
+      </Button>
+      <Button type="button" variant="ghost" size="sm" onClick={() => setAsking(false)}>
+        No
       </Button>
     </form>
   );

@@ -10,7 +10,7 @@ import {
 } from "./readiness";
 import { defaultLoggerCount, defaultWorkType, seasonFor, uniqueReportNumber } from "./studies";
 import { money } from "./schemas";
-import { canTransition } from "./types";
+import { boardStatus, canTransition } from "./types";
 
 const cert = (calibratedOn: string, validUntil: string | null, status = "issued") => ({
   id: `c-${calibratedOn}`,
@@ -38,7 +38,7 @@ describe("validThrough", () => {
     expect(validThrough(logger("A", "2027-02-28"), "2026-11-02", "2026-11-05").ok).toBe(true);
     expect(validThrough(logger("A", "2026-11-04"), "2026-11-02", "2026-11-05")).toEqual({
       ok: false,
-      reason: "A is due on 04.11.2026",
+      reason: "A is valid only until 04.11.2026",
     });
     expect(validThrough(logger("A", null), "2026-11-02", "2026-11-05").ok).toBe(true);
     expect(
@@ -71,6 +71,15 @@ describe("computeReadiness", () => {
   const state = (r: ReturnType<typeof computeReadiness>, key: string) =>
     r.items.find((i) => i.key === key)!;
 
+  it("keeps a person's note apart from the help text", () => {
+    const ticked = computeReadiness({
+      ...base,
+      manual: { protocol: { state: "ready", note: "" } },
+    });
+    expect(state(ticked, "protocol")).toMatchObject({ state: "ready", note: "" });
+    expect(state(ticked, "protocol").detail).toMatch(/^The client's or QA Tech's mapping protocol/);
+  });
+
   it("starts pending and becomes ready when everything is in place", () => {
     const first = computeReadiness(base);
     expect(first.ready).toBe(false);
@@ -101,7 +110,7 @@ describe("computeReadiness", () => {
     });
     expect(state(r, "loggers_valid").state).toBe("pending");
     expect(state(r, "loggers_valid").detail).toBe(
-      "Not valid through the study: T2 is due on 03.11.2026; T3 is due on 01.10.2026.",
+      "Not valid through the study: T2 is valid only until 03.11.2026; T3 is valid only until 01.10.2026.",
     );
   });
 
@@ -192,8 +201,8 @@ describe("pickInstruments", () => {
     expect(r.picked.map((p) => p.code)).toEqual(["T-1", "T-2", "T-10"]);
     expect(r.short).toBe(0);
     expect(r.skipped).toEqual([
-      { reason: "booked on another job", count: 1 },
-      { reason: "calibration runs out before the study ends", count: 1 },
+      { reason: "on another job on these dates", count: 1 },
+      { reason: "not calibrated through these dates", count: 1 },
       { reason: "not in use", count: 1 },
     ]);
   });
@@ -368,16 +377,34 @@ describe("transitions", () => {
     expect(canTransition("cancelled", "hold")).toBe(false);
     expect(canTransition("on_hold", "resume")).toBe(true);
   });
+
+  it("keeps a held job on the board where it stopped", () => {
+    expect(boardStatus("on_hold", "field_work")).toBe("field_work");
+    expect(boardStatus("on_hold", null)).toBe("created");
+    expect(boardStatus("ready", null)).toBe("ready");
+  });
 });
 
 describe("money", () => {
   it("reads rupees the way people type them", () => {
     const m = money("PO value");
     expect(
-      ["₹1,25,000", "Rs. 18,000/-", "INR 4500.50", " 650 ", ""].map((v) => m.parse(v)),
-    ).toEqual([125000, 18000, 4500.5, 650, null]);
-    expect(() => m.parse("1.25 lakh")).toThrow("PO value must be an amount in rupees.");
-    expect(() => m.parse("-5")).toThrow("can't be negative");
+      [
+        "₹1,25,000",
+        "Rs. 18,000/-",
+        "INR 4500.50",
+        " 650 ",
+        "",
+        "15k",
+        "1.5 lakh",
+        "2.25L",
+        "1 cr",
+        "rs 3 lacs",
+      ].map((v) => m.parse(v)),
+    ).toEqual([125000, 18000, 4500.5, 650, null, 15000, 150000, 225000, 10000000, 300000]);
+    expect(() => m.parse("about 15000")).toThrow("PO value must be an amount in rupees");
+    expect(() => m.parse("15 apples")).toThrow("PO value must be an amount in rupees");
+    expect(() => m.parse("-5")).toThrow("must be an amount");
   });
 });
 

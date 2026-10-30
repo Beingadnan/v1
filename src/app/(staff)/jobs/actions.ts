@@ -11,6 +11,7 @@ import {
   createJob,
   releaseInstruments,
   removeStudy,
+  repriceJob,
   retireRateLine,
   saveRateLine,
   setReadiness,
@@ -218,6 +219,18 @@ export async function removeStudyAction(_prev: unknown, formData: FormData): Pro
     async () => removeStudy(db, actor, field(formData, "studyId"), await getRequestInfo()),
     "Removed.",
   );
+  if (result.ok) refresh(jobId);
+  return result;
+}
+
+export async function repriceAction(
+  _prev: unknown,
+  formData: FormData,
+): Promise<ActionResult<{ changed: number; unpriced: number }>> {
+  const actor = await userForAction();
+  if (!actor) return { ok: false, error: SESSION_ENDED };
+  const jobId = field(formData, "jobId");
+  const result = await runAction(async () => repriceJob(db, actor, jobId, await getRequestInfo()));
   if (result.ok) refresh(jobId);
   return result;
 }
