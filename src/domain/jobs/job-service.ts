@@ -170,7 +170,7 @@ export async function readinessInputFor(
   };
 }
 
-async function setStatus(
+export async function setStatus(
   tx: Transaction,
   actor: SessionUser,
   job: Job,
@@ -993,7 +993,7 @@ async function insertBookings(tx: Transaction, actor: SessionUser, jobId: string
  * One booking at a time per organisation: two people booking for overlapping
  * jobs at the same moment would otherwise both see a logger as free.
  */
-async function lockBookings(tx: Transaction, organisationId: string) {
+export async function lockBookings(tx: Transaction, organisationId: string) {
   await tx.execute(
     sql`select pg_advisory_xact_lock(hashtext(${`job-bookings:${organisationId}`}))`,
   );
