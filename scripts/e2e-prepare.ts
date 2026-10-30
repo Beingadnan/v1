@@ -12,7 +12,7 @@ import { ensureQatechDefaults } from "@/db/seed/qatech-defaults";
 import { bootstrapAdmin, inviteUser, setPasswordWithToken } from "@/domain/auth/account-service";
 import { toSessionUser } from "@/domain/auth/session-service";
 
-import { seedFieldJob } from "./e2e-field-fixture";
+import { seedDataJob, seedFieldJob } from "./e2e-field-fixture";
 
 export const E2E_USERS = {
   admin: { email: "admin@e2e.test", name: "Asha Admin", password: "calibrated sensor chain 1" },
@@ -103,6 +103,11 @@ async function main(): Promise<void> {
     }
     // A job ready for field work (phase 5 exit test).
     await seedFieldJob(db, {
+      manager: E2E_USERS.manager.email,
+      lead: E2E_USERS.lead.email,
+      engineer: E2E_USERS.engineer.email,
+    });
+    await seedDataJob(db, {
       manager: E2E_USERS.manager.email,
       lead: E2E_USERS.lead.email,
       engineer: E2E_USERS.engineer.email,

@@ -15,6 +15,7 @@ import {
   organisationSettings,
   storedFiles,
   studies,
+  studyDataRequests,
   studyEvents,
   studyPhotos,
   studyPositions,
@@ -53,6 +54,9 @@ export type MyStudy = {
   placed: number;
   loggerCount: number;
   today: boolean;
+  dataStatus: string;
+  /** The oldest open request for data, if the office is waiting on the site. */
+  request: string | null;
 };
 
 /**
@@ -64,7 +68,8 @@ export async function myStudies(
   actor: SessionUser,
   options: { everyone?: boolean } = {},
 ): Promise<MyStudy[]> {
-  assertCan(actor, "field.perform");
+  // Engineers on site, and whoever sends the data in (often a preparer in the office).
+  assertCan(actor, "data.import");
   const everyone = options.everyone && can(actor, "jobs.manage");
   const rows = await db
     .select({
@@ -83,6 +88,10 @@ export async function myStudies(
       loggerCount: studies.loggerCount,
       positions: sql<number>`(select count(*)::int from ${studyPositions} p where p.study_id = ${studies.id})`,
       placed: sql<number>`(select count(*)::int from ${studyPositions} p where p.study_id = ${studies.id} and p.instrument_id is not null)`,
+      dataStatus: studies.dataStatus,
+      request: sql<
+        string | null
+      >`(select r.note from ${studyDataRequests} r where r.study_id = ${studies.id} and r.closed_at is null order by r.requested_at limit 1)`,
     })
     .from(studies)
     .innerJoin(jobs, eq(jobs.id, studies.jobId))
@@ -108,8 +117,8 @@ export async function myStudies(
     jobStatus: r.jobStatus as JobStatus,
     today: r.plannedStart <= today && r.plannedEnd >= today,
   }));
-  // Today's first, then by date; finished studies last.
-  const rank = (s: MyStudy) => (s.status === "completed" ? 2 : s.today ? 0 : 1);
+  // Data asked for first, then today's, then by date; finished studies last.
+  const rank = (s: MyStudy) => (s.request ? -1 : s.status === "completed" ? 2 : s.today ? 0 : 1);
   return mapped.sort((a, b) => rank(a) - rank(b));
 }
 

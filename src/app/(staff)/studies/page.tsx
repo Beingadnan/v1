@@ -16,7 +16,7 @@ export const metadata = { title: "My studies" };
 const dmy = (iso: string) => iso.split("-").reverse().join(".");
 
 export default async function StudiesPage({ searchParams }: PageProps<"/studies">) {
-  const actor = await requirePermission("field.perform");
+  const actor = await requirePermission("data.import");
   const everyone = (await searchParams).all === "1" && can(actor, "jobs.manage");
   const rows = await myStudies(db, actor, { everyone });
   const today = rows.filter((r) => r.today && r.status !== "completed");
@@ -27,7 +27,7 @@ export default async function StudiesPage({ searchParams }: PageProps<"/studies"
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
       <PageHeader
         title={everyone ? "All studies on site" : "My studies"}
-        description="Studies of jobs that are ready or in field work. Open one to place loggers, record times and take photos."
+        description="Studies of jobs that are ready, in field work or waiting for data. Open one to place loggers, record times, take photos and send in the logger data."
       />
       {can(actor, "jobs.manage") ? (
         <nav aria-label="Show" className="flex gap-1 text-sm">
@@ -79,7 +79,11 @@ function Group({ title, rows }: { title: string; rows: MyStudy[] }) {
         {rows.map((r) => (
           <li key={r.id}>
             <Link
-              href={`/studies/${r.id}`}
+              href={
+                r.request || r.dataStatus === "issues"
+                  ? `/studies/${r.id}?tab=data`
+                  : `/studies/${r.id}`
+              }
               className="flex flex-col gap-1 rounded-lg border border-border bg-surface p-4 hover:border-primary"
             >
               <span className="flex items-center justify-between gap-2">
@@ -101,6 +105,13 @@ function Group({ title, rows }: { title: string; rows: MyStudy[] }) {
                 {r.companyName} · {r.siteName}
                 {r.department ? ` · ${r.department}` : ""}
               </span>
+              {r.request ? (
+                <span className="rounded-md bg-attention-soft px-2 py-1 text-sm text-attention">
+                  Data needed: {r.request}
+                </span>
+              ) : r.dataStatus === "issues" ? (
+                <span className="text-sm text-fail">The data has problems: see Data.</span>
+              ) : null}
               <span className="text-xs text-muted-foreground">
                 {r.jobNumber} · {dmy(r.plannedStart)}
                 {r.plannedEnd !== r.plannedStart ? `–${dmy(r.plannedEnd)}` : ""} ·{" "}

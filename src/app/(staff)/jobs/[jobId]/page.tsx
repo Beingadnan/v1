@@ -55,6 +55,13 @@ export async function generateMetadata({ params }: PageProps<"/jobs/[jobId]">) {
 
 const dmy = (iso: string | null) => (iso ? iso.split("-").reverse().join(".") : "");
 
+const DATA_LABEL: Record<string, string> = {
+  none: "Data: not in",
+  issues: "Data: problems",
+  checked: "Data: checked",
+  received: "Data: received ✓",
+};
+
 export default async function JobPage({ params }: PageProps<"/jobs/[jobId]">) {
   const actor = await requirePermission("jobs.view");
   const { jobId } = await params;
@@ -367,6 +374,17 @@ export default async function JobPage({ params }: PageProps<"/jobs/[jobId]">) {
                     <Link href={`/studies/${s.id}`} className="text-primary hover:underline">
                       Field work
                     </Link>
+                    {s.status !== "planned" ? (
+                      <Link
+                        href={`/studies/${s.id}?tab=data`}
+                        className={cn(
+                          "hover:underline",
+                          s.dataStatus === "issues" ? "text-fail" : "text-primary",
+                        )}
+                      >
+                        {DATA_LABEL[s.dataStatus] ?? "Data"}
+                      </Link>
+                    ) : null}
                     <a
                       href={`/studies/${s.id}/ft12`}
                       target="_blank"

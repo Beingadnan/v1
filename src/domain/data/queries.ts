@@ -137,7 +137,10 @@ export async function getStudyData(db: Database, actor: SessionUser, studyId: st
   const preview = first
     ? {
         file: first.fileName,
-        columns: ctx.channels.filter((c) => c.fileId === first.id).slice(0, 12),
+        columns: ctx.channels
+          .filter((c) => c.fileId === first.id)
+          .slice(0, 12)
+          .map((c) => ({ id: c.id, header: c.header, values: c.values.slice(0, 8) })),
         rows: first.times.slice(0, 8).map((t, i) => ({ t, i })),
       }
     : null;

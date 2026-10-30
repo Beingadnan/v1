@@ -47,7 +47,7 @@ export const navigation: NavGroup[] = [
         href: "/studies",
         icon: ThermometerSnowflake,
         availableFromPhase: 5,
-        permission: "field.perform",
+        permission: "data.import",
       },
       { label: "Reports", href: "/reports", icon: FileText, availableFromPhase: 8 },
       { label: "Reviews", href: "/reviews", icon: ClipboardCheck, availableFromPhase: 9 },

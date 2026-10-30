@@ -5,12 +5,14 @@ import { notFound } from "next/navigation";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { db } from "@/db/client";
 import { can } from "@/domain/auth/permissions";
+import { getStudyData } from "@/domain/data/queries";
 import { getFieldStudy } from "@/domain/field/queries";
 import { STUDY_STATUS_LABELS } from "@/domain/field/types";
 import { WORK_TYPE_LABELS, type WorkType } from "@/domain/jobs/types";
 import { requirePermission } from "@/lib/auth/dal";
 import { cn } from "@/lib/utils";
 
+import { DataPanel } from "./data-panel";
 import { LayoutEditor } from "./layout-editor";
 import { RoomSize } from "./room-size";
 import { LoggerPanel } from "./logger-panel";
@@ -26,6 +28,7 @@ const TABS = [
   { key: "precal", label: "Pre-cal" },
   { key: "times", label: "Times" },
   { key: "photos", label: "Photos" },
+  { key: "data", label: "Data" },
 ] as const;
 type Tab = (typeof TABS)[number]["key"];
 
@@ -46,9 +49,18 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
       ? "layout"
       : placed < s.positions.length && !done
         ? "loggers"
-        : "times";
+        : done
+          ? "data"
+          : "times";
   const asked = (await searchParams).tab;
   const tab: Tab = TABS.some((t) => t.key === asked) ? (asked as Tab) : suggested;
+  const data = tab === "data" ? await getStudyData(db, actor, studyId) : null;
+  const DATA_MARK: Record<string, string> = {
+    none: "—",
+    issues: "!",
+    checked: "✓?",
+    received: "✓",
+  };
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
@@ -102,9 +114,11 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
                 ? `${placed}/${s.positions.length}`
                 : t.key === "photos"
                   ? s.photos.length
-                  : t.key === "precal"
-                    ? s.precal.length
-                    : `${s.cycles.filter((c) => c.done).length}/${s.cycles.length}`;
+                  : t.key === "data"
+                    ? (DATA_MARK[s.study.dataStatus] ?? "")
+                    : t.key === "precal"
+                      ? s.precal.length
+                      : `${s.cycles.filter((c) => c.done).length}/${s.cycles.length}`;
           return (
             <Link
               key={t.key}
@@ -185,6 +199,10 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
           plannedStart={s.job.plannedStart}
           plannedEnd={s.job.plannedEnd}
         />
+      ) : tab === "data" ? (
+        data ? (
+          <DataPanel data={data} />
+        ) : null
       ) : (
         <PhotosPanel
           studyId={studyId}
