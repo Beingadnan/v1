@@ -188,6 +188,7 @@ export const studies = pgTable(
     check("studies_work_type_check", sql`${t.workType} in (${list(WORK_TYPES)})`),
     check("studies_season_check", sql`${t.season} in (${list(SEASONS)})`),
     check("studies_loggers_check", sql`${t.loggerCount} between 0 and 500`),
+    check("studies_status_check", sql`${t.status} in ('planned', 'in_progress', 'completed')`),
   ],
 );
 

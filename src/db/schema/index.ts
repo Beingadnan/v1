@@ -1,5 +1,6 @@
 export * from "./audit-log";
 export * from "./clients";
+export * from "./field";
 export * from "./instruments";
 export * from "./jobs";
 export * from "./organisations";

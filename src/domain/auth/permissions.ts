@@ -25,6 +25,7 @@ export const ACTIONS = [
   "jobs.manage",
   "jobs.money",
   "ratecard.manage",
+  "field.perform",
 ] as const;
 
 export type Action = (typeof ACTIONS)[number];
@@ -51,6 +52,7 @@ const MATRIX: Record<Role, ReadonlySet<Action>> = {
     "jobs.manage",
     "jobs.money",
     "ratecard.manage",
+    "field.perform",
     ...FIELD_AND_OFFICE,
   ]),
   team_leader: new Set<Action>([
@@ -60,10 +62,12 @@ const MATRIX: Record<Role, ReadonlySet<Action>> = {
     "calibration.check",
     "jobs.manage",
     "jobs.money",
+    "field.perform",
     ...FIELD_AND_OFFICE,
   ]),
   report_preparer: new Set<Action>(["calibration.perform", ...FIELD_AND_OFFICE]),
-  field_engineer: new Set<Action>(FIELD_AND_OFFICE),
+  // Engineers place loggers, record times and take photos on site.
+  field_engineer: new Set<Action>(["field.perform", ...FIELD_AND_OFFICE]),
   // The lab calibrates the fleet and keeps master certificates current.
   lab: new Set<Action>(["instruments.manage", "calibration.perform", ...FIELD_AND_OFFICE]),
   // Accounts follow jobs to raise invoices; they see the money, not the work tools.

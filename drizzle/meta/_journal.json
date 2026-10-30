@@ -78,6 +78,13 @@
       "when": 1793291391438,
       "tag": "0010_jobs",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1793330929741,
+      "tag": "0011_field_work",
+      "breakpoints": true
     }
   ]
 }
