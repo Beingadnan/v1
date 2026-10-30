@@ -512,7 +512,7 @@ export function planInstrumentImport(
     if (sameSerial && (!existing || existing.id !== sameSerial.id)) {
       // The serial is the physical logger: keep its history under the ID already registered.
       plan.problems.push(
-        `${o.where}: serial ${o.serialNo} is registered as ${sameSerial.code}; this file calls it ${o.code}. Its records were added to ${sameSerial.code}.`,
+        `${o.where}: serial ${o.serialNo} is registered as ${sameSerial.code}; this file calls it ${o.code}. Its records go to ${sameSerial.code}; the registered ID is kept.`,
       );
       if (!counted.has(sameSerial.id)) plan.alreadyRegistered += 1;
       counted.add(sameSerial.id);
