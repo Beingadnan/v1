@@ -198,3 +198,18 @@ export function isJobStatus(v: unknown): v is JobStatus {
 export function isWorkType(v: unknown): v is WorkType {
   return typeof v === "string" && (WORK_TYPES as readonly string[]).includes(v);
 }
+
+/** People on a job and what they do on it. */
+export const TEAM_ROLES = [
+  "team_leader",
+  "field_engineer",
+  "data_provider",
+  "report_preparer",
+] as const;
+export type TeamRole = (typeof TEAM_ROLES)[number];
+export const TEAM_ROLE_LABELS: Record<TeamRole, string> = {
+  team_leader: "Team leader",
+  field_engineer: "Field engineer",
+  data_provider: "Data provider",
+  report_preparer: "Report preparer",
+};

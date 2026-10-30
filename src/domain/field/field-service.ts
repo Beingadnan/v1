@@ -41,6 +41,8 @@ import type { BlobStore } from "@/lib/storage/blob-store";
 import { storeFile } from "@/lib/storage/store-file";
 import { shortList } from "@/lib/text";
 
+import { recheckIfData } from "@/domain/data/data-service";
+
 import { FieldError } from "./errors";
 import { parseRoomSize, templateLayout } from "./layout";
 import { evaluatePrecal } from "./precal";
@@ -87,7 +89,7 @@ function assertJob(job: Job, allowed: readonly JobStatus[], what: string) {
   }
 }
 
-function cyclesOf(study: Study): CycleKey[] {
+export function cyclesOf(study: Pick<Study, "cycles">): CycleKey[] {
   return study.cycles.length > 0 ? (study.cycles as StudyCycle[]) : [ROUTINE];
 }
 
@@ -463,6 +465,7 @@ const eventSchema = z.object({
 export function cycleProgress<E extends { cycle: string; kind: string; at: Date; voided: boolean }>(
   cycles: CycleKey[],
   events: E[],
+  thermal = false,
 ) {
   return cycles.map((cycle) => {
     const mine = events
@@ -471,13 +474,16 @@ export function cycleProgress<E extends { cycle: string; kind: string; at: Date;
     const first = (k: EventKind) => mine.find((e) => e.kind === k)?.at ?? null;
     const done = new Set(mine.map((e) => e.kind));
     const next =
-      markersFor(cycle).find((k) => !done.has(k) || k === "door_opened" || k === "power_off") ??
-      null;
+      markersFor(cycle, thermal).find(
+        (k) => !done.has(k) || k === "door_opened" || k === "power_off",
+      ) ?? null;
     return {
       cycle,
       label: cycleLabel(cycle),
       startedAt: first("start"),
       endedAt: first("end"),
+      holdStartedAt: first("hold_start"),
+      holdEndedAt: first("hold_end"),
       done: done.has("end"),
       events: mine,
       next: done.has("end") ? null : done.has("start") ? next : "start",
@@ -501,7 +507,9 @@ async function syncStudyStatus(
     .select()
     .from(studyEvents)
     .where(eq(studyEvents.studyId, loaded.study.id));
-  const status = statusFrom(cycleProgress(cyclesOf(loaded.study), events));
+  const status = statusFrom(
+    cycleProgress(cyclesOf(loaded.study), events, loaded.study.workType === "thermal_validation"),
+  );
   if (status === loaded.study.status) return status;
   await tx.update(studies).set({ status }).where(eq(studies.id, loaded.study.id));
   await recordAudit(tx, {
@@ -547,7 +555,8 @@ export async function recordEvent(
     if (!cycles.includes(v.cycle as CycleKey))
       throw new FieldError("That cycle isn't part of this study.");
     const cycle = v.cycle as CycleKey;
-    if (!markersFor(cycle).includes(v.kind as EventKind)) {
+    const thermal = study.workType === "thermal_validation";
+    if (!markersFor(cycle, thermal).includes(v.kind as EventKind)) {
       throw new FieldError(`${cycleLabel(cycle)} has no "${v.kind}" marker.`);
     }
     const kind = v.kind as EventKind;
@@ -557,7 +566,7 @@ export async function recordEvent(
       throw new FieldError("That time is more than 30 days ago.");
 
     const events = await tx.select().from(studyEvents).where(eq(studyEvents.studyId, study.id));
-    const progress = cycleProgress(cycles, events).find((c) => c.cycle === cycle)!;
+    const progress = cycleProgress(cycles, events, thermal).find((c) => c.cycle === cycle)!;
     if (kind === "start") {
       if (progress.startedAt) throw new FieldError(`${progress.label} has already started.`);
       const positions = await tx
@@ -605,6 +614,17 @@ export async function recordEvent(
         const closes = progress.events.filter((x) => x.kind === kind).length;
         if (opens <= closes) throw new FieldError(`Record "${EVENT_LABELS[opener]}" first.`);
       }
+      // The hold (F0 window) opens once and closes once, inside the cycle.
+      const live = progress.events;
+      const holdStarted = live.some((x) => x.kind === "hold_start");
+      const holdEnded = live.some((x) => x.kind === "hold_end");
+      if (kind === "hold_start" && holdStarted)
+        throw new FieldError("The hold has already started.");
+      if (kind === "hold_end" && !holdStarted)
+        throw new FieldError(`Record "${EVENT_LABELS.hold_start}" first.`);
+      if (kind === "hold_end" && holdEnded) throw new FieldError("The hold has already ended.");
+      if (kind === "end" && holdStarted && !holdEnded)
+        throw new FieldError(`Record "${EVENT_LABELS.hold_end}" before ending.`);
       if (kind === "end") {
         const opens = progress.events.filter(
           (x) => x.kind === "door_opened" || x.kind === "power_off",
@@ -637,6 +657,7 @@ export async function recordEvent(
       request,
     });
     const status = await syncStudyStatus(tx, actor, loaded, request);
+    await recheckIfData(tx, actor, study.id);
     return { status, duplicate: false };
   });
 }
@@ -689,6 +710,7 @@ export async function voidEvent(
       request,
     });
     await syncStudyStatus(tx, actor, loaded, request);
+    await recheckIfData(tx, actor, loaded.study.id);
   });
 }
 

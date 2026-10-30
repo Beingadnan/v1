@@ -22,6 +22,7 @@ import {
   RATE_BASES,
   READINESS_ITEMS,
   SEASONS,
+  TEAM_ROLES,
   WORK_TYPES,
 } from "@/domain/jobs/types";
 
@@ -165,6 +166,10 @@ export const studies = pgTable(
     /** Rate-card line price at creation (null when no line matched). */
     price: numeric("price", { precision: 12, scale: 2 }),
     priceNote: text("price_note").notNull().default(""),
+    /** Phase 6: none → issues / checked → received (a person's decision). */
+    dataStatus: text("data_status").notNull().default("none"),
+    dataReceivedAt: timestamp("data_received_at", { withTimezone: true }),
+    dataReceivedByUserId: uuid("data_received_by_user_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -189,6 +194,10 @@ export const studies = pgTable(
     check("studies_season_check", sql`${t.season} in (${list(SEASONS)})`),
     check("studies_loggers_check", sql`${t.loggerCount} between 0 and 500`),
     check("studies_status_check", sql`${t.status} in ('planned', 'in_progress', 'completed')`),
+    check(
+      "studies_data_status_check",
+      sql`${t.dataStatus} in ('none', 'issues', 'checked', 'received')`,
+    ),
   ],
 );
 
@@ -214,10 +223,7 @@ export const jobTeam = pgTable(
       foreignColumns: [users.id, users.organisationId],
     }).onDelete("restrict"),
     index("job_team_user_idx").on(t.userId),
-    check(
-      "job_team_role_check",
-      sql`${t.role} in ('team_leader', 'field_engineer', 'report_preparer')`,
-    ),
+    check("job_team_role_check", sql`${t.role} in (${list(TEAM_ROLES)})`),
   ],
 );
 

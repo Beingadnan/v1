@@ -16,7 +16,14 @@
  */
 import type { EquipmentType } from "./equipment-types";
 
-export const STUDY_CYCLES = ["empty", "loaded", "door_open", "power_failure"] as const;
+export const STUDY_CYCLES = [
+  "empty",
+  "loaded",
+  "door_open",
+  "power_failure",
+  "min_load",
+  "max_load",
+] as const;
 export type StudyCycle = (typeof STUDY_CYCLES)[number];
 
 export const STUDY_CYCLE_LABELS: Record<StudyCycle, string> = {
@@ -24,6 +31,8 @@ export const STUDY_CYCLE_LABELS: Record<StudyCycle, string> = {
   loaded: "Loaded",
   door_open: "Door open",
   power_failure: "Power failure",
+  min_load: "Minimum load",
+  max_load: "Maximum load",
 };
 
 export type TypeDefaults = {

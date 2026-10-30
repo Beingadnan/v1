@@ -267,7 +267,7 @@ export async function getFieldStudy(db: Database, actor: SessionUser, studyId: s
         : null;
       return { ...p, x: Number(p.x), y: Number(p.y), z: Number(p.z), certificate: cover };
     }),
-    cycles: cycleProgress(cycles, events),
+    cycles: cycleProgress(cycles, events, study.workType === "thermal_validation"),
     events,
     precal,
     photos,

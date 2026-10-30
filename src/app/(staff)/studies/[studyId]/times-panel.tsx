@@ -65,6 +65,7 @@ export function TimesPanel({
   durationHours,
   plannedStart,
   plannedEnd,
+  thermal = false,
 }: {
   studyId: string;
   cycles: Cycle[];
@@ -74,6 +75,8 @@ export function TimesPanel({
   /** The job's planned days, "YYYY-MM-DD"; loggers were checked for these. */
   plannedStart: string;
   plannedEnd: string;
+  /** Autoclave / oven / SIP: every cycle has a hold start and end. */
+  thermal?: boolean;
 }) {
   const router = useRouter();
   const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null);
@@ -263,11 +266,16 @@ export function TimesPanel({
             {!readOnly && !c.done ? (
               <div className="flex flex-col gap-2">
                 <div className="grid gap-2 sm:grid-cols-2">
-                  {markersFor(c.cycle)
+                  {markersFor(c.cycle, thermal)
                     .filter((k) => {
                       if (!c.startedAt) return k === "start";
                       if (k === "start") return false;
                       const live = c.events.filter((e) => !e.voided);
+                      const holdOn = live.some((e) => e.kind === "hold_start");
+                      const holdOff = live.some((e) => e.kind === "hold_end");
+                      if (k === "hold_start") return !holdOn;
+                      if (k === "hold_end") return holdOn && !holdOff;
+                      if (k === "end" && holdOn && !holdOff) return false;
                       const opened =
                         live.filter((e) => e.kind === "door_opened").length -
                         live.filter((e) => e.kind === "door_closed").length;

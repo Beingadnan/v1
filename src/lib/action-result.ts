@@ -7,6 +7,7 @@ import { ForbiddenError } from "@/domain/auth/permissions";
 import { SettingsError } from "@/domain/admin/settings-service";
 import { ClientsError } from "@/domain/clients/errors";
 import { InstrumentsError } from "@/domain/instruments/errors";
+import { DataError } from "@/domain/data/errors";
 import { FieldError } from "@/domain/field/errors";
 import { JobsError } from "@/domain/jobs/errors";
 
@@ -41,7 +42,8 @@ export async function runAction<T>(
       error instanceof ClientsError ||
       error instanceof InstrumentsError ||
       error instanceof JobsError ||
-      error instanceof FieldError
+      error instanceof FieldError ||
+      error instanceof DataError
     ) {
       return { ok: false, error: error.message };
     }

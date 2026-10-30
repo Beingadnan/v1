@@ -64,13 +64,8 @@ const optionalInt = (label: string, min: number, max: number) =>
       .nullable(),
   );
 
-export const TEAM_ROLES = ["team_leader", "field_engineer", "report_preparer"] as const;
-export type TeamRole = (typeof TEAM_ROLES)[number];
-export const TEAM_ROLE_LABELS: Record<TeamRole, string> = {
-  team_leader: "Team leader",
-  field_engineer: "Field engineer",
-  report_preparer: "Report preparer",
-};
+export { TEAM_ROLES, TEAM_ROLE_LABELS, type TeamRole } from "./types";
+import { TEAM_ROLES } from "./types";
 
 const teamSchema = z
   .array(z.object({ userId: uuid("Pick a person."), role: z.enum(TEAM_ROLES) }))
