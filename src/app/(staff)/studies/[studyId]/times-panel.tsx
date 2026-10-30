@@ -2,7 +2,7 @@
 
 import { Clock } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useState, useTransition } from "react";
+import { useCallback, useState, useSyncExternalStore, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/form-controls";
@@ -63,12 +63,17 @@ export function TimesPanel({
   canStart,
   readOnly,
   durationHours,
+  plannedStart,
+  plannedEnd,
 }: {
   studyId: string;
   cycles: Cycle[];
   canStart: boolean;
   readOnly: boolean;
   durationHours: number | null;
+  /** The job's planned days, "YYYY-MM-DD"; loggers were checked for these. */
+  plannedStart: string;
+  plannedEnd: string;
 }) {
   const router = useRouter();
   const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null);
@@ -157,6 +162,9 @@ export function TimesPanel({
           Place a logger at every position before starting (or remove the empty positions in
           Layout).
         </p>
+      ) : null}
+      {!readOnly && cycles.some((c) => !c.startedAt) ? (
+        <OutsideDates plannedStart={plannedStart} plannedEnd={plannedEnd} />
       ) : null}
       {cycles.map((c) => {
         const waiting = queued.filter((q) => q.kind === "event" && q.payload.cycle === c.cycle);
@@ -327,5 +335,27 @@ export function TimesPanel({
         </p>
       ) : null}
     </div>
+  );
+}
+
+const dmy = (iso: string) => iso.split("-").reverse().join(".");
+
+/**
+ * Warns when the work is happening on a day outside the job's planned dates:
+ * loggers were checked against those dates, and the report will show them.
+ */
+function OutsideDates({ plannedStart, plannedEnd }: { plannedStart: string; plannedEnd: string }) {
+  const today = useSyncExternalStore(
+    () => () => {},
+    () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date()),
+    () => null,
+  );
+  if (!today || (today >= plannedStart && today <= plannedEnd)) return null;
+  return (
+    <p role="note" className="rounded-md bg-attention-soft px-3 py-2 text-sm text-attention">
+      This job is planned for {dmy(plannedStart)} to {dmy(plannedEnd)}, and today is {dmy(today)}.
+      If the work really is today, ask the team leader to move the job&apos;s dates first: that
+      rechecks every logger&apos;s calibration for the new days.
+    </p>
   );
 }

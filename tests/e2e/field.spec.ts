@@ -60,7 +60,11 @@ test("phase 5 exit test: on a phone, an engineer places 9 loggers for the freeze
     await box.press("Enter");
   }
   await expect(page.getByRole("button", { name: /Placing… \(3\)/ })).toBeVisible();
-  await expect(page.getByText(/placed at L-01\..*NOPE-1: .*placed at L-02\./)).toBeVisible({
+  await expect(
+    page.getByText(
+      /placed at L-01\..*NOPE-1 is not in the instrument register\..*placed at L-02\./,
+    ),
+  ).toBeVisible({
     timeout: 15_000,
   });
   await page.unroute("**/studies/**", slow);

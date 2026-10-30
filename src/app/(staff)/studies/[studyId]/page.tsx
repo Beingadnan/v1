@@ -181,6 +181,8 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
           canStart={s.positions.length > 0 && placed === s.positions.length}
           durationHours={s.study.durationHours}
           cycles={s.cycles}
+          plannedStart={s.job.plannedStart}
+          plannedEnd={s.job.plannedEnd}
         />
       ) : (
         <PhotosPanel

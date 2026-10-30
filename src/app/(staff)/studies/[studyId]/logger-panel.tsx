@@ -126,7 +126,9 @@ export function LoggerPanel({
         };
       }
       if ("vibrate" in navigator) navigator.vibrate?.([80, 60, 80]);
-      return { ok: false, text: `${c}: ${r.error}` };
+      // Name the scan only when the answer doesn't already (a serial, a typo).
+      const named = r.error.toLowerCase().includes(c.toLowerCase());
+      return { ok: false, text: named ? r.error : `${c}: ${r.error}` };
     },
     [run, studyId],
   );

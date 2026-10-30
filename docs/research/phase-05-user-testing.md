@@ -64,6 +64,46 @@ These were checked and already worked:
 - **Studies become Running and Done** from their times; the job counts them.
 - **FT-12 is drawn from what was done on site**, so nothing is typed after the visit.
 
+## On Neon, from India (30 Oct 2026, afternoon)
+
+The same work was then done on the production database (Neon, us-east-2) from
+the office Mac, in Chrome at phone width. The data was real:
+
+- QA Tech's own TRH-3601 to TRH-3620 FT-05 workbook was imported (18 new loggers;
+  2 matched existing IDs by serial);
+- Watson's BE-WF-02, which had no size recorded;
+- the 182 expired Baddi loggers.
+
+| Found                                                                                                                                                                                                                                                               | Fix                                                                                                                                                                                                                                                          |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Scans fired back to back merged into one.** Each placement takes 5–6 s on Neon. A second scan arrived while the first was being sent: Enter did nothing, and the third scan was typed on the end of it (`84028227TRH-9999`). A scanner gun would do this all day. | Scans are taken at once, cleared from the box and sent one by one ("Placing… (3)"). Every answer in a burst stays on screen, so a refusal isn't hidden by the next success. The e2e test slows the network to 1.5 s and fires three scans, one of them junk. |
+| **BE-WF-02 had no size, and the engineer couldn't add one.** The FT-12 would have had no dimensions, and the WHO grid couldn't be used.                                                                                                                             | The Layout tab asks for the size when it's missing: one box, "3.36 x 6.4 x 2.4 m", also in mm or cm. It's saved on the equipment and audited. A size that's on record can be corrected with "Wrong size?".                                                   |
+| A study was started on 30 Oct for a job planned for 06–09 Nov, with no warning. The FT-12 then shows planned dates that don't match the times.                                                                                                                      | The Times tab warns when today is outside the job's dates, and says to move them first, which rechecks the loggers.                                                                                                                                          |
+| The audit trail said "Started at 2026-10-30T09:53:42.258Z" and "in_progress → completed".                                                                                                                                                                           | Indian time ("30 Oct 2026, 15:23") and words ("Running → Done").                                                                                                                                                                                             |
+| Refusals repeated the code: "TRH-9999: TRH-9999 is not in the register".                                                                                                                                                                                            | The scan is named only when the answer doesn't already name it (a serial or a typo).                                                                                                                                                                         |
+| The pre-cal master check used the UTC date, which is a day behind between midnight and 05:30 in India.                                                                                                                                                              | It uses today in India.                                                                                                                                                                                                                                      |
+| The job page said "10 of 9 loggers booked".                                                                                                                                                                                                                         | "10 loggers booked for 9 (1 spare)".                                                                                                                                                                                                                         |
+| The import preview said the 2 matched loggers' records "were added" before Import was pressed.                                                                                                                                                                      | "go to T-TRH0124; the registered ID is kept".                                                                                                                                                                                                                |
+
+These worked:
+
+- **Placing loggers:** lowercase IDs with spaces were accepted. So were serials, including
+  T-TRH0124 by its serial (the workbook calls it TRH-3611).
+- **Refusals:** the expired T-TRH0100 was refused with "valid only until 28.07.2026 (the
+  study runs to 09.11.2026)", and a logger already placed was told where it is.
+- **Two tabs, one logger:** two tabs scanned TRH-3605 at once. One placed it; the other
+  was told "already at L-05".
+- **The first start moved the job from Ready to Field Work.** Ending 1 minute into a 24 h
+  study asked first.
+- **Photos:** a 4000 × 3000 photo was stored at 1600 × 1200 (36 KB).
+- **FT-12:** one page, with the size, 9 positions, serials, due dates and times.
+- **The audit trail** has every step.
+
+**Speed (open):** every action took 5–15 s, because the database is in the US (us-east-2)
+and each action makes several round trips. Moving the Neon project to Singapore
+(ap-southeast-1) is the simplest fix. The queue above means a slow connection no longer
+loses scans, but the engineer still waits.
+
 ## Open, for later phases
 
 - **Photos taken with no connection** are not queued; the engineer retakes or re-picks

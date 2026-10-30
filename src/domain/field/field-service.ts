@@ -22,6 +22,7 @@ import { assertCan } from "@/domain/auth/permissions";
 import type { RequestInfo } from "@/domain/auth/policy";
 import type { SessionUser } from "@/domain/auth/session-service";
 import { isUuid } from "@/domain/clients/shared";
+import { todayInIndia } from "@/domain/clients/requalification";
 import { STUDY_CYCLE_LABELS, type StudyCycle } from "@/domain/clients/study-defaults";
 import { certificatesOf } from "@/domain/instruments/certificate-service";
 import type { AccuracySpec } from "@/domain/instruments/calibration-math";
@@ -35,6 +36,7 @@ import {
 } from "@/domain/jobs/job-service";
 import { JOB_STATUS_LABELS, type JobStatus } from "@/domain/jobs/types";
 import { recordAudit } from "@/lib/audit";
+import { formatDateTime } from "@/lib/format";
 import type { BlobStore } from "@/lib/storage/blob-store";
 import { storeFile } from "@/lib/storage/store-file";
 import { shortList } from "@/lib/text";
@@ -48,6 +50,7 @@ import {
   markersFor,
   type CycleKey,
   type EventKind,
+  STUDY_STATUS_LABELS,
   type StudyStatus,
 } from "./types";
 
@@ -507,7 +510,7 @@ async function syncStudyStatus(
     action: "study.status_changed",
     entityType: "study",
     entityId: loaded.study.id,
-    summary: `${loaded.equipment.code} on job ${loaded.job.number}: ${loaded.study.status} → ${status}`,
+    summary: `${loaded.equipment.code} on job ${loaded.job.number}: ${STUDY_STATUS_LABELS[loaded.study.status as StudyStatus]} → ${STUDY_STATUS_LABELS[status]}`,
     before: { status: loaded.study.status },
     after: { status },
     request,
@@ -629,7 +632,7 @@ export async function recordEvent(
       action: "study.event_recorded",
       entityType: "study",
       entityId: study.id,
-      summary: `${actor.name}: ${e.code} ${progress.label.toLowerCase()} — ${EVENT_LABELS[kind]} at ${v.at.toISOString()}`,
+      summary: `${actor.name} recorded ${e.code} ${progress.label.toLowerCase()}: ${EVENT_LABELS[kind].toLowerCase()} at ${formatDateTime(v.at)} (job ${loaded.job.number})`,
       after: { cycle, kind, at: v.at.toISOString(), note: v.note },
       request,
     });
@@ -680,7 +683,7 @@ export async function voidEvent(
       action: "study.event_voided",
       entityType: "study",
       entityId: ev.studyId,
-      summary: `${actor.name} struck out ${EVENT_LABELS[ev.kind as EventKind]} of ${loaded.equipment.code}`,
+      summary: `${actor.name} struck out ${EVENT_LABELS[ev.kind as EventKind]} at ${formatDateTime(ev.at)} of ${loaded.equipment.code}`,
       before: { cycle: ev.cycle, kind: ev.kind, at: ev.at.toISOString() },
       reason,
       request,
@@ -733,7 +736,7 @@ export async function recordPrecal(
         );
       if (!m || m.tier !== "master") throw new FieldError("Pick a master standard.");
       const certs = await certificatesOf(tx, actor.organisationId, [m.id]);
-      const today = new Date().toISOString().slice(0, 10);
+      const today = todayInIndia();
       const ok = validThrough({ ...m, certificates: certs.get(m.id) ?? [] }, today, today);
       if (!ok.ok) throw new FieldError(`Master ${ok.reason}.`);
     }
