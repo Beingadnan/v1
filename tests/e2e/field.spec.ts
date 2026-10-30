@@ -44,8 +44,28 @@ test("phase 5 exit test: on a phone, an engineer places 9 loggers for the freeze
   await page.getByRole("button", { name: "Save layout" }).click();
   await expect(page.getByText("Saved 9 positions.")).toBeVisible();
 
-  // Scan the nine loggers with the camera.
+  // A scanner gun fires three labels back to back, one of them unreadable
+  // junk: none is merged with the next or dropped, and the refusal stays on
+  // screen.
   await page.getByRole("link", { name: /^Loggers/ }).click();
+  // The server is slowed down, as it is on a site's mobile data.
+  const slow = async (route: import("@playwright/test").Route) => {
+    if (route.request().method() === "POST") await new Promise((r) => setTimeout(r, 1500));
+    await route.continue();
+  };
+  await page.route("**/studies/**", slow);
+  const box = page.getByPlaceholder("Scan or type ID / serial");
+  for (const scan of [SERIALS[0]!, "NOPE-1", SERIALS[1]!]) {
+    await box.fill(scan);
+    await box.press("Enter");
+  }
+  await expect(page.getByRole("button", { name: /Placing… \(3\)/ })).toBeVisible();
+  await expect(page.getByText(/placed at L-01\..*NOPE-1: .*placed at L-02\./)).toBeVisible({
+    timeout: 15_000,
+  });
+  await page.unroute("**/studies/**", slow);
+
+  // Scan the rest with the camera.
   await page.getByRole("button", { name: "Scan with camera" }).click();
   await expect(page.getByText(/placed at L-09\. All positions done\./)).toBeVisible({
     timeout: 30_000,

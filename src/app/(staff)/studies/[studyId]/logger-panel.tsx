@@ -88,47 +88,89 @@ export function LoggerPanel({
   const empty = positions.filter((p) => !p.instrumentId);
   const next = positions.find((p) => p.id === target && !p.instrumentId) ?? empty[0] ?? null;
 
+  // Scans are queued and sent one at a time: a scanner gun can fire the next
+  // label while the last one is still on its way, and must never be merged
+  // with it or dropped.
+  const queue = useRef<{ code: string; positionId?: string; where: string }[]>([]);
+  const working = useRef(false);
+  const [sending, setSending] = useState(0);
+
+  const send = useCallback(
+    async (
+      c: string,
+      positionId: string | undefined,
+      where: string,
+    ): Promise<{ ok: boolean; text: string }> => {
+      const r = await run({
+        studyId,
+        kind: "place",
+        label: `${c} → ${where}`,
+        payload: { code: c, positionId },
+      });
+      if (r === "signed_out")
+        return {
+          ok: false,
+          text: `You were signed out. ${c} is kept on this phone: sign in again (in a new tab) and it will be sent.`,
+        };
+      if (r === "queued")
+        return {
+          ok: true,
+          text: `No connection: ${c} will be placed at ${where} when the phone is back online.`,
+        };
+      if (r.ok) {
+        const d = r.data as { label: string; code: string; booked: boolean; left: number };
+        if ("vibrate" in navigator) navigator.vibrate?.(60);
+        return {
+          ok: true,
+          text: `${d.code} placed at ${d.label}.${d.booked ? " It wasn't booked: now booked for this job." : ""} ${d.left === 0 ? "All positions done." : `${d.left} to go.`}`,
+        };
+      }
+      if ("vibrate" in navigator) navigator.vibrate?.([80, 60, 80]);
+      return { ok: false, text: `${c}: ${r.error}` };
+    },
+    [run, studyId],
+  );
+
   const place = useCallback(
     (value: string) => {
       const c = value.trim();
       if (!c || readOnly) return;
-      setFeedback(null);
-      start(async () => {
-        const where = next?.label ?? "the next position";
-        const r = await run({
-          studyId,
-          kind: "place",
-          label: `${c} → ${where}`,
-          payload: { code: c, positionId: target ?? undefined },
-        });
-        if (r === "signed_out")
-          setFeedback({
-            ok: false,
-            text: `You were signed out. ${c} is kept on this phone: sign in again (in a new tab) and it will be sent.`,
-          });
-        else if (r === "queued") {
-          setFeedback({
-            ok: true,
-            text: `No connection: ${c} will be placed at ${where} when the phone is back online.`,
-          });
-        } else if (r.ok) {
-          const d = r.data as { label: string; code: string; booked: boolean; left: number };
-          setFeedback({
-            ok: true,
-            text: `${d.code} placed at ${d.label}.${d.booked ? " It wasn't booked: now booked for this job." : ""} ${d.left === 0 ? "All positions done." : `${d.left} to go.`}`,
-          });
-          if ("vibrate" in navigator) navigator.vibrate?.(60);
-          setTarget(null);
-          router.refresh();
-        } else {
-          setFeedback({ ok: false, text: r.error });
-          if ("vibrate" in navigator) navigator.vibrate?.([80, 60, 80]);
+      if (!working.current) setFeedback(null);
+      setCode("");
+      input.current?.focus();
+      // A position picked by tapping applies to this scan only.
+      const picked = target ?? undefined;
+      const where =
+        queue.current.length === 0 && !working.current
+          ? (next?.label ?? "the next position")
+          : "the next position";
+      setTarget(null);
+      queue.current.push({ code: c, positionId: picked, where });
+      setSending(queue.current.length + (working.current ? 1 : 0));
+      if (working.current) return;
+      working.current = true;
+      void (async () => {
+        try {
+          // Every answer in a burst of scans is kept, so a refusal isn't
+          // hidden by the next scan's success.
+          const answers: { ok: boolean; text: string }[] = [];
+          while (queue.current.length > 0) {
+            const item = queue.current.shift()!;
+            answers.push(await send(item.code, item.positionId, item.where));
+            setSending(queue.current.length);
+            setFeedback({
+              ok: answers.every((a) => a.ok),
+              text: answers.map((a) => a.text).join(" "),
+            });
+          }
+        } finally {
+          working.current = false;
+          setSending(0);
+          start(() => router.refresh());
         }
-        setCode("");
-        input.current?.focus();
-      });
+      })();
     },
-    [next, readOnly, router, run, studyId, target],
+    [next, readOnly, router, send, target],
   );
 
   // The camera loop calls the latest place() without restarting the camera.
@@ -245,8 +287,8 @@ export function LoggerPanel({
               className="h-12 text-base"
               disabled={!next}
             />
-            <Button type="submit" size="lg" disabled={busy || !code.trim() || !next}>
-              Place
+            <Button type="submit" size="lg" disabled={!code.trim() || !next}>
+              {sending > 0 ? `Placing… (${sending})` : "Place"}
             </Button>
           </form>
           {canScan ? (
