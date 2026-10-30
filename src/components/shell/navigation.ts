@@ -28,7 +28,7 @@ export type NavItem = {
 export type NavGroup = { label: string; items: NavItem[] };
 
 /** Where the app is in the build plan. Bump as each phase ships. */
-export const CURRENT_PHASE = 4;
+export const CURRENT_PHASE = 5;
 
 export const navigation: NavGroup[] = [
   {
@@ -42,7 +42,13 @@ export const navigation: NavGroup[] = [
         availableFromPhase: 4,
         permission: "jobs.view",
       },
-      { label: "Studies", href: "/studies", icon: ThermometerSnowflake, availableFromPhase: 5 },
+      {
+        label: "Studies",
+        href: "/studies",
+        icon: ThermometerSnowflake,
+        availableFromPhase: 5,
+        permission: "field.perform",
+      },
       { label: "Reports", href: "/reports", icon: FileText, availableFromPhase: 8 },
       { label: "Reviews", href: "/reviews", icon: ClipboardCheck, availableFromPhase: 9 },
     ],

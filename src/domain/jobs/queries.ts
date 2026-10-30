@@ -55,6 +55,8 @@ export type JobListRow = {
   plannedStart: string;
   plannedEnd: string;
   studyCount: number;
+  /** Studies whose field work is done. */
+  studiesDone: number;
   equipmentCodes: string[];
   team: string[];
   /** Null when the viewer may not see money. */
@@ -89,6 +91,7 @@ export async function listJobs(
       plannedStart: jobs.plannedStart,
       plannedEnd: jobs.plannedEnd,
       studyCount: sql<number>`(select count(*)::int from ${studies} s where s.job_id = ${jobs.id})`,
+      studiesDone: sql<number>`(select count(*)::int from ${studies} s where s.job_id = ${jobs.id} and s.status = 'completed')`,
       equipmentCodes: sql<
         string[]
       >`coalesce((select array_agg(e.code order by s.position) from ${studies} s join ${equipment} e on e.id = s.equipment_id where s.job_id = ${jobs.id}), '{}')`,

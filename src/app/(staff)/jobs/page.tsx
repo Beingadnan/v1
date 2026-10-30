@@ -197,6 +197,11 @@ function JobCard({ row }: { row: JobListRow }) {
         {row.team.length > 0 ? (
           <span className="text-xs text-muted-foreground">{row.team.join(", ")}</span>
         ) : null}
+        {row.status === "field_work" || row.studiesDone > 0 ? (
+          <span className="text-xs font-medium text-info">
+            {row.studiesDone} of {row.studyCount} studies done
+          </span>
+        ) : null}
       </Link>
     </li>
   );

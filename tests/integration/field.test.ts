@@ -493,6 +493,17 @@ describe("phase 5: an engineer places 9 loggers for BE-WF-02 and records start a
       ),
     ).rejects.toThrow("Place the loggers before starting.");
     await placeLogger(db, engineer, roomStudy, { code: codes[15]! }, req);
+    await expect(
+      recordEvent(
+        db,
+        engineer,
+        roomStudy,
+        { id: randomUUID(), cycle: "empty", kind: "start", at: new Date() },
+        req,
+      ),
+    ).rejects.toThrow("3 positions have no logger (L-02, L-03, L-04).");
+    for (const c of [codes[16]!, codes[17]!, codes[18]!])
+      await placeLogger(db, engineer, roomStudy, { code: c }, req);
     const t = (min: number) => new Date(Date.now() - min * 60_000);
     await recordEvent(
       db,

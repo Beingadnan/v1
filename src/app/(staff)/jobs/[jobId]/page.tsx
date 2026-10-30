@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/table";
 import { db } from "@/db/client";
 import { STUDY_CYCLE_LABELS, type StudyCycle } from "@/domain/clients/study-defaults";
+import { STUDY_STATUS_LABELS, type StudyStatus } from "@/domain/field/types";
 import { formatInr } from "@/domain/jobs/pricing";
 import { getJob, qaSiteOptions, siteEquipment, staffOptions } from "@/domain/jobs/queries";
 import { TEAM_ROLE_LABELS, type TeamRole } from "@/domain/jobs/schemas";
@@ -313,6 +314,12 @@ export default async function JobPage({ params }: PageProps<"/jobs/[jobId]">) {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 id="studies" className="font-semibold">
             Studies ({detail.studies.length})
+            {detail.studies.some((st) => st.status !== "planned") ? (
+              <span className="ml-2 text-sm font-normal text-muted-foreground">
+                {detail.studies.filter((st) => st.status === "completed").length} of{" "}
+                {detail.studies.length} done
+              </span>
+            ) : null}
           </h2>
           {canManage && planning ? <AddStudiesButton jobId={job.id} equipment={addable} /> : null}
         </div>
@@ -344,6 +351,30 @@ export default async function JobPage({ params }: PageProps<"/jobs/[jobId]">) {
                   <p className="text-xs text-muted-foreground">
                     {s.equipment.name}
                     {s.equipment.department ? ` · ${s.equipment.department}` : ""}
+                  </p>
+                  <p className="mt-0.5 flex flex-wrap items-center gap-2 text-xs">
+                    <StatusBadge
+                      tone={
+                        s.status === "completed"
+                          ? "pass"
+                          : s.status === "in_progress"
+                            ? "info"
+                            : "neutral"
+                      }
+                    >
+                      {STUDY_STATUS_LABELS[s.status as StudyStatus] ?? s.status}
+                    </StatusBadge>
+                    <Link href={`/studies/${s.id}`} className="text-primary hover:underline">
+                      Field work
+                    </Link>
+                    <a
+                      href={`/studies/${s.id}/ft12`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-primary hover:underline"
+                    >
+                      FT-12
+                    </a>
                   </p>
                   <p className="font-mono text-[11px] break-all text-muted-foreground md:hidden">
                     {s.reportNumber}

@@ -14,6 +14,7 @@ import {
   studyPhotos,
   studyPositions,
   studyPrecal,
+  storedFiles,
   type Job,
   type Study,
 } from "@/db/schema";
@@ -298,6 +299,9 @@ export async function placeLogger(
     const inst = await findInstrument(tx, actor, code);
     const here = positions.find((p) => p.instrumentId === inst.id);
     if (here) throw new FieldError(`${inst.code} is already at ${here.label}.`);
+    // What is wrong with the logger matters more than where it would go.
+    const problem = await placementProblem(tx, actor, job, study, inst);
+    if (problem) throw new FieldError(problem);
     let target = positions.find((p) => p.instrumentId === null) ?? null;
     if (typeof input.positionId === "string" && input.positionId) {
       target = positions.find((p) => p.id === input.positionId) ?? null;
@@ -316,8 +320,6 @@ export async function placeLogger(
       throw new FieldError(
         `All ${positions.length} positions have a logger. Add a position in Layout.`,
       );
-    const problem = await placementProblem(tx, actor, job, study, inst);
-    if (problem) throw new FieldError(problem);
 
     const [booking] = await tx
       .select({ id: jobInstruments.instrumentId })
@@ -410,9 +412,9 @@ const eventSchema = z.object({
 });
 
 /** What the study's cycles look like from its markers. */
-export function cycleProgress(
+export function cycleProgress<E extends { cycle: string; kind: string; at: Date; voided: boolean }>(
   cycles: CycleKey[],
-  events: { cycle: string; kind: string; at: Date; voided: boolean }[],
+  events: E[],
 ) {
   return cycles.map((cycle) => {
     const mine = events
@@ -510,16 +512,21 @@ export async function recordEvent(
     const progress = cycleProgress(cycles, events).find((c) => c.cycle === cycle)!;
     if (kind === "start") {
       if (progress.startedAt) throw new FieldError(`${progress.label} has already started.`);
-      const [{ placed } = { placed: 0 }] = await tx
-        .select({ placed: sql<number>`count(*)::int` })
+      const positions = await tx
+        .select({ label: studyPositions.label, instrumentId: studyPositions.instrumentId })
         .from(studyPositions)
-        .where(
-          and(
-            eq(studyPositions.studyId, study.id),
-            sql`${studyPositions.instrumentId} is not null`,
-          ),
+        .where(eq(studyPositions.studyId, study.id))
+        .orderBy(asc(studyPositions.sort));
+      if (positions.length === 0 || positions.every((p) => p.instrumentId === null)) {
+        throw new FieldError("Place the loggers before starting.");
+      }
+      // A study started with gaps would report positions without data.
+      const empty = positions.filter((p) => p.instrumentId === null).map((p) => p.label);
+      if (empty.length > 0) {
+        throw new FieldError(
+          `${empty.length === 1 ? "1 position has" : `${empty.length} positions have`} no logger (${shortList(empty)}). Place loggers there, or remove ${empty.length === 1 ? "that position" : "those positions"} in Layout.`,
         );
-      if (placed === 0) throw new FieldError("Place the loggers before starting.");
+      }
       if (job.status === "ready") {
         const readiness = computeReadiness(await readinessInputFor(tx, actor.organisationId, job));
         if (!readiness.ready) {
@@ -730,6 +737,7 @@ export async function recordPrecal(
 
 export const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 
+/** Stores the bytes, then attaches them (used where the bytes arrive directly). */
 export async function addPhoto(
   db: Database,
   blobs: BlobStore,
@@ -765,23 +773,50 @@ export async function addPhoto(
     request,
   });
   if (!stored.ok) throw new FieldError(stored.message);
-  if (stored.file.fileType !== "jpeg" && stored.file.fileType !== "png") {
-    throw new FieldError("Only photos (JPEG or PNG) can be added here.");
-  }
+  return attachPhoto(db, actor, studyId, { ...input, fileId: stored.file.id }, request);
+}
+
+/**
+ * Attaches an uploaded photo (already stored through /api/files) to a study.
+ * The same id twice attaches it once.
+ */
+export async function attachPhoto(
+  db: Database,
+  actor: SessionUser,
+  studyId: string,
+  input: { id: string; fileId: string; positionLabel?: string; caption?: string },
+  request?: RequestInfo,
+): Promise<{ id: string }> {
+  assertCan(actor, "field.perform");
+  if (!isUuid(input.id) || !isUuid(input.fileId))
+    throw new FieldError("The phone sent a bad id. Reload the page.");
   return db.transaction(async (tx) => {
     const { study, job, equipment: e } = await loadStudy(tx, actor, studyId);
-    await tx
-      .insert(studyPhotos)
-      .values({
-        id: input.id,
-        organisationId: actor.organisationId,
-        studyId: study.id,
-        fileId: stored.file.id,
-        positionLabel: (input.positionLabel ?? "").slice(0, 20),
-        caption: (input.caption ?? "").slice(0, 200),
-        byUserId: actor.id,
-      })
-      .onConflictDoNothing();
+    assertJob(job, ON_SITE, "Adding photos");
+    const [seen] = await tx
+      .select({ id: studyPhotos.id })
+      .from(studyPhotos)
+      .where(eq(studyPhotos.id, input.id));
+    if (seen) return { id: seen.id };
+    const [file] = await tx
+      .select({ id: storedFiles.id, fileType: storedFiles.fileType })
+      .from(storedFiles)
+      .where(
+        and(eq(storedFiles.id, input.fileId), eq(storedFiles.organisationId, actor.organisationId)),
+      );
+    if (!file) throw new FieldError("That photo was not uploaded. Try again.");
+    if (file.fileType !== "jpeg" && file.fileType !== "png") {
+      throw new FieldError("Only photos (JPEG or PNG) can be added here.");
+    }
+    await tx.insert(studyPhotos).values({
+      id: input.id,
+      organisationId: actor.organisationId,
+      studyId: study.id,
+      fileId: file.id,
+      positionLabel: (input.positionLabel ?? "").slice(0, 20),
+      caption: (input.caption ?? "").slice(0, 200),
+      byUserId: actor.id,
+    });
     await recordAudit(tx, {
       organisationId: actor.organisationId,
       actor: user(actor),
@@ -789,7 +824,7 @@ export async function addPhoto(
       entityType: "study",
       entityId: study.id,
       summary: `${actor.name} added a photo to ${e.code}${input.positionLabel ? ` (${input.positionLabel})` : ""} on job ${job.number}`,
-      after: { fileId: stored.file.id },
+      after: { fileId: file.id },
       request,
     });
     return { id: input.id };
