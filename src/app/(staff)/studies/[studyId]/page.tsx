@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { db } from "@/db/client";
 import { can } from "@/domain/auth/permissions";
+import { getStudyAnalysis } from "@/domain/analysis/queries";
 import { getStudyData } from "@/domain/data/queries";
 import { getFieldStudy } from "@/domain/field/queries";
 import { STUDY_STATUS_LABELS } from "@/domain/field/types";
@@ -12,6 +13,7 @@ import { WORK_TYPE_LABELS, type WorkType } from "@/domain/jobs/types";
 import { requirePermission } from "@/lib/auth/dal";
 import { cn } from "@/lib/utils";
 
+import { AnalysisPanel } from "./analysis-panel";
 import { DataPanel } from "./data-panel";
 import { LayoutEditor } from "./layout-editor";
 import { RoomSize } from "./room-size";
@@ -30,6 +32,8 @@ const TABS = [
   { key: "times", label: "Times" },
   { key: "photos", label: "Photos" },
   { key: "data", label: "Data" },
+  { key: "postcal", label: "Post-cal" },
+  { key: "analysis", label: "Analysis" },
 ] as const;
 type Tab = (typeof TABS)[number]["key"];
 
@@ -51,11 +55,18 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
       : placed < s.positions.length && !done
         ? "loggers"
         : done
-          ? "data"
+          ? s.study.dataStatus === "received"
+            ? "analysis"
+            : "data"
           : "times";
   const asked = (await searchParams).tab;
   const tab: Tab = TABS.some((t) => t.key === asked) ? (asked as Tab) : suggested;
   const data = tab === "data" ? await getStudyData(db, actor, studyId) : null;
+  const analysis =
+    tab === "analysis" || tab === "postcal" ? await getStudyAnalysis(db, actor, studyId) : null;
+  const preRows = s.precal.filter((r) => r.phase === "pre");
+  const postRows = s.precal.filter((r) => r.phase === "post");
+  const postOpen = ["field_work", "data_issue", "data_received", "analysis"].includes(s.job.status);
   const DATA_MARK: Record<string, string> = {
     none: "—",
     issues: "!",
@@ -108,7 +119,7 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
         <p className="font-mono text-xs break-all text-muted-foreground">{s.study.reportNumber}</p>
       </header>
 
-      {!onSite && tab !== "data" ? (
+      {!onSite && !["data", "postcal", "analysis"].includes(tab) ? (
         <p className="rounded-md bg-attention-soft px-3 py-2 text-sm text-attention">
           {s.job.status === "created"
             ? "The job isn't ready for field work yet: the layout can be prepared, but loggers and times wait until it is Ready."
@@ -129,8 +140,14 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
                   : t.key === "data"
                     ? (DATA_MARK[s.study.dataStatus] ?? "")
                     : t.key === "precal"
-                      ? s.precal.length
-                      : `${s.cycles.filter((c) => c.done).length}/${s.cycles.length}`;
+                      ? preRows.length
+                      : t.key === "postcal"
+                        ? `${new Set(postRows.map((r) => r.instrumentId)).size}/${placed}`
+                        : t.key === "analysis"
+                          ? s.study.analysisApprovedAt
+                            ? "✓"
+                            : ""
+                          : `${s.cycles.filter((c) => c.done).length}/${s.cycles.length}`;
           return (
             <Link
               key={t.key}
@@ -198,8 +215,26 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
           readOnly={!canWork || !onSite || done}
           needed={s.precalNeeded}
           masters={s.masters.map((m) => ({ id: m.id, code: m.code }))}
-          rows={s.precal}
+          rows={preRows}
         />
+      ) : tab === "postcal" ? (
+        analysis ? (
+          <PrecalPanel
+            studyId={studyId}
+            phase="post"
+            readOnly={!analysis.can.postCal || !postOpen || !done}
+            needed={analysis.study.postCalRequired}
+            masters={analysis.masters.map((m) => ({ id: m.id, code: m.code }))}
+            rows={postRows}
+            waiting={analysis.postCal
+              .filter((p) => p.readings.length === 0)
+              .map((p) => ({ code: p.code, label: p.label }))}
+          />
+        ) : null
+      ) : tab === "analysis" ? (
+        analysis ? (
+          <AnalysisPanel a={analysis} />
+        ) : null
       ) : tab === "times" ? (
         <TimesPanel
           studyId={studyId}

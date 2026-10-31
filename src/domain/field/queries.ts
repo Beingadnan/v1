@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
 
 import type { Database } from "@/db/client-factory";
 import {
@@ -36,6 +36,9 @@ import { renderFt12 } from "./ft12-pdf";
 import { ROUTINE, type CycleKey, type StudyStatus } from "./types";
 
 const FIELD_JOBS: JobStatus[] = ["ready", "field_work", "data_issue"];
+const AFTER_FIELD: JobStatus[] = ["data_received", "analysis"];
+/** Placed loggers with no post-cal reading, on studies that need post-cal. */
+const postCalLeft = sql<number>`(case when ${studies.postCalRequired} or ${studies.workType} = 'thermal_validation' then (select count(*)::int from ${studyPositions} p where p.study_id = ${studies.id} and p.instrument_id is not null and not exists (select 1 from ${studyPrecal} c where c.study_id = ${studies.id} and c.instrument_id = p.instrument_id and c.phase = 'post')) else 0 end)`;
 
 export type MyStudy = {
   id: string;
@@ -57,6 +60,10 @@ export type MyStudy = {
   dataStatus: string;
   /** The oldest open request for data, if the office is waiting on the site. */
   request: string | null;
+  /** Loggers used on the study still to be post-calibrated, when the study needs it. */
+  postCalLeft: number;
+  /** Data confirmed, analysis not yet approved (shown to those who analyse). */
+  toAnalyse: boolean;
 };
 
 /**
@@ -71,6 +78,7 @@ export async function myStudies(
   // Engineers on site, and whoever sends the data in (often a preparer in the office).
   assertCan(actor, "data.import");
   const everyone = options.everyone && can(actor, "jobs.manage");
+  const analyses = can(actor, "analysis.run");
   const rows = await db
     .select({
       id: studies.id,
@@ -92,6 +100,8 @@ export async function myStudies(
       request: sql<
         string | null
       >`(select r.note from ${studyDataRequests} r where r.study_id = ${studies.id} and r.closed_at is null order by r.requested_at limit 1)`,
+      postCalLeft: postCalLeft,
+      approved: studies.analysisApprovedAt,
     })
     .from(studies)
     .innerJoin(jobs, eq(jobs.id, studies.jobId))
@@ -102,7 +112,11 @@ export async function myStudies(
     .where(
       and(
         eq(studies.organisationId, actor.organisationId),
-        inArray(jobs.status, FIELD_JOBS),
+        // Back from site, the loggers still need post-calibration.
+        or(
+          inArray(jobs.status, FIELD_JOBS),
+          and(inArray(jobs.status, AFTER_FIELD), analyses ? undefined : sql`${postCalLeft} > 0`),
+        ),
         everyone
           ? undefined
           : sql`exists (select 1 from ${jobTeam} t where t.job_id = ${jobs.id} and t.user_id = ${actor.id})`,
@@ -111,8 +125,9 @@ export async function myStudies(
     .orderBy(asc(jobs.plannedStart), asc(jobs.number), asc(studies.position))
     .limit(300);
   const today = todayInIndia();
-  const mapped = rows.map((r) => ({
+  const mapped = rows.map(({ approved, ...r }) => ({
     ...r,
+    toAnalyse: analyses && AFTER_FIELD.includes(r.jobStatus as JobStatus) && approved === null,
     status: r.status as StudyStatus,
     jobStatus: r.jobStatus as JobStatus,
     today: r.plannedStart <= today && r.plannedEnd >= today,

@@ -20,15 +20,19 @@ export default async function StudiesPage({ searchParams }: PageProps<"/studies"
   const everyone = (await searchParams).all === "1" && can(actor, "jobs.manage");
   const rows = await myStudies(db, actor, { everyone });
   const data = rows.filter(waiting);
+  const post = rows.filter((r) => !waiting(r) && r.status === "completed" && r.postCalLeft > 0);
+  const analyse = rows.filter((r) => !waiting(r) && r.postCalLeft === 0 && r.toAnalyse);
   const today = rows.filter((r) => !waiting(r) && r.today && r.status !== "completed");
   const later = rows.filter((r) => !waiting(r) && !r.today && r.status !== "completed");
-  const done = rows.filter((r) => !waiting(r) && r.status === "completed");
+  const done = rows.filter(
+    (r) => !waiting(r) && r.status === "completed" && r.postCalLeft === 0 && !r.toAnalyse,
+  );
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
       <PageHeader
         title={everyone ? "All studies on site" : "My studies"}
-        description="Studies of jobs that are ready, in field work or waiting for data. Open one to place loggers, record times, take photos and send in the logger data."
+        description="Studies of jobs that are ready, in field work, waiting for data or for post-calibration. Open one to place loggers, record times, take photos, send in the logger data and post-calibrate."
       />
       {can(actor, "jobs.manage") ? (
         <nav aria-label="Show" className="flex gap-1 text-sm">
@@ -61,6 +65,8 @@ export default async function StudiesPage({ searchParams }: PageProps<"/studies"
       ) : (
         <>
           <Group title="Data to send or check" rows={data} />
+          <Group title="Post-calibration to do" rows={post} />
+          <Group title="To analyse" rows={analyse} />
           <Group title="Today" rows={today} />
           <Group title="Coming up" rows={later} />
           <Group title="Done" rows={done} />
@@ -85,7 +91,15 @@ function Group({ title, rows }: { title: string; rows: MyStudy[] }) {
         {rows.map((r) => (
           <li key={r.id}>
             <Link
-              href={waiting(r) ? `/studies/${r.id}?tab=data` : `/studies/${r.id}`}
+              href={
+                waiting(r)
+                  ? `/studies/${r.id}?tab=data`
+                  : r.status === "completed" && r.postCalLeft > 0
+                    ? `/studies/${r.id}?tab=postcal`
+                    : r.toAnalyse
+                      ? `/studies/${r.id}?tab=analysis`
+                      : `/studies/${r.id}`
+              }
               className="flex flex-col gap-1 rounded-lg border border-border bg-surface p-4 hover:border-primary"
             >
               <span className="flex items-center justify-between gap-2">
@@ -117,6 +131,15 @@ function Group({ title, rows }: { title: string; rows: MyStudy[] }) {
                 <span className="text-sm text-attention">Logger data not uploaded yet.</span>
               ) : r.status === "completed" && r.dataStatus === "checked" ? (
                 <span className="text-sm text-info">Data checked: waiting to be confirmed.</span>
+              ) : r.toAnalyse && r.postCalLeft === 0 ? (
+                <span className="text-sm text-info">
+                  Data confirmed:{" "}
+                  {r.jobStatus === "analysis" ? "analysis under way" : "ready to analyse"}.
+                </span>
+              ) : r.status === "completed" && r.postCalLeft > 0 ? (
+                <span className="text-sm text-attention">
+                  {r.postCalLeft} logger{r.postCalLeft === 1 ? "" : "s"} to post-calibrate.
+                </span>
               ) : null}
               <span className="text-xs text-muted-foreground">
                 {r.jobNumber} · {dmy(r.plannedStart)}

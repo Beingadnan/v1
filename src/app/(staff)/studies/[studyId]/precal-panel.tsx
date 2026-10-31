@@ -27,6 +27,9 @@ const trim = (v: string) => v.replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
  * Pre-calibration on site (FT-01): each logger beside the master at one
  * point. Pass/fail is worked out on the logger's accuracy; a logger that
  * fails can't be placed in this study.
+ *
+ * Post-calibration (FT-02), the same way after the study: a logger that
+ * fails opens a deviation by itself.
  */
 export function PrecalPanel({
   studyId,
@@ -34,13 +37,19 @@ export function PrecalPanel({
   rows,
   needed,
   readOnly,
+  phase = "pre",
+  waiting = [],
 }: {
   studyId: string;
   masters: { id: string; code: string }[];
   rows: Row[];
   needed: boolean;
   readOnly: boolean;
+  phase?: "pre" | "post";
+  /** Post-cal: loggers used on the study not yet checked (tap to fill in). */
+  waiting?: { code: string; label: string }[];
 }) {
+  const post = phase === "post";
   const router = useRouter();
   const [masterId, setMasterId] = useState(masters[0]?.id ?? "");
   const [code, setCode] = useState("");
@@ -70,8 +79,8 @@ export function PrecalPanel({
       const r = await run({
         studyId,
         kind: "precal",
-        label: `${code} pre-cal`,
-        payload: { id: newId(), code, masterId, quantity, reference, reading },
+        label: `${code} ${post ? "post" : "pre"}-cal`,
+        payload: { id: newId(), code, masterId, quantity, phase, reference, reading },
       });
       if (r === "signed_out")
         setFeedback({
@@ -84,10 +93,22 @@ export function PrecalPanel({
           text: `No connection: ${code} is kept on this phone and will be sent.`,
         });
       else if (r.ok) {
-        const d = r.data as { code: string; result: string; deviation: string; tolerance: number };
+        const d = r.data as {
+          code: string;
+          result: string;
+          deviation: string;
+          tolerance: number;
+          deviationNumber?: string | null;
+        };
+        const next =
+          d.result === "pass"
+            ? ""
+            : post
+              ? ` Deviation ${d.deviationNumber} opened; see the Analysis tab.`
+              : " Use another logger.";
         setFeedback({
           ok: d.result === "pass",
-          text: `${d.code}: ${d.result === "pass" ? "PASS" : "FAIL"}, deviation ${d.deviation} (allowed ±${d.tolerance}).${d.result === "fail" ? " Use another logger." : ""}`,
+          text: `${d.code}: ${d.result === "pass" ? "PASS" : "FAIL"}, deviation ${d.deviation} (allowed ±${d.tolerance}).${next}`,
         });
         setCode("");
         setReading("");
@@ -99,10 +120,34 @@ export function PrecalPanel({
   return (
     <div className="flex flex-col gap-4">
       <p className="text-sm text-muted-foreground">
-        {needed
-          ? "This study needs each logger checked against a master before use (thermal validation, or the client asks for post-calibration)."
-          : "Optional for this study. A logger that fails here can't be placed."}
+        {post
+          ? needed
+            ? "Check each logger used against a master now that the study is over (FT-02). The analysis can't be approved until every logger is done. A logger that fails opens a deviation by itself."
+            : "Optional for this study. A logger that fails opens a deviation by itself."
+          : needed
+            ? "This study needs each logger checked against a master before use (thermal validation, or the client asks for post-calibration)."
+            : "Optional for this study. A logger that fails here can't be placed."}
       </p>
+      {post && waiting.length > 0 ? (
+        <div className="flex flex-col gap-1.5">
+          <p className="text-sm font-medium">
+            {waiting.length} still to check{readOnly ? "" : " (tap to fill in)"}
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {waiting.map((w) => (
+              <button
+                key={w.code}
+                type="button"
+                disabled={readOnly}
+                onClick={() => setCode(w.code)}
+                className="min-h-11 rounded-md bg-surface-muted px-3 font-mono text-xs disabled:cursor-default"
+              >
+                {w.label} · {w.code}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
       {!readOnly ? (
         <form
           onSubmit={(e) => {

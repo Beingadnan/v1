@@ -125,11 +125,19 @@ export async function precalAction(
     code: string;
     masterId: string;
     quantity: string;
+    /** Absent in entries queued before phase 7: pre-calibration. */
+    phase?: "pre" | "post";
     reference: string;
     reading: string;
   },
 ): Promise<
-  ActionResult<{ code: string; result: "pass" | "fail"; deviation: string; tolerance: number }>
+  ActionResult<{
+    code: string;
+    result: "pass" | "fail";
+    deviation: string;
+    tolerance: number;
+    deviationNumber: string | null;
+  }>
 > {
   const actor = await userForAction();
   if (!actor) return { ok: false, error: SESSION_ENDED };

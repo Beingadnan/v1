@@ -3,6 +3,8 @@
  * known users. Refuses any database whose name does not end in _test.
  * Run by Playwright's global setup; not for real databases.
  */
+import path from "node:path";
+
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 
@@ -11,8 +13,9 @@ import { ensureOrganisation } from "@/db/seed/ensure-organisation";
 import { ensureQatechDefaults } from "@/db/seed/qatech-defaults";
 import { bootstrapAdmin, inviteUser, setPasswordWithToken } from "@/domain/auth/account-service";
 import { toSessionUser } from "@/domain/auth/session-service";
+import { LocalBlobStore } from "@/lib/storage/blob-store";
 
-import { seedDataJob, seedFieldJob } from "./e2e-field-fixture";
+import { seedAnalysisJob, seedDataJob, seedFieldJob } from "./e2e-field-fixture";
 
 export const E2E_USERS = {
   admin: { email: "admin@e2e.test", name: "Asha Admin", password: "calibrated sensor chain 1" },
@@ -112,6 +115,15 @@ async function main(): Promise<void> {
       lead: E2E_USERS.lead.email,
       engineer: E2E_USERS.engineer.email,
     });
+    await seedAnalysisJob(
+      db, // Where the standalone server (cwd .next/standalone) keeps files in e2e runs.
+      new LocalBlobStore(path.resolve(".next/standalone/.data/e2e-storage")),
+      {
+        manager: E2E_USERS.manager.email,
+        lead: E2E_USERS.lead.email,
+        engineer: E2E_USERS.engineer.email,
+      },
+    );
     console.log("e2e database ready");
   } finally {
     await pool.end();
