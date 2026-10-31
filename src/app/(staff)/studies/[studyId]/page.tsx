@@ -108,11 +108,11 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
         <p className="font-mono text-xs break-all text-muted-foreground">{s.study.reportNumber}</p>
       </header>
 
-      {!onSite ? (
+      {!onSite && tab !== "data" ? (
         <p className="rounded-md bg-attention-soft px-3 py-2 text-sm text-attention">
           {s.job.status === "created"
             ? "The job isn't ready for field work yet: the layout can be prepared, but loggers and times wait until it is Ready."
-            : "This job is past field work: the study can be viewed, not changed."}
+            : "Field work on this job is closed: layout, loggers and times can be viewed, not changed."}
         </p>
       ) : null}
 

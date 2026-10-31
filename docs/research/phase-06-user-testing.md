@@ -28,6 +28,22 @@ Everything below was fixed and has a test unless marked **open**.
 | On a phone, the Data tab was scrolled out of sight in the tab row.                                                                                                    | The current tab scrolls into view.                                                                                                                                                          |
 | Accounts could open a study (they can see jobs), but its "My studies" link led to a page they can't open.                                                             | For them it leads back to the job.                                                                                                                                                          |
 
+## On Neon, from India (31 Oct 2026)
+
+Job QT/J/2026/0003 for BE-WF-02 with the TRH-3601… loggers was built in Chrome:
+
+- 9 serials scanned as one burst, all placed;
+- start entered as 06:00, end tapped at 10:26;
+- a semicolon CSV with comma decimals uploaded: 9 of 9 matched, Checked;
+- replaced with a 30-min gap: the job went to Data issue;
+- the gap accepted with a reason, the data confirmed: the job went to Data received.
+
+| Found                                                                                                                                   | Fix                                                                                        |
+| --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| With no file yet, the Data tab listed every logger as "Must fix: not in the data".                                                      | Nothing is checked until a file is uploaded.                                               |
+| After the job left field work, the Data tab showed "the study can be viewed, not changed", though the data can still be uploaded there. | That banner is not shown on Data, and now names what is closed: layout, loggers and times. |
+| **Open:** on Neon the success message shows ~20 s before the page behind it refreshes.                                                  | Speed: see phase 5 (database in us-east-2).                                                |
+
 ## What worked
 
 - **WH013, as emailed:** 145 readings, 12 columns (5 loggers + ambient, °C and %RH)

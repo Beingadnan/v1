@@ -153,6 +153,8 @@ export async function dataContext(
     intervalMinutes: study.intervalMinutes,
     needsRh: study.workType === "temperature_rh_mapping",
   });
+  // No file yet: nothing to check (every logger would show as "missing").
+  if (files.length === 0) result.issues = [];
   return { positions: positionInfo, files, channels: channelInfo, cycles, ...result };
 }
 

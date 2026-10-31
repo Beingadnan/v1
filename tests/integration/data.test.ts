@@ -295,6 +295,8 @@ describe("phase 6: logger data in, checked, and confirmed", () => {
 
   it("reads the emailed workbook, matches all 9 loggers by serial and finds nothing wrong", async () => {
     expect(await jobStatus()).toBe("field_work");
+    // Before any file, nothing is reported missing.
+    expect((await data()).issues).toEqual([]);
     const fileId = await upload("BE-WF-02 raw data.xlsx", await export_({ serials }));
     const r = await addDataFile(db, blobs, preparer, studyId, { fileId }, req);
     firstFile = r.dataFileId;
