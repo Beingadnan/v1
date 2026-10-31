@@ -324,8 +324,15 @@ export function analyse(input: EngineInput): EngineResult {
       : { ...s, values: s.values.map((v) => (v === null ? null : v - offset)) };
   });
   if (corr.size > 0) {
+    const labelOf = new Map(input.series.map((x) => [x.positionId, x.label]));
     notes.push(
-      `Impact recalculation: ${[...corr.entries()].map(([key, o]) => `${key.split("|")[0]} corrected by ${o > 0 ? "−" : "+"}${Math.abs(o)}`).join(", ")}.`,
+      `Impact recalculation: ${[...corr.entries()]
+        .map(([key, o]) => {
+          const [id, q] = key.split("|");
+          const unit = q === "rh" ? "%RH" : "°C";
+          return `${labelOf.get(id!) ?? id} corrected by ${o > 0 ? "−" : "+"}${Math.abs(o)} ${unit}`;
+        })
+        .join(", ")}.`,
     );
   }
   const positions = [...new Map(series.map((s) => [s.positionId, s])).values()];

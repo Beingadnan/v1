@@ -14,6 +14,7 @@ import {
   DEVIATION_DECISIONS,
   DEVIATION_SOURCE_LABELS,
 } from "@/domain/analysis/types";
+import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import {
@@ -577,14 +578,20 @@ export function AnalysisPanel({ a }: { a: StudyAnalysis }) {
                   <p className="text-xs text-muted-foreground">
                     Impact (run {d.impact.runNo}): {d.impact.note}
                   </p>
-                  {d.impact.cycles.map((c) => (
-                    <p key={c.label}>
-                      {c.label}: with the error applied, {d.position} reads{" "}
-                      {f1(c.position?.temp?.min)} to {f1(c.position?.temp?.max)} °C (avg{" "}
-                      {f1(c.position?.temp?.avg)}) — <Verdict pass={c.position?.pass ?? null} />;
-                      the study <Verdict pass={c.pass} />.
-                    </p>
-                  ))}
+                  {d.impact.cycles.map((c) => {
+                    const now = a.run?.result.cycles.find((x) => x.label === c.label)?.pass;
+                    return (
+                      <p key={c.label}>
+                        {c.label}: with the error applied, {d.position} reads{" "}
+                        {f1(c.position?.temp?.min)} to {f1(c.position?.temp?.max)} °C (avg{" "}
+                        {f1(c.position?.temp?.avg)}) — <Verdict pass={c.position?.pass ?? null} />.
+                        The study&apos;s verdict would be <Verdict pass={c.pass} />
+                        {now === undefined || now === c.pass
+                          ? " (the same as without the correction)."
+                          : " (it changes with the correction)."}
+                      </p>
+                    );
+                  })}
                 </div>
               ) : a.can.run && s.dataStatus === "received" && !d.closedAt ? (
                 <Button
@@ -619,7 +626,8 @@ export function AnalysisPanel({ a }: { a: StudyAnalysis }) {
               <p>
                 <span className="text-xs text-muted-foreground">Client decision:</span>{" "}
                 <b>{DEVIATION_DECISION_LABELS[d.decision]}</b>, {d.decidedByName}
-                {d.decidedByTitle ? ` (${d.decidedByTitle})` : ""} on {d.decidedOn}
+                {d.decidedByTitle ? ` (${d.decidedByTitle})` : ""} on{" "}
+                {d.decidedOn ? formatDate(d.decidedOn) : "—"}
                 {d.decisionNote ? ` — ${d.decisionNote}` : ""}. Recorded by {d.recordedBy}.{" "}
                 {d.decisionFile ? (
                   <a

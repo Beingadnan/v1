@@ -162,8 +162,10 @@ export function useOutbox(studyId: string, onDone?: (o: Outcome) => void) {
       try {
         const result = await send(full);
         if (!result.ok && result.error.startsWith(SIGNED_OUT)) {
+          // Kept and sent after sign-in, but the person is told why, not "no connection".
           setSignedOut(true);
-          return queue();
+          queue();
+          return "signed_out" as const;
         }
         return result;
       } catch {
