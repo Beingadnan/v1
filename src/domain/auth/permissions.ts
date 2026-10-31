@@ -28,6 +28,10 @@ export const ACTIONS = [
   "field.perform",
   "data.import",
   "data.accept",
+  "postcal.record",
+  "analysis.run",
+  "analysis.approve",
+  "deviation.manage",
 ] as const;
 
 export type Action = (typeof ACTIONS)[number];
@@ -57,6 +61,10 @@ const MATRIX: Record<Role, ReadonlySet<Action>> = {
     "field.perform",
     "data.import",
     "data.accept",
+    "postcal.record",
+    "analysis.run",
+    "analysis.approve",
+    "deviation.manage",
     ...FIELD_AND_OFFICE,
   ]),
   team_leader: new Set<Action>([
@@ -69,14 +77,35 @@ const MATRIX: Record<Role, ReadonlySet<Action>> = {
     "field.perform",
     "data.import",
     "data.accept",
+    "postcal.record",
+    "analysis.run",
+    "analysis.approve",
+    "deviation.manage",
     ...FIELD_AND_OFFICE,
   ]),
   // Preparers in the office often receive the Excel by email and upload it.
-  report_preparer: new Set<Action>(["calibration.perform", "data.import", ...FIELD_AND_OFFICE]),
+  // They run the analysis and review excursions; the team leader approves it.
+  report_preparer: new Set<Action>([
+    "calibration.perform",
+    "data.import",
+    "analysis.run",
+    ...FIELD_AND_OFFICE,
+  ]),
   // Engineers place loggers, record times and take photos on site.
-  field_engineer: new Set<Action>(["field.perform", "data.import", ...FIELD_AND_OFFICE]),
+  field_engineer: new Set<Action>([
+    "field.perform",
+    "data.import",
+    "postcal.record",
+    ...FIELD_AND_OFFICE,
+  ]),
   // The lab calibrates the fleet and keeps master certificates current.
-  lab: new Set<Action>(["instruments.manage", "calibration.perform", ...FIELD_AND_OFFICE]),
+  // Post-calibration is often done in the lab when the loggers come back.
+  lab: new Set<Action>([
+    "instruments.manage",
+    "calibration.perform",
+    "postcal.record",
+    ...FIELD_AND_OFFICE,
+  ]),
   // Accounts follow jobs to raise invoices; they see the money, not the work tools.
   accounts: new Set<Action>(["files.view", "clients.view", "jobs.view", "jobs.money"]),
   // Client access is scoped to their own company's released records (phases 2, 9 and 13).

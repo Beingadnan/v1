@@ -116,7 +116,7 @@ export const numberSeries = pgTable(
       t.series,
     ),
     check("number_series_period_check", sql`${t.period} between 0 and 12`),
-    check("number_series_kind_check", sql`${t.kind} in ('job', 'certificate')`),
+    check("number_series_kind_check", sql`${t.kind} in ('job', 'certificate', 'deviation')`),
     check("number_series_value_check", sql`${t.lastValue} >= 0`),
   ],
 );

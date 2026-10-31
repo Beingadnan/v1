@@ -39,7 +39,7 @@ import { parseWorkbook } from "./parse";
 const user = (actor: SessionUser) => ({ type: "user" as const, userId: actor.id });
 
 /** Job statuses in which data can be uploaded and checked. */
-const DATA_OPEN: readonly JobStatus[] = ["field_work", "data_issue", "data_received"];
+const DATA_OPEN: readonly JobStatus[] = ["field_work", "data_issue", "data_received", "analysis"];
 
 export type DataStatus = "none" | "issues" | "checked" | "received";
 
@@ -235,6 +235,8 @@ async function syncJob(tx: Transaction, actor: SessionUser, job: Job, request?: 
         ? "data_received"
         : "field_work";
   if (to === from) return;
+  // Analysis has started: it stays there while the data is complete (a rerun will follow).
+  if (from === "analysis" && to === "data_received") return;
   const why =
     to === "data_issue"
       ? "Data has problems to resolve"

@@ -99,6 +99,13 @@
       "when": 1793358022335,
       "tag": "0013_data_import_kinds",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1793443770052,
+      "tag": "0014_analysis",
+      "breakpoints": true
     }
   ]
 }

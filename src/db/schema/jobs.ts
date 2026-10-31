@@ -170,6 +170,10 @@ export const studies = pgTable(
     dataStatus: text("data_status").notNull().default("none"),
     dataReceivedAt: timestamp("data_received_at", { withTimezone: true }),
     dataReceivedByUserId: uuid("data_received_by_user_id"),
+    /** Phase 7: the analysis run approved for the report (phase 8 builds the report from it). */
+    analysisRunId: uuid("analysis_run_id"),
+    analysisApprovedAt: timestamp("analysis_approved_at", { withTimezone: true }),
+    analysisApprovedByUserId: uuid("analysis_approved_by_user_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

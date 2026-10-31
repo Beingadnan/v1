@@ -14,6 +14,7 @@ import {
   studyPhotos,
   studyPositions,
   studyPrecal,
+  deviations,
   storedFiles,
   type Job,
   type Study,
@@ -46,6 +47,7 @@ import { recheckIfData } from "@/domain/data/data-service";
 import { FieldError } from "./errors";
 import { parseRoomSize, templateLayout } from "./layout";
 import { evaluatePrecal } from "./precal";
+import { openDeviationTx } from "@/domain/analysis/deviation-open";
 import {
   EVENT_LABELS,
   ROUTINE,
@@ -304,7 +306,13 @@ async function placementProblem(
   const [last] = await tx
     .select({ result: studyPrecal.result })
     .from(studyPrecal)
-    .where(and(eq(studyPrecal.studyId, study.id), eq(studyPrecal.instrumentId, inst.id)))
+    .where(
+      and(
+        eq(studyPrecal.studyId, study.id),
+        eq(studyPrecal.instrumentId, inst.id),
+        eq(studyPrecal.phase, "pre"),
+      ),
+    )
     .orderBy(desc(studyPrecal.at))
     .limit(1);
   if (last?.result === "fail") return `${inst.code} failed pre-calibration and can't be used.`;
@@ -721,9 +729,14 @@ const precalSchema = z.object({
   code: z.string().trim().min(1, "Scan or type the logger's ID or serial number.").max(100),
   masterId: z.preprocess((v) => (v === "" ? null : v), z.string().uuid().nullable()),
   quantity: z.enum(["temperature", "humidity"]).default("temperature"),
+  /** 'post': after the study (FT-02), when the loggers are back. */
+  phase: z.enum(["pre", "post"]).default("pre"),
   reference: z.unknown(),
   reading: z.unknown(),
 });
+
+/** Post-calibration happens once the study is over: on site, or in the lab later. */
+const POST_CAL_OK: readonly JobStatus[] = ["field_work", "data_issue", "data_received", "analysis"];
 
 export async function recordPrecal(
   db: Database,
@@ -731,24 +744,46 @@ export async function recordPrecal(
   studyId: string,
   input: unknown,
   request?: RequestInfo,
-): Promise<{ code: string; result: "pass" | "fail"; deviation: string; tolerance: number }> {
-  assertCan(actor, "field.perform");
+): Promise<{
+  code: string;
+  result: "pass" | "fail";
+  deviation: string;
+  tolerance: number;
+  deviationNumber: string | null;
+}> {
   const v = precalSchema.parse(input);
+  const post = v.phase === "post";
+  assertCan(actor, post ? "postcal.record" : "field.perform");
   return db.transaction(async (tx) => {
     const { study, job, equipment: e } = await loadStudy(tx, actor, studyId);
-    assertJob(job, ON_SITE, "Pre-calibration");
+    assertJob(job, post ? POST_CAL_OK : ON_SITE, post ? "Post-calibration" : "Pre-calibration");
     const inst = await findInstrument(tx, actor, v.code);
     const [seen] = await tx.select().from(studyPrecal).where(eq(studyPrecal.id, v.id));
     if (seen) {
+      const [dev] = await tx
+        .select({ number: deviations.number })
+        .from(deviations)
+        .where(eq(deviations.precalId, seen.id));
       return {
         code: inst.code,
         result: seen.result as "pass" | "fail",
         deviation: seen.deviation,
         tolerance: Number(seen.tolerance),
+        deviationNumber: dev?.number ?? null,
       };
     }
     if (inst.tier === "master")
       throw new FieldError(`${inst.code} is a master standard, not a logger.`);
+    const [position] = await tx
+      .select({ id: studyPositions.id, label: studyPositions.label })
+      .from(studyPositions)
+      .where(and(eq(studyPositions.studyId, study.id), eq(studyPositions.instrumentId, inst.id)));
+    if (post && !position) {
+      throw new FieldError(`${inst.code} wasn't used on the ${e.code} study.`);
+    }
+    if (post && study.status !== "completed") {
+      throw new FieldError(`End the ${e.code} study (Times) before post-calibration.`);
+    }
     if (v.masterId) {
       const [m] = await tx
         .select()
@@ -776,6 +811,7 @@ export async function recordPrecal(
       instrumentId: inst.id,
       masterInstrumentId: v.masterId,
       quantity: v.quantity,
+      phase: v.phase,
       reference: r.reference,
       reading: r.reading,
       deviation: r.deviation,
@@ -786,12 +822,13 @@ export async function recordPrecal(
     await recordAudit(tx, {
       organisationId: actor.organisationId,
       actor: user(actor),
-      action: "study.precal_recorded",
+      action: post ? "study.postcal_recorded" : "study.precal_recorded",
       entityType: "study",
       entityId: study.id,
-      summary: `${actor.name} pre-calibrated ${inst.code} for ${e.code}: ${r.result} (deviation ${r.deviation}, ±${r.tolerance})`,
+      summary: `${actor.name} ${post ? "post" : "pre"}-calibrated ${inst.code} for ${e.code}: ${r.result} (deviation ${r.deviation}, ±${r.tolerance})`,
       after: {
         instrument: inst.code,
+        phase: v.phase,
         reference: r.reference,
         reading: r.reading,
         deviation: r.deviation,
@@ -799,7 +836,34 @@ export async function recordPrecal(
       },
       request,
     });
-    return { code: inst.code, result: r.result, deviation: r.deviation, tolerance: r.tolerance };
+    // A logger that fails after the study puts its readings in doubt: a deviation opens by itself.
+    let deviationNumber: string | null = null;
+    if (post && r.result === "fail") {
+      const unit = v.quantity === "humidity" ? "%RH" : "°C";
+      const dev = await openDeviationTx(
+        tx,
+        actor,
+        {
+          studyId: study.id,
+          source: "post_cal",
+          title: `${inst.code}${position ? ` (${position.label})` : ""} failed post-calibration: ${r.deviation} ${unit} against ±${r.tolerance}`,
+          description: `Read ${r.reading} ${unit} against the master's ${r.reference} ${unit} after the study. Its readings during the study may be off by as much.`,
+          positionId: position?.id ?? null,
+          instrumentId: inst.id,
+          precalId: v.id,
+          context: `${e.code} (job ${job.number})`,
+        },
+        request,
+      );
+      deviationNumber = dev.number;
+    }
+    return {
+      code: inst.code,
+      result: r.result,
+      deviation: r.deviation,
+      tolerance: r.tolerance,
+      deviationNumber,
+    };
   });
 }
 

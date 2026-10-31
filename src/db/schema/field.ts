@@ -109,7 +109,7 @@ export const studyEvents = pgTable(
   ],
 );
 
-/** Pre-calibration on site (FT-01): each logger read against a master at a point. */
+/** Pre- and post-calibration (FT-01, FT-02): each logger read against a master at a point. */
 export const studyPrecal = pgTable(
   "study_precal",
   {
@@ -119,6 +119,8 @@ export const studyPrecal = pgTable(
     instrumentId: uuid("instrument_id").notNull(),
     masterInstrumentId: uuid("master_instrument_id"),
     quantity: text("quantity").notNull().default("temperature"),
+    /** 'pre' on site before the study (FT-01), 'post' after it (FT-02). */
+    phase: text("phase").notNull().default("pre"),
     reference: numeric("reference", { precision: 10, scale: 4 }).notNull(),
     reading: numeric("reading", { precision: 10, scale: 4 }).notNull(),
     deviation: numeric("deviation", { precision: 10, scale: 4 }).notNull(),
@@ -148,6 +150,7 @@ export const studyPrecal = pgTable(
     }).onDelete("restrict"),
     check("study_precal_result_check", sql`${t.result} in (${list(PRECAL_RESULTS)})`),
     check("study_precal_quantity_check", sql`${t.quantity} in ('temperature', 'humidity')`),
+    check("study_precal_phase_check", sql`${t.phase} in ('pre', 'post')`),
   ],
 );
 

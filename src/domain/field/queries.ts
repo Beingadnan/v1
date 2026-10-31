@@ -198,6 +198,7 @@ export async function getFieldStudy(db: Database, actor: SessionUser, studyId: s
       tolerance: studyPrecal.tolerance,
       result: studyPrecal.result,
       quantity: studyPrecal.quantity,
+      phase: studyPrecal.phase,
       at: studyPrecal.at,
     })
     .from(studyPrecal)

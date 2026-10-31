@@ -23,7 +23,7 @@ export async function allocateNumber(
   tx: Transaction,
   input: {
     organisationId: string;
-    kind: "job" | "certificate";
+    kind: "job" | "certificate" | "deviation";
     format: string;
     date: Date;
     siteCode?: string;
@@ -92,7 +92,7 @@ export async function noteUsedNumber(
   tx: Transaction,
   input: {
     organisationId: string;
-    kind: "job" | "certificate";
+    kind: "job" | "certificate" | "deviation";
     format: string;
     number: string;
     /** QA Tech's sites, to turn BHIWANDI back into the site code BHW. */
