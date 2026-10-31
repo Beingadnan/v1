@@ -11,6 +11,25 @@ Architecture decisions: [docs/adr/](docs/adr/).
 
 ## Status
 
+**Phase 7 — Analysis, post-calibration and deviations.** From confirmed data to the
+report's numbers:
+
+- **Per position and cycle:** minimum, maximum and average with their times, MKT,
+  %RH, pass/fail against the study's limits; hot and cold spots by average, as on
+  QA Tech's page 5. Ambient positions are shown, not judged.
+- **Excursions** grouped per position and limit, each accepted with a reason or raised
+  as a deviation. **Door-open recovery, power-failure holdover and recovery, and F0**
+  over the recorded hold.
+- **Every run is kept and never changed** (engine version, constants, file hashes,
+  decisions). A run whose inputs changed shows as out of date.
+- **Post-calibration (FT-02)** on the phone or in the lab. A failure opens deviation
+  QT/DEV/YYYY/NNNN by itself, with the impact of the logger's error worked out.
+- **Deviations:** QA Tech's assessment, then the client QA head's decision (No impact,
+  Exclude probe, Repeat study) by name and date, with an optional signed scan.
+- **Approval** of one run by the team leader, only when everything is reviewed. A new
+  deviation takes it back.
+- Golden tests: BE-WF-02 matches page 5 exactly; WH013 matches its summary rows.
+
 **Phase 6 — Data import and validation.** The logger Excel or CSV, as it comes from site:
 
 - **Read by content:** header lines, serials over a units row, split or combined
