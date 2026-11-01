@@ -77,7 +77,7 @@ const loose = (s: string) => s.toUpperCase().replace(/[\s_]/g, "");
 
 /** Which position each channel belongs to: by serial, then logger ID, then position label. */
 export function matchChannels(
-  channels: Pick<ChannelInfo, "id" | "serial" | "manual">[],
+  channels: (Pick<ChannelInfo, "id" | "serial" | "manual"> & { header?: string })[],
   positions: PositionInfo[],
 ): Map<string, Match> {
   const out = new Map<string, Match>();
@@ -103,6 +103,19 @@ export function matchChannels(
       const byLabel = positions.find((p) => loose(p.label) === loose(s));
       if (bySerial) m = { positionId: bySerial.id, how: "serial" };
       else if (byCode) m = { positionId: byCode.id, how: "code" };
+      else if (byLabel) m = { positionId: byLabel.id, how: "label" };
+    }
+    // A logger ID or position label anywhere in the header ("Freezer 2 TRH-3601 °C").
+    if (m.how === "none" && ch.header) {
+      const words = new Set(
+        ch.header
+          .split(/[\s,;|/()]+/)
+          .filter(Boolean)
+          .map(loose),
+      );
+      const byCode = positions.find((p) => p.logger && words.has(loose(p.logger.code)));
+      const byLabel = positions.find((p) => words.has(loose(p.label)));
+      if (byCode) m = { positionId: byCode.id, how: "code" };
       else if (byLabel) m = { positionId: byLabel.id, how: "label" };
     }
     out.set(ch.id, m);

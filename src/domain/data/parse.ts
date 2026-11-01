@@ -338,8 +338,19 @@ function parseSheet(sheet: Sheet): ParsedSheet | null {
     columns.push(c);
   }
 
+  // A title line right above the table ("Equipment ID. … BE-WF-02") isn't a column
+  // header: with three or more reading columns, a line naming at most one of them is left out.
+  let lines = headerRows.map((_, li) => columns.map((c) => headerOf(c)[li] ?? ""));
+  if (columns.length >= 3) {
+    const kept = lines.filter((line) => line.filter(Boolean).length > 1);
+    if (kept.length > 0 && kept.length < lines.length) {
+      notes.push(
+        `${lines.length - kept.length} title line${lines.length - kept.length === 1 ? "" : "s"} above the table left out of the column names.`,
+      );
+      lines = kept;
+    }
+  }
   // A serial written once over its °C and %RH columns applies to both.
-  const lines = headerRows.map((_, li) => columns.map((c) => headerOf(c)[li] ?? ""));
   for (let li = 0; li < lines.length - 1; li += 1) {
     const line = lines[li]!;
     const below = lines[li + 1]!;

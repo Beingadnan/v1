@@ -123,6 +123,27 @@ describe.skipIf(!has("Refrigerator_Temperature_Mapping_Raw_Data.xlsx"))(
 describe("messy input", () => {
   const sheet = (rows: Cell[][]): Sheet[] => [{ name: "S", rows }];
 
+  it("leaves a title line straight above the table out of the column names", () => {
+    const r = parseWorkbook(
+      sheet([
+        ["Equipment ID.", null, "BE-WF-02"],
+        ["Date", "Time", "TRH-3601", "TRH-3602", "T-TRH0124"],
+        [null, null, "°C", "°C", "°C"],
+        ["31.10.2026", "10:00", -22.2, -22.1, -22.6],
+        ["31.10.2026", "10:10", -22.3, -22.2, -22.6],
+        ["31.10.2026", "10:20", -22.5, -22.3, -22.7],
+      ]),
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.best.channels.map((c) => c.header)).toEqual([
+      "TRH-3601 °C",
+      "TRH-3602 °C",
+      "T-TRH0124 °C",
+    ]);
+    expect(r.best.notes.join(" ")).toMatch(/1 title line above the table left out/);
+  });
+
   it("reads numbers with units and commas, and reports what it can't read", () => {
     const r = parseWorkbook(
       sheet([

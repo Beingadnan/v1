@@ -81,6 +81,19 @@ describe("matching channels to positions", () => {
   });
 });
 
+describe("matching by a logger ID inside the header", () => {
+  it("finds the ID among other words, as typed by hand on a sheet", () => {
+    const m = matchChannels(
+      [
+        { id: "a", serial: "WF-02", header: "BE-WF-02 E-TRH0002 °C", manual: null },
+        { id: "b", serial: null, header: "Freezer (L-03) °C", manual: null },
+      ],
+      positions,
+    );
+    expect([...m.values()].map((x) => `${x.positionId}:${x.how}`)).toEqual(["p2:code", "p3:label"]);
+  });
+});
+
 describe("checks", () => {
   it("passes complete data with no issues", () => {
     const r = checkData({ ...base, channels: SERIALS.map((s) => channel(s)) });
