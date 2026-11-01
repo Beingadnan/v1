@@ -64,9 +64,10 @@ The test checks the numbers and text by extracting the PDF's text.
 - **Ashraf's sign-off** on the look, side by side with the issued BE-WF-02.
 - **Templates for FT-06** (autoclave), **FT-10/11** (warehouse) and **the WCR**: waiting
   for QA Tech's blank forms.
-- **The letterhead:** Neon's organisation settings need QA Tech's letterhead image. The
-  text letterhead is used until then. Footer details (registered office, CIN) come
-  from settings.
+- **The letterhead:** Settings → Letterhead now takes an image. On Neon it holds a crop
+  of the scanned BE-WF-02 letterhead (300 dpi, background whitened), and the 11-page
+  draft prints it. Replace it with QA Tech's original file when they send it: the crop
+  is a little soft. Footer details (registered office, CIN) come from settings.
 - **Signatures:** the Done By name prints. Electronic sign-off (Checked By, Reviewed
   By, Approved By) is phase 9.
 
