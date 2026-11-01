@@ -40,7 +40,15 @@ const nextConfig: NextConfig = {
     },
   },
   async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
+    return [
+      { source: "/:path*", headers: securityHeaders },
+      // The report preview shows the PDF in a frame on our own Report tab (phase 8).
+      // Later rules win for the same header, so only this route may be framed, by us.
+      {
+        source: "/studies/:studyId/report/:reportId",
+        headers: [{ key: "X-Frame-Options", value: "SAMEORIGIN" }],
+      },
+    ];
   },
 };
 

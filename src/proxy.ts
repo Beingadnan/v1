@@ -39,9 +39,16 @@ export function proxy(request: NextRequest) {
   requestHeaders.set("Content-Security-Policy", csp);
 
   const response = NextResponse.next({ request: { headers: requestHeaders } });
-  response.headers.set("Content-Security-Policy", csp);
+  // A report PDF is shown in a frame on our own Report tab: same-origin framing only.
+  response.headers.set(
+    "Content-Security-Policy",
+    REPORT_PDF.test(pathname) ? "default-src 'none'; frame-ancestors 'self'" : csp,
+  );
   return response;
 }
+
+/** The report PDF route (src/app/(staff)/studies/[studyId]/report/[reportId]). */
+const REPORT_PDF = /^\/studies\/[^/]+\/report\/[^/]+$/;
 
 export function buildContentSecurityPolicy(nonce: string, isDev: boolean): string {
   const directives = [

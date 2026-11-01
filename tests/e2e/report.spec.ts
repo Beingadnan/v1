@@ -29,6 +29,9 @@ test("phase 8: the team leader drafts FE-WF-05's report from the approved analys
   const src = await frame.getAttribute("src");
   const draft = await page.request.get(src!);
   expect(draft.headers()["content-type"]).toBe("application/pdf");
+  // It may be framed by our own page (and only by it), or the preview stays blank.
+  expect(draft.headers()["x-frame-options"]).toBe("SAMEORIGIN");
+  expect(draft.headers()["content-security-policy"]).toContain("frame-ancestors 'self'");
   expect((await draft.body()).subarray(0, 5).toString()).toBe("%PDF-");
 
   // The conclusion starts from the template and can be edited.
