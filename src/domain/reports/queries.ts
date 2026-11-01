@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, ne } from "drizzle-orm";
 
 import type { Database } from "@/db/client-factory";
 import { clientCompanies, equipment, jobs, studies, studyReports, users } from "@/db/schema";
@@ -147,6 +147,8 @@ export async function listReports(db: Database, actor: SessionUser) {
       and(
         eq(studyReports.organisationId, actor.organisationId),
         inArray(studyReports.status, ["draft", "frozen"]),
+        // A cancelled job's reports are void: they stay on the study, not in this list.
+        ne(jobs.status, "cancelled"),
       ),
     )
     .orderBy(desc(studyReports.createdAt))

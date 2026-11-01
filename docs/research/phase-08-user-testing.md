@@ -69,3 +69,44 @@ The test checks the numbers and text by extracting the PDF's text.
   from settings.
 - **Signatures:** the Done By name prints. Electronic sign-off (Checked By, Reviewed
   By, Approved By) is phase 9.
+
+## On Neon, as QA Tech would use it (1 Nov 2026)
+
+One person stepped through each role in Chrome, on test job QT/J/2026/0005 for
+BE-WF-02. The job was cancelled afterwards ("Test job made by Claude while testing
+phase 8 on Neon").
+
+1. **Manager:** creates the job (PO TEST-P8, team leader on the team). The readiness
+   list is ticked, and "Book loggers" books 10 for 9. The job is Ready.
+2. **Field engineer:**
+   - My studies → Today → BE-WF-02;
+   - fills the 9-position template and saves it;
+   - scans 9 loggers in one burst. Neon took about 70 s for all of them; the queue
+     placed every one, in order.
+   - records the times: started 31 Oct 10:00, ended 1 Nov 10:00.
+3. **Data provider:** uploads the logger Excel. It has a title line above the
+   header and logger IDs as column names. All 9 matched, nothing wrong (the phase 7
+   fix holds).
+4. **Team leader:** confirms the data. The job moved to Data received.
+5. **Report preparer:**
+   - My studies → To analyse → Run;
+   - L-05 hot −16.7 and L-04 cold −21.9, as on the issued report;
+   - accepts L-08's 20-minute excursion with the site's door-log reason.
+6. **Team leader:** approves run 1.
+7. **Report preparer:** Reports → Draft the report. The job moved to Report draft.
+   - The 11-page draft preview shows the template wording with the accepted
+     excursion.
+   - Freeze was refused, correctly: the loggers' certificate PDL-01 (imported from
+     the old register) has no PDF.
+
+| Found                                                                                                                                                                                                                                 | Fix                                                                                                                                                                                                                                             |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **The preview frame said "localhost refused to connect".** Every response sends `X-Frame-Options: DENY` and `frame-ancestors 'none'`, so the app refused to show its own PDF. The browser test only checked that the frame was there. | The report PDF route alone sends `SAMEORIGIN` and `frame-ancestors 'self'`. The browser test now checks these headers. The 11-page preview shows on Neon.                                                                                       |
+| **There was no way to add the scan of an imported or outside-lab certificate after it was recorded,** so a report using PDL-01 could never be frozen.                                                                                 | The certificate page shows "Attach the certificate PDF" when there is no file (PDF, PNG or JPEG). It is audited, and an attached file can't be replaced. The freeze message says where to go.                                                   |
+| A cancelled job's draft stayed on the Reports page.                                                                                                                                                                                   | The Reports page leaves out cancelled jobs' reports. They stay on the study.                                                                                                                                                                    |
+| The report number came out as `…/BE-WF-02-3`. The two cancelled test jobs this autumn had reserved the plain number and `-2`.                                                                                                         | **Open, a decision for QA Tech:** should a cancelled job give its reserved report number back?                                                                                                                                                  |
+| The first scan burst in Chrome lost 8 of 9 scans.                                                                                                                                                                                     | Not the app: the browser tool's click missed the field. With the field focused, as a scanner gun types into it, every scan was placed. The burst was also checked locally at Neon speed (5 s per reply), typed fast and slow: 9 of 9 each time. |
+
+**Not done on purpose:** attaching a test scan to PDL-01. It is a real certificate,
+and an attached file is permanent, so a made-up scan would be false evidence on a
+real record. Freezing waits for QA Tech's real scan of PDL-01.
