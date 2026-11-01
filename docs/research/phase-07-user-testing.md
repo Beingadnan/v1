@@ -93,3 +93,33 @@ scrolls inside its card.
 - **Excursion acceptance rules:** QA Tech has to decide whether a preparer may accept
   an excursion, or only a team leader. Today a preparer may, and a team leader approves
   the whole analysis.
+
+## On Neon, from India (1 Nov 2026)
+
+Test job QT/J/2026/0004 for BE-WF-02 was built in Chrome, then cancelled ("Test job
+made by Claude while testing phase 7 on Neon"):
+
+1. 10 loggers were booked, and 9 placed in one scan burst.
+2. The study ran 31 Oct 10:00 – 1 Nov 10:00.
+3. BE-WF-02's readings were uploaded with logger IDs as column headers. L-08 had two
+   readings at −14.6.
+4. The data was confirmed.
+5. Post-cal was done for all 9 loggers. TRH-3604 read 0.8 high, and QT/DEV/2026/0001
+   opened by itself. One logger was entered by its serial, 84028451, which T-TRH0124
+   and T-TRH0132 share; it was resolved to the placed T-TRH0124.
+6. Run 1:
+   - L-05 was the hot spot (−16.7) and L-04 the cold spot (−21.9), as on page 5.
+   - The L-08 excursion was found: 20 min, peak −14.6.
+   - The impact run showed L-04 still passing with −0.8 °C applied, and the study's
+     verdict unchanged.
+7. The excursion was accepted, the assessment written, and "No impact" recorded. Run 1
+   was approved, and the job moved to Analysis by itself.
+
+| Found                                                                                                                                                        | Fix                                                                                                                                                                               |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **A title line straight above the header spoiled every column name** ("BE-WF-02 TRH-3601 °C"). The ID picked from it was "WF-02", so 0 of 9 loggers matched. | With three or more reading columns, a header line naming at most one of them is left out, and the notes say so. A logger ID or position label anywhere in the header now matches. |
+| **After that fix, 9 of 9 matched with 0 problems, but no Confirm button.** The stored status still said "issues" from the older rules.                       | The Data tab works out its status from the live check. Confirming checks again before it records anything.                                                                        |
+| Typing the next logger while the previous post-cal was still sending (5–10 s on Neon) gave "TRH-3603TRH-3604".                                               | Correctly refused as "not in the instrument register". **Open:** the field could clear as soon as the reading is sent, rather than when the answer arrives.                       |
+| Success messages ("Run 1 done.") show a few seconds before the page refreshes on Neon.                                                                       | **Open**, as in phase 6. Moving the database to Singapore should shorten it.                                                                                                      |
+| The job page still shows "Ready for field work? Everything is in place." at Analysis.                                                                        | **Open:** hide the checklist once field work has started.                                                                                                                         |
+| Neon has no master standards, so post-cal records "Master: Not recorded".                                                                                    | **Open:** add QA Tech's masters to the register.                                                                                                                                  |
