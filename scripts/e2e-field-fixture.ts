@@ -8,9 +8,20 @@ import { randomUUID } from "node:crypto";
 
 import { eq } from "drizzle-orm";
 import ExcelJS from "exceljs";
+import { PDFDocument } from "pdf-lib";
 
 import type { Database } from "@/db/client-factory";
-import { clientCompanies, sites, studies, users } from "@/db/schema";
+import {
+  certificates,
+  clientCompanies,
+  instruments,
+  sites,
+  studies,
+  studyPositions,
+  users,
+} from "@/db/schema";
+import { approveAnalysis, reviewExcursion, runAnalysis } from "@/domain/analysis/analysis-service";
+import { getStudyAnalysis } from "@/domain/analysis/queries";
 import { toSessionUser } from "@/domain/auth/session-service";
 import { createCompany } from "@/domain/clients/company-service";
 import { createEquipment } from "@/domain/clients/equipment-service";
@@ -19,7 +30,13 @@ import { addDataFile, markReceived } from "@/domain/data/data-service";
 import { createExternalCertificate } from "@/domain/instruments/certificate-service";
 import { bulkAddInstruments } from "@/domain/instruments/instrument-service";
 import { listModels } from "@/domain/instruments/queries";
-import { layoutTemplate, placeLogger, recordEvent, saveLayout } from "@/domain/field/field-service";
+import {
+  layoutTemplate,
+  placeLogger,
+  recordEvent,
+  recordPrecal,
+  saveLayout,
+} from "@/domain/field/field-service";
 import { autoBook, createJob, setReadiness } from "@/domain/jobs/job-service";
 import { getJob } from "@/domain/jobs/queries";
 import type { BlobStore } from "@/lib/storage/blob-store";
@@ -281,6 +298,13 @@ export async function seedAnalysisJob(
   db: Database,
   blobs: BlobStore,
   emails: { manager: string; lead: string; engineer: string },
+  o: { code: string; prefix: string; serial: string; cert: string; po: string } = {
+    code: "FE-WF-04",
+    prefix: "G-TRH",
+    serial: "7730",
+    cert: "QATECH/BHIWANDI/E2E/PDL-03",
+    po: "E2E-PO-7",
+  },
 ) {
   const who = async (email: string) => {
     const [row] = await db.select().from(users).where(eq(users.email, email));
@@ -302,7 +326,7 @@ export async function seedAnalysisJob(
     {
       siteId,
       departmentId: null,
-      code: "FE-WF-04",
+      code: o.code,
       name: "Cold Storage (Walk In Freezer 4)",
       type: "walk_in_freezer",
       location: "",
@@ -328,14 +352,17 @@ export async function seedAnalysisJob(
   );
   const [bhw] = await db.select().from(sites).where(eq(sites.code, "BHW"));
   const model = (await listModels(db, manager)).find((m) => m.model === "EBI 20-TH1")!;
-  const serials = Array.from({ length: 9 }, (_, i) => `7730${String(i + 1).padStart(4, "0")}`);
+  const serials = Array.from(
+    { length: 9 },
+    (_, i) => `${o.serial}${String(i + 1).padStart(4, "0")}`,
+  );
   const loggers = await bulkAddInstruments(
     db,
     manager,
     {
       modelId: model.id,
       homeSiteId: bhw?.id ?? "",
-      codePrefix: "G-TRH",
+      codePrefix: o.prefix,
       serials: serials.join("\n"),
     },
     req,
@@ -345,7 +372,7 @@ export async function seedAnalysisJob(
     db,
     manager,
     {
-      number: "QATECH/BHIWANDI/E2E/PDL-03",
+      number: o.cert,
       ulrNo: "",
       labName: "QA Tech Lab",
       calibratedOn: iso(new Date(now.getTime() - 30 * 86_400_000)),
@@ -361,7 +388,7 @@ export async function seedAnalysisJob(
       companyId: company.id,
       clientSiteId: siteId,
       siteId: bhw?.id ?? "",
-      poNumber: "E2E-PO-7",
+      poNumber: o.po,
       plannedStart: iso(new Date(now.getTime() - 86_400_000)),
       plannedEnd: iso(now),
       team: [
@@ -413,12 +440,90 @@ export async function seedAnalysisJob(
   const stored = await storeFile(db, blobs, {
     organisationId: lead.organisationId,
     actor: { type: "user", userId: lead.id },
-    fileName: "FE-WF-04 raw data.xlsx",
+    fileName: `${o.code} raw data.xlsx`,
     bytes: new Uint8Array(await wb.xlsx.writeBuffer()),
     maxBytes: 10 * 1024 * 1024,
   });
   if (!stored.ok) throw new Error(stored.message);
   await addDataFile(db, blobs, lead, studyId, { fileId: stored.file.id }, req);
   await markReceived(db, lead, studyId, req);
-  return job;
+  return { job, studyId, lead };
+}
+
+/**
+ * A job at Report draft's door, for the phase 8 end-to-end test: FE-WF-05 like
+ * FE-WF-04, post-calibrated, analysed and approved, with the loggers'
+ * certificate PDF on file so a report can be frozen.
+ */
+export async function seedReportJob(
+  db: Database,
+  blobs: BlobStore,
+  emails: { manager: string; lead: string; engineer: string },
+) {
+  const { studyId, lead } = await seedAnalysisJob(db, blobs, emails, {
+    code: "FE-WF-05",
+    prefix: "H-TRH",
+    serial: "7740",
+    cert: "QATECH/BHIWANDI/E2E/PDL-04",
+    po: "E2E-PO-8",
+  });
+  const req = { userAgent: "e2e-prepare" };
+  const [eng] = await db.select().from(users).where(eq(users.email, emails.engineer));
+  const engineer = toSessionUser(eng!)!;
+  const placed = await db
+    .select({ code: instruments.code })
+    .from(studyPositions)
+    .innerJoin(instruments, eq(instruments.id, studyPositions.instrumentId))
+    .where(eq(studyPositions.studyId, studyId));
+  for (const p of placed) {
+    await recordPrecal(
+      db,
+      engineer,
+      studyId,
+      {
+        id: randomUUID(),
+        code: p.code,
+        masterId: "",
+        phase: "post",
+        reference: "-20.0",
+        reading: "-20.1",
+      },
+      req,
+    );
+  }
+  const run = await runAnalysis(db, lead, studyId, req);
+  // L-05's 30-minute excursion, accepted as on site.
+  const a = (await getStudyAnalysis(db, lead, studyId))!;
+  for (const e of a.excursions) {
+    await reviewExcursion(
+      db,
+      lead,
+      studyId,
+      {
+        fingerprint: e.fingerprint,
+        decision: "accepted",
+        reason: "Door opened for loading, logged on site",
+      },
+      req,
+    );
+  }
+  await approveAnalysis(db, lead, studyId, run.runId, req);
+  // The lab's certificate PDF for the loggers.
+  const pdf = await PDFDocument.create();
+  pdf
+    .addPage([595.28, 841.89])
+    .drawText("QATECH/BHIWANDI/E2E/PDL-04 (e2e certificate)", { x: 60, y: 760 });
+  const stored = await storeFile(db, blobs, {
+    organisationId: lead.organisationId,
+    actor: { type: "user", userId: lead.id },
+    fileName: "PDL-04.pdf",
+    bytes: await pdf.save(),
+    maxBytes: 10 * 1024 * 1024,
+  });
+  if (!stored.ok) throw new Error(stored.message);
+  await db
+    .update(certificates)
+    .set({ fileId: stored.file.id })
+    .where(eq(certificates.number, "QATECH/BHIWANDI/E2E/PDL-04"));
+  return studyId;
 }

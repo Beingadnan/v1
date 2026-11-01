@@ -15,7 +15,7 @@ import { bootstrapAdmin, inviteUser, setPasswordWithToken } from "@/domain/auth/
 import { toSessionUser } from "@/domain/auth/session-service";
 import { LocalBlobStore } from "@/lib/storage/blob-store";
 
-import { seedAnalysisJob, seedDataJob, seedFieldJob } from "./e2e-field-fixture";
+import { seedAnalysisJob, seedDataJob, seedFieldJob, seedReportJob } from "./e2e-field-fixture";
 
 export const E2E_USERS = {
   admin: { email: "admin@e2e.test", name: "Asha Admin", password: "calibrated sensor chain 1" },
@@ -115,15 +115,15 @@ async function main(): Promise<void> {
       lead: E2E_USERS.lead.email,
       engineer: E2E_USERS.engineer.email,
     });
-    await seedAnalysisJob(
-      db, // Where the standalone server (cwd .next/standalone) keeps files in e2e runs.
-      new LocalBlobStore(path.resolve(".next/standalone/.data/e2e-storage")),
-      {
-        manager: E2E_USERS.manager.email,
-        lead: E2E_USERS.lead.email,
-        engineer: E2E_USERS.engineer.email,
-      },
-    );
+    // Where the standalone server (cwd .next/standalone) keeps files in e2e runs.
+    const blobs = new LocalBlobStore(path.resolve(".next/standalone/.data/e2e-storage"));
+    const people = {
+      manager: E2E_USERS.manager.email,
+      lead: E2E_USERS.lead.email,
+      engineer: E2E_USERS.engineer.email,
+    };
+    await seedAnalysisJob(db, blobs, people);
+    await seedReportJob(db, blobs, people);
     console.log("e2e database ready");
   } finally {
     await pool.end();

@@ -7,6 +7,7 @@ import { db } from "@/db/client";
 import { can } from "@/domain/auth/permissions";
 import { getStudyAnalysis } from "@/domain/analysis/queries";
 import { getStudyData } from "@/domain/data/queries";
+import { getStudyReport } from "@/domain/reports/queries";
 import { getFieldStudy } from "@/domain/field/queries";
 import { STUDY_STATUS_LABELS } from "@/domain/field/types";
 import { WORK_TYPE_LABELS, type WorkType } from "@/domain/jobs/types";
@@ -14,6 +15,7 @@ import { requirePermission } from "@/lib/auth/dal";
 import { cn } from "@/lib/utils";
 
 import { AnalysisPanel } from "./analysis-panel";
+import { ReportPanel } from "./report-panel";
 import { DataPanel } from "./data-panel";
 import { LayoutEditor } from "./layout-editor";
 import { RoomSize } from "./room-size";
@@ -34,6 +36,7 @@ const TABS = [
   { key: "data", label: "Data" },
   { key: "postcal", label: "Post-cal" },
   { key: "analysis", label: "Analysis" },
+  { key: "report", label: "Report" },
 ] as const;
 type Tab = (typeof TABS)[number]["key"];
 
@@ -55,15 +58,18 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
       : placed < s.positions.length && !done
         ? "loggers"
         : done
-          ? s.study.dataStatus === "received"
-            ? "analysis"
-            : "data"
+          ? s.study.analysisApprovedAt
+            ? "report"
+            : s.study.dataStatus === "received"
+              ? "analysis"
+              : "data"
           : "times";
   const asked = (await searchParams).tab;
   const tab: Tab = TABS.some((t) => t.key === asked) ? (asked as Tab) : suggested;
   const data = tab === "data" ? await getStudyData(db, actor, studyId) : null;
   const analysis =
     tab === "analysis" || tab === "postcal" ? await getStudyAnalysis(db, actor, studyId) : null;
+  const report = tab === "report" ? await getStudyReport(db, actor, studyId) : null;
   const preRows = s.precal.filter((r) => r.phase === "pre");
   const postRows = s.precal.filter((r) => r.phase === "post");
   const postOpen = ["field_work", "data_issue", "data_received", "analysis"].includes(s.job.status);
@@ -75,7 +81,9 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
   };
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-4">
+    <div
+      className={cn("mx-auto flex flex-col gap-4", tab === "report" ? "max-w-6xl" : "max-w-3xl")}
+    >
       {can(actor, "data.import") ? (
         <Link
           href="/studies"
@@ -119,7 +127,7 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
         <p className="font-mono text-xs break-all text-muted-foreground">{s.study.reportNumber}</p>
       </header>
 
-      {!onSite && !["data", "postcal", "analysis"].includes(tab) ? (
+      {!onSite && !["data", "postcal", "analysis", "report"].includes(tab) ? (
         <p className="rounded-md bg-attention-soft px-3 py-2 text-sm text-attention">
           {s.job.status === "created"
             ? "The job isn't ready for field work yet: the layout can be prepared, but loggers and times wait until it is Ready."
@@ -147,7 +155,9 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
                           ? s.study.analysisApprovedAt
                             ? "✓"
                             : ""
-                          : `${s.cycles.filter((c) => c.done).length}/${s.cycles.length}`;
+                          : t.key === "report"
+                            ? ""
+                            : `${s.cycles.filter((c) => c.done).length}/${s.cycles.length}`;
           return (
             <Link
               key={t.key}
@@ -234,6 +244,10 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
       ) : tab === "analysis" ? (
         analysis ? (
           <AnalysisPanel a={analysis} />
+        ) : null
+      ) : tab === "report" ? (
+        report ? (
+          <ReportPanel r={report} />
         ) : null
       ) : tab === "times" ? (
         <TimesPanel
