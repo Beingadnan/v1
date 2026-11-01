@@ -13,6 +13,7 @@ import {
 } from "@/domain/instruments/calibration-service";
 import {
   cancelCertificate,
+  attachCertificateFile,
   createExternalCertificate,
 } from "@/domain/instruments/certificate-service";
 import { InstrumentsError } from "@/domain/instruments/errors";
@@ -388,4 +389,17 @@ export async function applyInstrumentImportAction(
   if (!result.ok) return result;
   refresh("/instruments/certificates");
   return { ok: true, data: undefined, message: result.data };
+}
+
+export async function attachCertificateFileAction(
+  certificateId: string,
+  fileId: string,
+): Promise<ActionResult> {
+  const actor = await requireUser();
+  const result = await runAction(
+    async () => attachCertificateFile(db, actor, { certificateId, fileId }, await getRequestInfo()),
+    "Certificate PDF attached.",
+  );
+  if (result.ok) refresh(`/instruments/certificates/${certificateId}`, "/instruments/certificates");
+  return result;
 }

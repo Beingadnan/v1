@@ -303,3 +303,62 @@ export async function cancelCertificate(
     });
   });
 }
+
+/**
+ * Attaches the scanned PDF (or image) to an outside-lab or imported
+ * certificate that has none: certificates brought in from the old register
+ * often arrive without their scan, and a report can't be frozen without it.
+ * A certificate that already has its file keeps it.
+ */
+export async function attachCertificateFile(
+  db: Database,
+  actor: SessionUser,
+  input: { certificateId: string; fileId: string },
+  request: RequestInfo,
+): Promise<void> {
+  assertCan(actor, "instruments.manage");
+  if (!isUuid(input.certificateId) || !isUuid(input.fileId)) {
+    throw new InstrumentsError("That certificate does not exist.");
+  }
+  await db.transaction(async (tx) => {
+    const [cert] = await tx
+      .select()
+      .from(certificates)
+      .where(
+        and(
+          eq(certificates.id, input.certificateId),
+          eq(certificates.organisationId, actor.organisationId),
+        ),
+      )
+      .for("update");
+    if (!cert) throw new InstrumentsError("That certificate does not exist.");
+    if (cert.kind === "internal") {
+      throw new InstrumentsError("QA Tech's own certificates print their PDF from the record.");
+    }
+    if (cert.fileId) throw new InstrumentsError(`${cert.number} already has its PDF.`);
+    const [file] = await tx
+      .select()
+      .from(storedFiles)
+      .where(
+        and(eq(storedFiles.id, input.fileId), eq(storedFiles.organisationId, actor.organisationId)),
+      );
+    if (!file) throw new InstrumentsError("That file was not uploaded.");
+    if (!/^(application\/pdf|image\/(png|jpeg))$/.test(file.mimeType)) {
+      throw new InstrumentsError("Attach the certificate as a PDF, or a PNG or JPEG scan.");
+    }
+    await tx
+      .update(certificates)
+      .set({ fileId: file.id, updatedAt: new Date() })
+      .where(eq(certificates.id, cert.id));
+    await recordAudit(tx, {
+      organisationId: actor.organisationId,
+      actor: { type: "user", userId: actor.id },
+      action: "certificate.file_attached",
+      entityType: "certificate",
+      entityId: cert.id,
+      summary: `${actor.name} attached the PDF of certificate ${cert.number} (${file.firstFileName})`,
+      after: { fileId: file.id, sha256: file.sha256, fileName: file.firstFileName },
+      request,
+    });
+  });
+}

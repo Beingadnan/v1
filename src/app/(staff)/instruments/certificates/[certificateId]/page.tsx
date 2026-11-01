@@ -18,6 +18,7 @@ import { formatDate, formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import { CERTIFICATE_STATUS, KIND_LABELS } from "../../certificate-labels";
+import { AttachCertificateFile } from "./attach-file";
 import { CalibrationSheet } from "./calibration-sheet";
 import { SignPanel } from "./sign-panel";
 
@@ -148,6 +149,10 @@ export default async function CertificatePage({
         <p role="alert" className="rounded-md bg-fail-soft px-3 py-2 text-sm text-fail">
           Cancelled: {cert.cancelledReason}
         </p>
+      ) : null}
+
+      {!hasPdf && cert.status !== "cancelled" && can(actor, "instruments.manage") ? (
+        <AttachCertificateFile certificateId={cert.id} />
       ) : null}
 
       {internal ? <Stepper steps={steps} /> : null}

@@ -15,6 +15,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { auditLog, certificates, jobs, studyReports, users } from "@/db/schema";
 import { approveAnalysis, runAnalysis } from "@/domain/analysis/analysis-service";
+import { attachCertificateFile } from "@/domain/instruments/certificate-service";
 import { ForbiddenError } from "@/domain/auth/permissions";
 import { toSessionUser, type SessionUser } from "@/domain/auth/session-service";
 import {
@@ -186,10 +187,27 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 8: the BE-WF-02 report", () =
       maxBytes: 10 * 1024 * 1024,
     });
     if (!stored.ok) throw new Error(stored.message);
-    await db
-      .update(certificates)
-      .set({ fileId: stored.file.id })
+    const [pdl77] = await db
+      .select({ id: certificates.id })
+      .from(certificates)
       .where(eq(certificates.number, "QATECH/BHIWANDI/04/26/PDL-77"));
+    await expect(
+      attachCertificateFile(
+        db,
+        accounts,
+        { certificateId: pdl77!.id, fileId: stored.file.id },
+        req,
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+    await attachCertificateFile(
+      db,
+      lead,
+      { certificateId: pdl77!.id, fileId: stored.file.id },
+      req,
+    );
+    await expect(
+      attachCertificateFile(db, lead, { certificateId: pdl77!.id, fileId: stored.file.id }, req),
+    ).rejects.toThrow("QATECH/BHIWANDI/04/26/PDL-77 already has its PDF.");
 
     const f = await freezeReport(db, blobs, preparer, reportId, req);
     expect(f.rev).toBe(0);

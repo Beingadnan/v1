@@ -53,6 +53,7 @@ export const AUDIT_ACTIONS = [
   "certificate.returned",
   "certificate.issued",
   "certificate.cancelled",
+  "certificate.file_attached",
   "job.created",
   "job.updated",
   "job.status_changed",

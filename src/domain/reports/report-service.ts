@@ -286,7 +286,7 @@ export async function freezeReport(
   });
   if (built.missing.length > 0) {
     throw new ReportsError(
-      `These certificates have no PDF on file: ${built.missing.join(", ")}. Upload them (Instruments) before freezing.`,
+      `These certificates have no PDF on file: ${built.missing.join(", ")}. Open each one under Instruments > Certificates and attach its PDF, then freeze.`,
     );
   }
   const fileName = `${study0!.reportNumber} ${revLabel(r0.rev)}.pdf`.replace(/[\\/:*?"<>|]+/g, "-");
