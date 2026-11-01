@@ -162,7 +162,13 @@ export async function getStudyData(db: Database, actor: SessionUser, studyId: st
       jobNumber: row.jobNumber,
       jobStatus: row.jobStatus as JobStatus,
       status: study.status,
-      dataStatus: study.dataStatus as DataStatus,
+      // Worked out from the live check, so a stored status from older rules never
+      // hides the Confirm button (confirming checks again before it records anything).
+      dataStatus: (study.dataStatus === "received" || ctx.files.length === 0
+        ? study.dataStatus
+        : open.length > 0
+          ? "issues"
+          : "checked") as DataStatus,
       receivedAt: study.dataReceivedAt,
       receivedBy,
       intervalMinutes: study.intervalMinutes,
