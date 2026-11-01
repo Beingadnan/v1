@@ -32,6 +32,7 @@ export const ACTIONS = [
   "analysis.run",
   "analysis.approve",
   "deviation.manage",
+  "reports.prepare",
 ] as const;
 
 export type Action = (typeof ACTIONS)[number];
@@ -65,6 +66,7 @@ const MATRIX: Record<Role, ReadonlySet<Action>> = {
     "analysis.run",
     "analysis.approve",
     "deviation.manage",
+    "reports.prepare",
     ...FIELD_AND_OFFICE,
   ]),
   team_leader: new Set<Action>([
@@ -81,6 +83,7 @@ const MATRIX: Record<Role, ReadonlySet<Action>> = {
     "analysis.run",
     "analysis.approve",
     "deviation.manage",
+    "reports.prepare",
     ...FIELD_AND_OFFICE,
   ]),
   // Preparers in the office often receive the Excel by email and upload it.
@@ -89,6 +92,7 @@ const MATRIX: Record<Role, ReadonlySet<Action>> = {
     "calibration.perform",
     "data.import",
     "analysis.run",
+    "reports.prepare",
     ...FIELD_AND_OFFICE,
   ]),
   // Engineers place loggers, record times and take photos on site.

@@ -122,6 +122,7 @@ describe("permission matrix", () => {
           "jobs.view",
           "postcal.record",
           "ratecard.manage",
+          "reports.prepare",
           "settings.manage",
           "settings.view",
           "users.manage",
@@ -171,6 +172,7 @@ describe("permission matrix", () => {
           "jobs.view",
           "postcal.record",
           "ratecard.manage",
+          "reports.prepare",
           "settings.view",
           "users.view",
         ],
@@ -183,6 +185,7 @@ describe("permission matrix", () => {
           "files.view",
           "instruments.view",
           "jobs.view",
+          "reports.prepare",
         ],
         "team_leader": [
           "analysis.approve",
@@ -203,6 +206,7 @@ describe("permission matrix", () => {
           "jobs.money",
           "jobs.view",
           "postcal.record",
+          "reports.prepare",
         ],
       }
     `);

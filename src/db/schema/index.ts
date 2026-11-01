@@ -6,6 +6,7 @@ export * from "./field";
 export * from "./instruments";
 export * from "./jobs";
 export * from "./organisations";
+export * from "./reports";
 export * from "./settings";
 export * from "./signatures";
 export * from "./stored-files";

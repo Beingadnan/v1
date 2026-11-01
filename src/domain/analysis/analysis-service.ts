@@ -53,7 +53,8 @@ import {
 const user = (actor: SessionUser) => ({ type: "user" as const, userId: actor.id });
 
 /** Job statuses in which a study can be analysed. */
-const ANALYSIS_OPEN: readonly JobStatus[] = ["data_received", "analysis"];
+// Report draft and rework too: a data fix after the report was started needs a rerun.
+const ANALYSIS_OPEN: readonly JobStatus[] = ["data_received", "analysis", "report_draft", "rework"];
 /** Deviations can be worked on from the end of the study until the report is out. */
 const DEVIATION_OPEN: readonly JobStatus[] = [
   "field_work",
@@ -864,7 +865,7 @@ export async function approveAnalysis(
   return db.transaction(async (tx) => {
     const l = await load(tx, actor, studyId);
     const s = l.job.status as JobStatus;
-    if (s !== "analysis") {
+    if (!["analysis", "report_draft", "rework"].includes(s)) {
       throw new AnalysisError(
         `Approving isn't possible while job ${l.job.number} is ${JOB_STATUS_LABELS[s]?.toLowerCase() ?? s}.`,
       );

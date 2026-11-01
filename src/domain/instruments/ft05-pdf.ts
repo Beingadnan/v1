@@ -29,6 +29,10 @@ export type Ft05Context = {
   signatures: { meaning: string; signerName: string; signedAt: Date }[];
   /** Watermark for anything not issued ("DRAFT", "CANCELLED"). */
   watermark?: string | null;
+  /** Annexure copy in a report: these serials are highlighted yellow, as on QA Tech's copies. */
+  highlightSerials?: string[];
+  /** Stamp for a copy ("TRUE COPY"), printed small at the foot of each page. */
+  stamp?: string | null;
 };
 
 const PAGE = { width: 595.28, height: 841.89, margin: 24 };
@@ -203,6 +207,14 @@ class Sheet {
       });
       doc.font("Helvetica").fontSize(6).fillColor("#555555");
       doc.text(ascii(this.number), PAGE.margin, y + 14, { width: 200, lineBreak: false });
+      if (ctx.stamp) {
+        doc.font("Helvetica-Bold").fontSize(8).fillColor("#1f6f3a");
+        doc.text(ascii(ctx.stamp), PAGE.width - PAGE.margin - 120, y + 14, {
+          width: 120,
+          align: "right",
+          lineBreak: false,
+        });
+      }
       if (ctx.watermark) {
         doc.save();
         doc.rotate(-35, { origin: [PAGE.width / 2, PAGE.height / 2] });
@@ -382,6 +394,8 @@ export async function renderFt05(cert: CertificateDetail, ctx: Ft05Context): Pro
         {
           align: "center",
           size: 5.5,
+          fill:
+            it && ctx.highlightSerials?.includes(it.instrument.serialNo) ? "#fff200" : undefined,
         },
       );
     }

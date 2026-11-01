@@ -3,6 +3,7 @@ import "server-only";
 import { ZodError } from "zod";
 
 import { AnalysisError } from "@/domain/analysis/errors";
+import { ReportsError } from "@/domain/reports/errors";
 import { AccountError } from "@/domain/auth/account-service";
 import { ForbiddenError } from "@/domain/auth/permissions";
 import { SettingsError } from "@/domain/admin/settings-service";
@@ -45,7 +46,8 @@ export async function runAction<T>(
       error instanceof JobsError ||
       error instanceof FieldError ||
       error instanceof DataError ||
-      error instanceof AnalysisError
+      error instanceof AnalysisError ||
+      error instanceof ReportsError
     ) {
       return { ok: false, error: error.message };
     }
