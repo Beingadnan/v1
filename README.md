@@ -11,6 +11,30 @@ Architecture decisions: [docs/adr/](docs/adr/).
 
 ## Status
 
+**Phase 8: Reports and PDF.** The mapping report (FT-09), drawn like QA Tech's issued
+BE-WF-02 report, from the approved analysis:
+
+- **Pages:**
+  - cover, and an index with page numbers;
+  - equipment and mapping details, with the loggers and the masters behind their
+    certificates;
+  - sensor diagram (hot red, cold yellow);
+  - temperature (and RH) vs time, with a legend by serial, and the summary table for
+    each cycle;
+  - observation, conclusion, annexure and signature block;
+  - raw data in landscape; post-cal sheet; deviation reports;
+  - the loggers' certificates (serials highlighted, TRUE COPY) and the masters'
+    certificates.
+- **Report tab:**
+  - the PDF itself as the preview;
+  - observation and conclusion that start from templates and can be edited (every
+    edit audited);
+  - **Freeze** keeps the PDF with its SHA-256;
+  - **Rev 01…** needs a reason and supersedes the last frozen revision.
+- **Reports page:** studies ready for a report, and every draft and frozen report.
+- The job moves to Report draft once every study's analysis is approved and a report
+  is started.
+
 **Phase 7 — Analysis, post-calibration and deviations.** From confirmed data to the
 report's numbers:
 

@@ -72,7 +72,14 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
   const report = tab === "report" ? await getStudyReport(db, actor, studyId) : null;
   const preRows = s.precal.filter((r) => r.phase === "pre");
   const postRows = s.precal.filter((r) => r.phase === "post");
-  const postOpen = ["field_work", "data_issue", "data_received", "analysis"].includes(s.job.status);
+  const postOpen = [
+    "field_work",
+    "data_issue",
+    "data_received",
+    "analysis",
+    "report_draft",
+    "rework",
+  ].includes(s.job.status);
   const DATA_MARK: Record<string, string> = {
     none: "—",
     issues: "!",

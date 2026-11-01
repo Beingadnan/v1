@@ -736,7 +736,16 @@ const precalSchema = z.object({
 });
 
 /** Post-calibration happens once the study is over: on site, or in the lab later. */
-const POST_CAL_OK: readonly JobStatus[] = ["field_work", "data_issue", "data_received", "analysis"];
+// Loggers often come back to the lab days later, while the report is being drafted;
+// a failure then opens a deviation and takes the analysis approval back.
+const POST_CAL_OK: readonly JobStatus[] = [
+  "field_work",
+  "data_issue",
+  "data_received",
+  "analysis",
+  "report_draft",
+  "rework",
+];
 
 export async function recordPrecal(
   db: Database,

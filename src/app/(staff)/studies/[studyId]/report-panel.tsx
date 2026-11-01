@@ -115,7 +115,6 @@ export function ReportPanel({ r }: { r: StudyReport }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="font-mono text-xs break-all">{s.reportNumber}</span>
         {shown ? (
           <StatusBadge
             tone={
@@ -178,11 +177,20 @@ export function ReportPanel({ r }: { r: StudyReport }) {
                 </button>
               ) : null}
             </div>
+            {/* Phones don't show a PDF inside a page: open it in their viewer instead. */}
+            <a
+              href={`/studies/${s.id}/report/${shown.id}`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex min-h-11 items-center justify-center rounded-md border border-border bg-surface px-4 text-sm font-medium md:hidden"
+            >
+              Open {shown.label} to read it
+            </a>
             <iframe
               key={`${shown.id}-${previewKey}`}
               title={`Report ${shown.label}`}
               src={`/studies/${s.id}/report/${shown.id}`}
-              className="h-[75vh] w-full rounded-lg border border-border bg-surface-muted"
+              className="hidden h-[75vh] w-full rounded-lg border border-border bg-surface-muted md:block"
             />
           </div>
 

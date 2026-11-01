@@ -26,7 +26,7 @@ import { storeFile } from "@/lib/storage/store-file";
 
 import { ReportsError } from "./errors";
 import { buildReportPdf } from "./report-data";
-import { revLabel } from "./types";
+import { revLabel, unprintable } from "./types";
 
 const user = (actor: SessionUser) => ({ type: "user" as const, userId: actor.id });
 
@@ -168,6 +168,12 @@ export async function editReportText(
 ) {
   assertCan(actor, "reports.prepare");
   const v = textSchema.parse(input);
+  const bad = v.text ? unprintable(v.text) : [];
+  if (bad.length) {
+    throw new ReportsError(
+      `The report can't print ${bad.slice(0, 6).join(" ")}${bad.length > 6 ? " …" : ""}. Write it in English letters and figures.`,
+    );
+  }
   return db.transaction(async (tx) => {
     const r = await draftOf(tx, actor, reportId);
     const l = await load(tx, actor, r.studyId);

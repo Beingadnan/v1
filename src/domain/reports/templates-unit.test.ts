@@ -96,3 +96,11 @@ describe("report text, as on BE-WF-02 page 6", () => {
     ]);
   });
 });
+
+describe("what the PDF can print", () => {
+  it("allows typed punctuation and °, and names what it can't print", async () => {
+    const { unprintable } = await import("./types");
+    expect(unprintable("L-05 “hot” point — 30 min above −15 °C … µ")).toEqual([]);
+    expect(unprintable("ok 👍 नमूना")).toEqual(["👍", "न", "म", "ू", "ा"]);
+  });
+});
