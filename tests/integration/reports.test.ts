@@ -15,6 +15,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { auditLog, certificates, jobs, studyReports, users } from "@/db/schema";
 import { approveAnalysis, runAnalysis } from "@/domain/analysis/analysis-service";
+import { setLetterhead } from "@/domain/admin/settings-service";
 import { attachCertificateFile } from "@/domain/instruments/certificate-service";
 import { ForbiddenError } from "@/domain/auth/permissions";
 import { toSessionUser, type SessionUser } from "@/domain/auth/session-service";
@@ -137,6 +138,47 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 8: the BE-WF-02 report", () =
       expect(text).toMatch(/Diagram Indicating Sensor Positions\s+4/);
     },
   );
+
+  it("prints the letterhead image set in Settings (PNG or JPEG only)", async () => {
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    const store = async (name: string, bytes: Uint8Array) => {
+      const r = await storeFile(db, blobs, {
+        organisationId: lead.organisationId,
+        actor: { type: "user", userId: lead.id },
+        fileName: name,
+        bytes,
+        maxBytes: 5 * 1024 * 1024,
+      });
+      if (!r.ok) throw new Error(r.message);
+      return r.file.id;
+    };
+    const admin = await (async () => {
+      const [row] = await db
+        .insert(users)
+        .values({
+          organisationId: lead.organisationId,
+          email: "admin@reports-org.test",
+          name: "Admin",
+          role: "admin",
+          status: "active",
+          passwordHash: "x",
+        })
+        .returning();
+      return toSessionUser(row!)!;
+    })();
+    const notImage = await store("letterhead.pdf", await (await PDFDocument.create()).save());
+    await expect(setLetterhead(db, admin, notImage, req)).rejects.toThrow(
+      /Upload the letterhead as a PNG or JPEG image/,
+    );
+    await expect(setLetterhead(db, lead, null, req)).rejects.toBeInstanceOf(ForbiddenError);
+    await setLetterhead(db, admin, await store("QA Tech letterhead.png", png), req);
+    const p = (await previewReport(db, blobs, preparer, reportId))!;
+    expect(p.data.letterhead).not.toBeNull();
+    expect(Buffer.from(p.bytes.subarray(0, 5)).toString()).toBe("%PDF-");
+  });
 
   it("audits edits to the conclusion and resets to the template", async () => {
     await expect(

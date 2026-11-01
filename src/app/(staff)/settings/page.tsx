@@ -6,6 +6,7 @@ import { getEffectiveTypeDefaults } from "@/domain/clients/type-defaults-service
 import { requirePermission } from "@/lib/auth/dal";
 
 import { CalculationsForm, DetailsForm, NumberFormatsForm, SitesSection } from "./settings-forms";
+import { LetterheadForm } from "./letterhead-form";
 import { TypeDefaultsSection } from "./type-defaults";
 
 export const metadata = { title: "Settings" };
@@ -46,6 +47,7 @@ export default async function SettingsPage() {
           gstin: settings.gstin,
         }}
       />
+      <LetterheadForm hasImage={settings.letterheadFileId !== null} canEdit={canEdit} />
       <SitesSection
         canEdit={canEdit}
         sites={sites.map((s) => ({

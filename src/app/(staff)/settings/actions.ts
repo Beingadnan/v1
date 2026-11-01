@@ -3,7 +3,12 @@
 import { revalidatePath } from "next/cache";
 
 import { db } from "@/db/client";
-import { createSite, updateSettings, updateSite } from "@/domain/admin/settings-service";
+import {
+  createSite,
+  setLetterhead,
+  updateSettings,
+  updateSite,
+} from "@/domain/admin/settings-service";
 import { saveTypeDefaults } from "@/domain/clients/type-defaults-service";
 import { runAction, type ActionResult } from "@/lib/action-result";
 import { requireUser } from "@/lib/auth/dal";
@@ -140,4 +145,16 @@ export async function saveTypeDefaultsAction(
   if (!result.ok) return result;
   revalidatePath("/settings");
   return { ok: true, data: undefined, message: savedMessage(result.data) };
+}
+
+export async function setLetterheadAction(fileId: string | null): Promise<ActionResult> {
+  const actor = await requireUser();
+  const result = await runAction(
+    async () => setLetterhead(db, actor, fileId, await getRequestInfo()),
+    fileId
+      ? "Letterhead saved. Reports and certificates print it from now on."
+      : "Letterhead removed.",
+  );
+  if (result.ok) revalidatePath("/settings");
+  return result;
 }

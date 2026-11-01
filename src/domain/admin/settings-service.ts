@@ -4,7 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 
 import type { Database } from "@/db/client-factory";
-import { organisationSettings, sites, type Site } from "@/db/schema";
+import { organisationSettings, sites, storedFiles, type Site } from "@/db/schema";
 import { assertCan } from "@/domain/auth/permissions";
 import type { RequestInfo } from "@/domain/auth/policy";
 import type { SessionUser } from "@/domain/auth/session-service";
@@ -141,6 +141,62 @@ export async function updateSettings(
       request,
     });
     return { changed };
+  });
+}
+
+/**
+ * The letterhead image printed across the top of reports, certificates and
+ * sheets (a PNG or JPEG strip, as QA Tech's paper letterhead). null removes
+ * it: the documents then print the organisation's name and address as text.
+ */
+export async function setLetterhead(
+  db: Database,
+  actor: SessionUser,
+  fileId: string | null,
+  request: RequestInfo,
+): Promise<void> {
+  assertCan(actor, "settings.manage");
+  await db.transaction(async (tx) => {
+    const [current] = await tx
+      .select()
+      .from(organisationSettings)
+      .where(eq(organisationSettings.organisationId, actor.organisationId))
+      .for("update");
+    if (!current) throw new SettingsError("Settings are missing. Run the seed command.");
+    let name = "";
+    if (fileId) {
+      const [file] = await tx
+        .select()
+        .from(storedFiles)
+        .where(
+          and(eq(storedFiles.id, fileId), eq(storedFiles.organisationId, actor.organisationId)),
+        );
+      if (!file) throw new SettingsError("That file was not uploaded.");
+      if (!/^image\/(png|jpeg)$/.test(file.mimeType)) {
+        throw new SettingsError(
+          "Upload the letterhead as a PNG or JPEG image (a scan or export of the top strip of your letterhead).",
+        );
+      }
+      name = file.firstFileName;
+    }
+    if (current.letterheadFileId === fileId) return;
+    await tx
+      .update(organisationSettings)
+      .set({ letterheadFileId: fileId, updatedAt: new Date(), updatedByUserId: actor.id })
+      .where(eq(organisationSettings.organisationId, actor.organisationId));
+    await recordAudit(tx, {
+      organisationId: actor.organisationId,
+      actor: { type: "user", userId: actor.id },
+      action: "settings.updated",
+      entityType: "organisation_settings",
+      entityId: actor.organisationId,
+      summary: fileId
+        ? `${actor.name} set the letterhead image (${name})`
+        : `${actor.name} removed the letterhead image`,
+      before: { letterheadFileId: current.letterheadFileId },
+      after: { letterheadFileId: fileId },
+      request,
+    });
   });
 }
 
