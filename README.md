@@ -11,6 +11,25 @@ Architecture decisions: [docs/adr/](docs/adr/).
 
 ## Status
 
+**Phase 11: Dashboard, alerts and archive.**
+
+- **Home:** counts with links for what waits on each role. The manager's tiles are
+  the Monday review: reports to check and release, data overdue, reports unsigned by
+  clients, invoice due and overdue, instruments expiring, open deviations and overdue
+  CAPAs, requalifications due, and jobs by stage.
+- **The bell:** every hand-over of work is a notification, written with the event.
+  Email goes at once only when someone is blocked: a report returned or released, a
+  WCR to accept, a deviation to decide, a CAPA assigned. Everything else goes into one
+  daily digest. Each person can turn email off.
+  - **Email:** through Resend when `RESEND_API_KEY` and `MAIL_FROM` are set.
+  - **The digest:** sent by `POST /api/cron/digest` with `CRON_SECRET`.
+- **Search (Ctrl+K):** jobs, POs, report numbers, equipment, logger codes and serials,
+  certificates, clients.
+- **Archive:** signed studies by company, site, year, month, department and equipment.
+- **Deviations and CAPA:** open deviations and who decides them. CAPAs have an owner,
+  a due date (moved only with a reason), a done note, and verification by someone
+  else.
+
 **Phase 10: Close and money.** From the last report to the bank:
 
 - **WCR (work completion report):** issued once every report is with the client. It is
