@@ -11,6 +11,28 @@ Architecture decisions: [docs/adr/](docs/adr/).
 
 ## Status
 
+**Phase 9: Review and sign-off.** From a drafted report to the client's signature:
+
+- **Done By:** the preparer re-enters their password. This freezes the PDF (SHA-256)
+  and sends it to the checker.
+- **QA Tech's check (Reviews page):** a team leader or manager signs Checked By, or
+  returns it with comments pinned to sections and pages. The preparer answers every
+  comment before signing again. No one checks a report they prepared.
+- **Release:** to chosen client users, with a ready-written email linking to the report
+  in the client area (sign-in needed).
+- **The client area:**
+  - the client's QA signs Reviewed By and the QA head signs Approved By, or either
+    sends it back with comments (then Rev 01 answers them);
+  - the QA head decides deviations with a signed decision.
+- **The paper route:** QA Tech uploads the signed scan and enters who signed and when.
+  The scan is linked to the frozen PDF by hash.
+- **Every download of a frozen revision** has the signatures stamped into the signature
+  block, plus a last page listing each signature (name, role, organisation, time in
+  IST, meaning) with the frozen PDF's SHA-256. The client's approval stores this issued
+  copy with its own hash. Every revision stays downloadable.
+- **The job follows its reports:** Checked → Sent to client → Client signed, and back
+  to Rework on any return. A signed report puts the study in the company archive.
+
 **Phase 8: Reports and PDF.** The mapping report (FT-09), drawn like QA Tech's issued
 BE-WF-02 report, from the approved analysis:
 
