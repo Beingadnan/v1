@@ -1,4 +1,6 @@
 import {
+  Archive,
+  ShieldAlert,
   Briefcase,
   Building2,
   ClipboardCheck,
@@ -28,7 +30,7 @@ export type NavItem = {
 export type NavGroup = { label: string; items: NavItem[] };
 
 /** Where the app is in the build plan. Bump as each phase ships. */
-export const CURRENT_PHASE = 10;
+export const CURRENT_PHASE = 11;
 
 export const navigation: NavGroup[] = [
   {
@@ -75,6 +77,20 @@ export const navigation: NavGroup[] = [
         icon: Gauge,
         availableFromPhase: 3,
         permission: "instruments.view",
+      },
+      {
+        label: "Deviations",
+        href: "/deviations",
+        icon: ShieldAlert,
+        availableFromPhase: 11,
+        permission: "jobs.view",
+      },
+      {
+        label: "Archive",
+        href: "/archive",
+        icon: Archive,
+        availableFromPhase: 11,
+        permission: "jobs.view",
       },
       {
         label: "Billing",

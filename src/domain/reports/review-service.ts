@@ -28,6 +28,7 @@ import { signRecordTx } from "@/domain/auth/signature-service";
 import { isUuid } from "@/domain/clients/shared";
 import { lockJob } from "@/domain/jobs/job-service";
 import { JOB_STATUS_LABELS, type JobStatus } from "@/domain/jobs/types";
+import { jobLeads, notify } from "@/domain/notifications/notify";
 import { recordAudit } from "@/lib/audit";
 import type { BlobStore } from "@/lib/storage/blob-store";
 import { storeFile } from "@/lib/storage/store-file";
@@ -216,6 +217,15 @@ export async function returnForRework(
       after: { status: "draft", comments: v.comments },
       request,
     });
+    await notify(tx, {
+      organisationId: actor.organisationId,
+      to: [l.r.createdByUserId, l.r.frozenByUserId],
+      except: actor.id,
+      kind: "report_returned",
+      title: `${l.code} ${revLabel(l.r.rev)} came back from the checker`,
+      body: `${actor.name}: ${v.comments.map((c) => c.body).join(" / ")}`,
+      href: `/studies/${l.study.id}?tab=report`,
+    });
     await syncJobToReports(
       tx,
       actor,
@@ -375,6 +385,14 @@ export async function releaseReport(
       after: { to: chosen.map((p) => ({ id: p.id, name: p.name, email: p.email })) },
       request,
     });
+    await notify(tx, {
+      organisationId: actor.organisationId,
+      to: chosen.map((p) => p.id),
+      kind: "report_released",
+      title: `Report ${l.code} ${revLabel(l.r.rev)} for your review`,
+      body: `${l.study.reportNumber}, from QA Tech.`,
+      href: `/client/reports/${l.r.id}`,
+    });
     await syncJobToReports(tx, actor, l.job, `${l.study.reportNumber} sent to the client`, request);
     const link = `${appUrl.replace(/\/$/, "")}/client/reports/${l.r.id}`;
     const subject = `Report ${l.study.reportNumber} ${revLabel(l.r.rev)} for review (${l.code})`;
@@ -469,6 +487,14 @@ export async function clientApprove(
       after: { signatureId: signed.signature.id, sha256: l.r.sha256 },
       request,
     });
+    await notify(tx, {
+      organisationId: actor.organisationId,
+      to: [...(await jobLeads(tx, actor.organisationId, l.job.id)), l.r.createdByUserId],
+      kind: "report_client_signed",
+      title: `${l.code} ${revLabel(l.r.rev)} signed by ${l.company}`,
+      body: `${actor.name} signed Approved By.`,
+      href: `/studies/${l.study.id}?tab=report`,
+    });
     await syncJobToReports(
       tx,
       actor,
@@ -510,6 +536,14 @@ export async function clientReturn(
       summary: `${actor.name} (${l.company}) returned ${l.study.reportNumber} ${revLabel(l.r.rev)} with ${v.comments.length} comment${v.comments.length === 1 ? "" : "s"}`,
       after: { comments: v.comments },
       request,
+    });
+    await notify(tx, {
+      organisationId: actor.organisationId,
+      to: [...(await jobLeads(tx, actor.organisationId, l.job.id)), l.r.createdByUserId],
+      kind: "report_client_returned",
+      title: `${l.company} sent back ${l.code} ${revLabel(l.r.rev)}`,
+      body: `${actor.name}: ${v.comments.map((c) => c.body).join(" / ")}`,
+      href: `/studies/${l.study.id}?tab=report`,
     });
     await syncJobToReports(
       tx,

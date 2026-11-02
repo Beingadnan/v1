@@ -9,6 +9,7 @@ import { ReportsError } from "@/domain/reports/errors";
 import { clientApprove, clientReturn, clientReview } from "@/domain/reports/review-service";
 import { runAction, type ActionResult } from "@/lib/action-result";
 import { SESSION_ENDED, userForAction } from "@/lib/auth/dal";
+import { flushEmails } from "@/lib/mail/flush";
 import { getRequestInfo } from "@/lib/request-info";
 import { blobStore } from "@/lib/storage";
 
@@ -20,6 +21,7 @@ const field = (formData: FormData, name: string) => {
 };
 
 function refresh(reportId: string) {
+  flushEmails();
   revalidatePath("/client");
   revalidatePath(`/client/reports/${reportId}`);
   revalidatePath("/reports");

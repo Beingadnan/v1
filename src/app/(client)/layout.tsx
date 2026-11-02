@@ -2,8 +2,11 @@ import Image from "next/image";
 import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
+import { NotificationBell } from "@/components/shell/bell";
 import { UserMenu } from "@/components/shell/user-menu";
+import { db } from "@/db/client";
 import { isClientRole } from "@/domain/auth/roles";
+import { unreadCount } from "@/domain/notifications/notify";
 import { requireUser, toUserSummary } from "@/lib/auth/dal";
 
 /**
@@ -13,6 +16,7 @@ import { requireUser, toUserSummary } from "@/lib/auth/dal";
 export default async function ClientLayout({ children }: { children: ReactNode }) {
   const user = await requireUser();
   if (!isClientRole(user.role)) redirect("/");
+  const unread = await unreadCount(db, user);
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -25,7 +29,8 @@ export default async function ClientLayout({ children }: { children: ReactNode }
           className="h-9 w-auto"
           priority
         />
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-1">
+          <NotificationBell unread={unread} href="/client/notifications" />
           <UserMenu user={toUserSummary(user)} />
         </div>
       </header>

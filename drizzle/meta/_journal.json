@@ -127,6 +127,13 @@
       "when": 1793588651659,
       "tag": "0017_billing",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793590066360,
+      "tag": "0018_notifications_capa",
+      "breakpoints": true
     }
   ]
 }

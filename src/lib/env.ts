@@ -69,6 +69,28 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => (v ? v.replace(/\\n/g, "\n") : undefined)),
+  /**
+   * Email for alerts and the daily digest (phase 11), sent through Resend
+   * (resend.com). Optional: without a key nothing is emailed, the in-app bell
+   * still works, and each alert says email isn't set up.
+   */
+  RESEND_API_KEY: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => v || undefined),
+  /** The sender, on a domain verified with Resend, e.g. "QA Tech <alerts@qatech.co.in>". */
+  MAIL_FROM: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => v || undefined),
+  /** The scheduler sends this as a bearer token to /api/cron/digest; unset turns the route off. */
+  CRON_SECRET: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => (v && v.length >= 24 ? v : undefined)),
 });
 
 export type Env = z.infer<typeof envSchema>;

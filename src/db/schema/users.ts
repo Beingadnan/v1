@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
+  boolean,
   check,
   foreignKey,
   index,
@@ -47,6 +48,9 @@ export const users = pgTable(
     lockedUntil: timestamp("locked_until", { withTimezone: true }),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
     passwordChangedAt: timestamp("password_changed_at", { withTimezone: true }),
+    /** Phase 11: email for alerts and the daily digest (the in-app bell always works). */
+    emailAlerts: boolean("email_alerts").notNull().default(true),
+    digestSentAt: timestamp("digest_sent_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdByUserId: uuid("created_by_user_id").references((): AnyPgColumn => users.id, {
       onDelete: "restrict",

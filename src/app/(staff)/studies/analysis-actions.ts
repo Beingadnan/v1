@@ -16,6 +16,7 @@ import {
 } from "@/domain/analysis/analysis-service";
 import { runAction } from "@/lib/action-result";
 import { SESSION_ENDED, userForAction } from "@/lib/auth/dal";
+import { flushEmails } from "@/lib/mail/flush";
 import { getRequestInfo } from "@/lib/request-info";
 
 /** Server actions for the Analysis tab; plain objects in, like the data actions. */
@@ -25,6 +26,7 @@ async function act<T>(studyId: string, fn: Parameters<typeof runAction<T>>[0]) {
   if (result.ok) {
     revalidatePath(`/studies/${studyId}`);
     revalidatePath("/jobs");
+    flushEmails();
   }
   return result;
 }

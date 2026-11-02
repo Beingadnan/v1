@@ -1,16 +1,26 @@
 "use client";
 
-import { Menu, Search } from "lucide-react";
+import { Menu } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { useState } from "react";
 
 import type { Action } from "@/domain/auth/permissions";
 import type { UserSummary } from "@/lib/auth/dal";
 
+import { NotificationBell } from "./bell";
+import { SearchPalette } from "./search-palette";
 import { SidebarContent } from "./sidebar";
 import { UserMenu } from "./user-menu";
 
-export function Topbar({ user, allowed }: { user: UserSummary; allowed: readonly Action[] }) {
+export function Topbar({
+  user,
+  allowed,
+  unread,
+}: {
+  user: UserSummary;
+  allowed: readonly Action[];
+  unread: number;
+}) {
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
@@ -34,15 +44,9 @@ export function Topbar({ user, allowed }: { user: UserSummary; allowed: readonly
         </DialogPrimitive.Portal>
       </DialogPrimitive.Root>
 
-      {/* Search arrives with the records it searches (phase 11). Shown now so the layout is final. */}
-      <div className="flex h-9 max-w-md flex-1 items-center gap-2 rounded-md border border-input bg-background px-3 text-sm text-muted-foreground">
-        <Search className="size-4" aria-hidden="true" />
-        <span className="truncate">Search jobs, reports, serials…</span>
-        <kbd className="ml-auto hidden rounded border border-border bg-surface px-1.5 text-xs sm:inline">
-          Ctrl K
-        </kbd>
-      </div>
-      <div className="ml-auto">
+      <SearchPalette />
+      <div className="ml-auto flex items-center gap-1">
+        <NotificationBell unread={unread} href="/notifications" />
         <UserMenu user={user} />
       </div>
     </header>

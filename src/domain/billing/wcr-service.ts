@@ -29,6 +29,7 @@ import type { SessionUser } from "@/domain/auth/session-service";
 import { signRecordTx } from "@/domain/auth/signature-service";
 import { isUuid } from "@/domain/clients/shared";
 import { lockJob, setStatus } from "@/domain/jobs/job-service";
+import { byRole, clientPeople, notify } from "@/domain/notifications/notify";
 import {
   JOB_STATUS_LABELS,
   WORK_TYPE_LABELS,
@@ -231,6 +232,14 @@ export async function issueWcr(
       after: { wcrId: w!.id, sha256: stored.file.sha256 },
       request,
     });
+    await notify(tx, {
+      organisationId: actor.organisationId,
+      to: await clientPeople(tx, job.companyId, ["client_qa_head"]),
+      kind: "wcr_to_accept",
+      title: `${number} to accept`,
+      body: `QA Tech's work completion report for job ${job.number}.`,
+      href: `/client/wcr/${w!.id}`,
+    });
     return { id: w!.id, number };
   });
 }
@@ -252,6 +261,15 @@ async function loadWcr(tx: Transaction, actor: SessionUser, wcrId: string) {
 }
 
 async function moveJob(tx: Transaction, actor: SessionUser, job: Job, request?: RequestInfo) {
+  await notify(tx, {
+    organisationId: actor.organisationId,
+    to: await byRole(tx, actor.organisationId, ["accounts", "manager"]),
+    except: actor.id,
+    kind: "wcr_accepted",
+    title: `WCR/${job.number} signed: invoice due`,
+    body: "Raise the invoice in Tally and record it on the job (GST Rule 47: within 30 days).",
+    href: `/jobs/${job.id}#money`,
+  });
   if (TO_WCR_SIGNED.includes(job.status as JobStatus)) {
     await setStatus(
       tx,

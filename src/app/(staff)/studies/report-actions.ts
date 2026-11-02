@@ -20,12 +20,14 @@ import {
 import { runAction, type ActionResult } from "@/lib/action-result";
 import { SESSION_ENDED, userForAction } from "@/lib/auth/dal";
 import { env } from "@/lib/env";
+import { flushEmails } from "@/lib/mail/flush";
 import { getRequestInfo } from "@/lib/request-info";
 import { blobStore } from "@/lib/storage";
 
 /** Server actions for the Report tab. */
 
 function refresh(studyId: string) {
+  flushEmails();
   revalidatePath(`/studies/${studyId}`);
   revalidatePath("/reports");
   revalidatePath("/jobs");

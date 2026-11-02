@@ -13,7 +13,7 @@ async function sign(page: Page, button: string | RegExp, who: keyof typeof USERS
   await expect(dialog).toBeHidden({ timeout: 60_000 });
 }
 
-test("phase 8–10: FE-WF-05's report is drafted, signed four times (the client on a phone), then the WCR, invoice and payment close the job", async ({
+test("phase 8–11: FE-WF-05's report is drafted, signed four times (the client on a phone), the WCR, invoice and payment close the job, and the home, search and bell show it", async ({
   page,
   isMobile,
   browser,
@@ -183,5 +183,26 @@ test("phase 8–10: FE-WF-05's report is drafted, signed four times (the client 
   await page.getByRole("button", { name: "Close the job" }).click();
   await expect(page.locator("p[role=status]")).toHaveText("Job closed. It is in the History now.");
   await expect(page.getByText("Closed", { exact: true }).first()).toBeVisible();
+
+  // ---- Phase 11. The manager's home is the Monday review; Ctrl+K finds the report.
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Waiting on you" })).toBeVisible();
+  for (const tile of ["Reports to check", "Invoices overdue", "Open deviations", "Data overdue"]) {
+    await expect(page.getByRole("link", { name: new RegExp(tile) })).toBeVisible();
+  }
+  await expect(page.getByRole("heading", { name: "Jobs by stage" })).toBeVisible();
+  await page.keyboard.press("Control+k");
+  await page.getByLabel("Search for").fill("FE-WF-05");
+  await expect(page.getByRole("option").first()).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/\/(studies|jobs|clients)\//);
+
+  // ---- The team leader's bell has what was handed to them.
+  await page.context().clearCookies();
+  await signIn(page, "lead");
+  await page.getByRole("link", { name: /Notifications, \d+ unread/ }).click();
+  await expect(page.getByText(/FE-WF-05 Rev 00 signed by/)).toBeVisible();
+  await page.getByRole("button", { name: "Mark all read" }).click();
+  await expect(page.getByRole("link", { name: "Notifications", exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });

@@ -5,7 +5,7 @@ import { signIn, trackErrors } from "./support";
 test("signed-in home renders the QA Tech shell with no browser errors", async ({ page }) => {
   const errors = trackErrors(page);
   await signIn(page, "admin");
-  await expect(page.getByText("Nothing assigned to you yet")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Waiting on you" })).toBeVisible();
   // The component gallery is development-only, so production shows no link to it.
   await expect(page.getByRole("link", { name: "Open the component gallery" })).toHaveCount(0);
   expect(errors).toEqual([]);

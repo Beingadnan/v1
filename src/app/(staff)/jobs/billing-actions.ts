@@ -14,6 +14,7 @@ import {
 import { issueWcr, recordWcrPaper, voidWcr } from "@/domain/billing/wcr-service";
 import { runAction, type ActionResult } from "@/lib/action-result";
 import { SESSION_ENDED, userForAction } from "@/lib/auth/dal";
+import { flushEmails } from "@/lib/mail/flush";
 import { getRequestInfo } from "@/lib/request-info";
 import { blobStore } from "@/lib/storage";
 
@@ -26,6 +27,7 @@ const field = (formData: FormData, name: string) => {
 };
 
 function refresh(jobId: string) {
+  flushEmails();
   revalidatePath(`/jobs/${jobId}`);
   revalidatePath("/jobs");
   revalidatePath("/billing");

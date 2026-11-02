@@ -29,6 +29,7 @@ import { isUuid } from "@/domain/clients/shared";
 import { dataContext } from "@/domain/data/data-service";
 import { lockJob, setStatus } from "@/domain/jobs/job-service";
 import { JOB_STATUS_LABELS, type JobStatus } from "@/domain/jobs/types";
+import { clientPeople, jobLeads, notify } from "@/domain/notifications/notify";
 import { recordAudit } from "@/lib/audit";
 import { formatDateTime } from "@/lib/format";
 import { shortList } from "@/lib/text";
@@ -658,6 +659,16 @@ export async function assessDeviation(
       after: { assessment: v.assessment },
       request,
     });
+    if (!d.assessment) {
+      await notify(tx, {
+        organisationId: actor.organisationId,
+        to: await clientPeople(tx, l.job.companyId, ["client_qa_head"]),
+        kind: "deviation_to_decide",
+        title: `${d.number} (${l.code}) for your decision`,
+        body: d.title,
+        href: `/client/deviations/${d.id}`,
+      });
+    }
   });
 }
 
@@ -829,6 +840,14 @@ export async function clientDecideDeviation(
       after: { decision: v.decision, signatureId: signed.signature.id },
       reason: v.note || undefined,
       request,
+    });
+    await notify(tx, {
+      organisationId: actor.organisationId,
+      to: await jobLeads(tx, actor.organisationId, l.job.id),
+      kind: "deviation_decided",
+      title: `${d.number} (${l.code}): ${DEVIATION_DECISION_LABELS[v.decision]}`,
+      body: `Decided by ${actor.name}${v.note ? `: ${v.note}` : ""}.`,
+      href: `/studies/${l.study.id}?tab=analysis`,
     });
     return { ok: true as const };
   });

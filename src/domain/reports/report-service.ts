@@ -22,6 +22,7 @@ import { signRecordTx } from "@/domain/auth/signature-service";
 import { isUuid } from "@/domain/clients/shared";
 import { lockJob, setStatus } from "@/domain/jobs/job-service";
 import { JOB_STATUS_LABELS, type JobStatus } from "@/domain/jobs/types";
+import { jobLeads, notify } from "@/domain/notifications/notify";
 import { recordAudit } from "@/lib/audit";
 import type { BlobStore } from "@/lib/storage/blob-store";
 import { storeFile } from "@/lib/storage/store-file";
@@ -392,6 +393,15 @@ export async function freezeReport(
       summary: `${actor.name} froze ${l.study.reportNumber} ${revLabel(r.rev)} (${built.pages} pages, from analysis run ${run.runNo}), signed Done By and sent it for checking`,
       after: { rev: r.rev, sha256: stored.file.sha256, runId: run.id, pages: built.pages },
       request,
+    });
+    await notify(tx, {
+      organisationId: actor.organisationId,
+      to: await jobLeads(tx, actor.organisationId, l.job.id),
+      except: actor.id,
+      kind: "report_to_check",
+      title: `${l.code} ${revLabel(r.rev)} to check`,
+      body: `${actor.name} signed Done By on ${l.study.reportNumber} (job ${l.job.number}).`,
+      href: `/studies/${r.studyId}?tab=report`,
     });
     return { ok: true as const, rev: r.rev, sha256: stored.file.sha256, pages: built.pages };
   });
