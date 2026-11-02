@@ -15,6 +15,7 @@ import {
 import { db } from "@/db/client";
 import { STUDY_CYCLE_LABELS, type StudyCycle } from "@/domain/clients/study-defaults";
 import { STUDY_STATUS_LABELS, type StudyStatus } from "@/domain/field/types";
+import { jobMoney } from "@/domain/billing/queries";
 import { formatInr } from "@/domain/jobs/pricing";
 import { getJob, qaSiteOptions, siteEquipment, staffOptions } from "@/domain/jobs/queries";
 import { TEAM_ROLE_LABELS, type TeamRole } from "@/domain/jobs/schemas";
@@ -47,6 +48,19 @@ import {
   StatusButtons,
   TeamButton,
 } from "./job-controls";
+import { MoneyPanel } from "./money-panel";
+
+/** Job statuses at which the WCR, invoices and closing are shown (phase 10). */
+const LATE: JobStatus[] = [
+  "rework",
+  "checked",
+  "sent_to_client",
+  "client_signed",
+  "wcr_signed",
+  "invoiced",
+  "paid",
+  "closed",
+];
 
 export async function generateMetadata({ params }: PageProps<"/jobs/[jobId]">) {
   void params;
@@ -80,6 +94,7 @@ export default async function JobPage({ params }: PageProps<"/jobs/[jobId]">) {
         planning ? siteEquipment(db, actor, job.clientSiteId) : Promise.resolve([]),
       ])
     : [[], [], []];
+  const money = LATE.includes(status) ? await jobMoney(db, actor, job.id) : null;
   const onJob = new Set(detail.studies.map((s) => s.equipmentId));
   const addable = equipment.filter((e) => !onJob.has(e.id));
   const allowed = (Object.keys(TRANSITIONS) as Transition[]).filter((t) =>
@@ -316,6 +331,8 @@ export default async function JobPage({ params }: PageProps<"/jobs/[jobId]">) {
           ) : null}
         </div>
       </div>
+
+      {money ? <MoneyPanel jobId={job.id} m={money} /> : null}
 
       <section aria-labelledby="studies" className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-2">

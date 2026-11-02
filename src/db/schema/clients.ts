@@ -62,6 +62,8 @@ export const clientCompanies = pgTable(
     postCalRequired: boolean("post_cal_required").notNull().default(false),
     /** Default time between studies of the same equipment. */
     requalificationMonths: integer("requalification_months").notNull().default(12),
+    /** Days the client has to pay an invoice (phase 10); 45 is the MSMED Act's longest. */
+    paymentTermsDays: integer("payment_terms_days").notNull().default(45),
     /** Tokens: {CLIENT} {SITE} {DEPT} {MM} {YY} {YYYY} {EQUIPMENT} {EQUIPMENT_ID} */
     reportNumberFormat: text("report_number_format")
       .notNull()
@@ -74,6 +76,7 @@ export const clientCompanies = pgTable(
     uniqueIndex("client_companies_org_name_key").on(t.organisationId, sql`lower(${t.name})`),
     uniqueIndex("client_companies_org_code_key").on(t.organisationId, sql`lower(${t.code})`),
     check("client_companies_requal_check", sql`${t.requalificationMonths} between 1 and 60`),
+    check("client_companies_terms_check", sql`${t.paymentTermsDays} between 0 and 365`),
   ],
 );
 

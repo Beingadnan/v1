@@ -38,6 +38,10 @@ export const ACTIONS = [
   "reports.client_review",
   "reports.client_approve",
   "deviation.client_decide",
+  "wcr.issue",
+  "wcr.accept",
+  "billing.record",
+  "jobs.close",
 ] as const;
 
 export type Action = (typeof ACTIONS)[number];
@@ -47,6 +51,7 @@ export const CLIENT_ACTIONS: readonly Action[] = [
   "reports.client_review",
   "reports.client_approve",
   "deviation.client_decide",
+  "wcr.accept",
 ];
 
 const FIELD_AND_OFFICE: Action[] = [
@@ -82,6 +87,9 @@ const MATRIX: Record<Role, ReadonlySet<Action>> = {
     "reports.prepare",
     "reports.check",
     "reports.release",
+    "wcr.issue",
+    "billing.record",
+    "jobs.close",
     ...FIELD_AND_OFFICE,
   ]),
   team_leader: new Set<Action>([
@@ -101,6 +109,7 @@ const MATRIX: Record<Role, ReadonlySet<Action>> = {
     "reports.prepare",
     "reports.check",
     "reports.release",
+    "wcr.issue",
     ...FIELD_AND_OFFICE,
   ]),
   // Preparers in the office often receive the Excel by email and upload it.
@@ -128,7 +137,13 @@ const MATRIX: Record<Role, ReadonlySet<Action>> = {
     ...FIELD_AND_OFFICE,
   ]),
   // Accounts follow jobs to raise invoices; they see the money, not the work tools.
-  accounts: new Set<Action>(["files.view", "clients.view", "jobs.view", "jobs.money"]),
+  accounts: new Set<Action>([
+    "files.view",
+    "clients.view",
+    "jobs.view",
+    "jobs.money",
+    "billing.record",
+  ]),
   // Client access is scoped to their own company's released records (phases 2, 9 and 13).
   // QA reviews; the QA head approves and decides deviations.
   client_qa: new Set<Action>(["reports.client_review"]),
@@ -136,6 +151,7 @@ const MATRIX: Record<Role, ReadonlySet<Action>> = {
     "reports.client_review",
     "reports.client_approve",
     "deviation.client_decide",
+    "wcr.accept",
   ]),
 };
 

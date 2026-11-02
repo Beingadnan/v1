@@ -50,9 +50,10 @@ export function proxy(request: NextRequest) {
 /**
  * The report PDF routes, shown in a frame on our own pages: staff
  * (src/app/(staff)/studies/[studyId]/report/[reportId]) and client
- * (src/app/(client)/client/reports/[reportId]/pdf).
+ * (src/app/(client)/client/reports/[reportId]/pdf), and the WCR (phase 10).
  */
-const REPORT_PDF = /^\/(studies\/[^/]+\/report\/[^/]+|client\/reports\/[^/]+\/pdf)$/;
+const REPORT_PDF =
+  /^\/(studies\/[^/]+\/report\/[^/]+|client\/reports\/[^/]+\/pdf|jobs\/[^/]+\/wcr\/[^/]+|client\/wcr\/[^/]+\/pdf)$/;
 
 export function buildContentSecurityPolicy(nonce: string, isDev: boolean): string {
   const directives = [

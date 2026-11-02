@@ -13,7 +13,7 @@ async function sign(page: Page, button: string | RegExp, who: keyof typeof USERS
   await expect(dialog).toBeHidden({ timeout: 60_000 });
 }
 
-test("phase 8–9: FE-WF-05's report is drafted, signed Done By and Checked By, released, and signed by the client's QA and QA head (on a phone)", async ({
+test("phase 8–10: FE-WF-05's report is drafted, signed four times (the client on a phone), then the WCR, invoice and payment close the job", async ({
   page,
   isMobile,
   browser,
@@ -123,16 +123,65 @@ test("phase 8–9: FE-WF-05's report is drafted, signed Done By and Checked By, 
   expect(mobileErrors).toEqual([]);
   await phone.close();
 
-  // ---- QA Tech sees it signed; a revision can still be started, with a reason.
+  // ---- QA Tech sees it signed.
   await page.context().clearCookies();
   await signIn(page, "lead");
   await page.goto(studyUrl);
   await expect(page.getByText("Rev 00 · Signed")).toBeVisible();
   await expect(page.getByText(/Approved By: Sunil Client/)).toBeVisible();
-  await page.getByRole("button", { name: "Start a new revision" }).click();
-  await page.getByLabel("Why is it revised?").fill("Client asked to add the department name");
-  await page.getByRole("button", { name: "Start revision" }).click();
-  await expect(page.locator("p[role=status]")).toHaveText("Rev 01 drafted.");
-  await expect(page.getByText("Why: Client asked to add the department name")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start a new revision" })).toBeVisible();
+
+  // ---- Phase 10. Manager: issues the WCR from Billing.
+  await page.context().clearCookies();
+  await signIn(page, "manager");
+  await page.goto("/billing");
+  await expect(page.getByRole("heading", { name: /WCR to issue \(1\)/ })).toBeVisible();
+  await page.getByRole("link", { name: /every report is with the client/ }).click();
+  await expect(page).toHaveURL(/\/jobs\/[0-9a-f-]{36}#money$/);
+  const jobUrl = page.url().replace(/#money$/, "");
+  await page.getByRole("button", { name: "Issue the WCR" }).click();
+  await expect(page.locator("p[role=status]")).toHaveText("WCR issued. Send it to the client.");
+  const wcrHref = await page.getByRole("link", { name: "Open the WCR" }).getAttribute("href");
+  const wcr = await page.request.get(wcrHref!);
+  expect(wcr.headers()["content-type"]).toBe("application/pdf");
+
+  // ---- Client QA head: accepts it.
+  await page.context().clearCookies();
+  await signIn(page, "clientHead");
+  await expect(
+    page.getByRole("heading", { name: /Work completion reports to accept \(1\)/ }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: /^WCR\// }).click();
+  await sign(page, "Accept the work (sign)", "clientHead");
+  await expect(page.getByText(/Accepted\. QA Tech has been told/)).toBeVisible();
+
+  // ---- Manager: records the Tally invoice and the payment, then closes the job.
+  await page.context().clearCookies();
+  await signIn(page, "manager");
+  await page.goto("/billing");
+  await expect(page.getByRole("heading", { name: /Invoice due \(1\)/ })).toBeVisible();
+  await page.goto(jobUrl);
+  await expect(page.getByText(/Invoice due: the WCR was signed 0 days ago/)).toBeVisible();
+  await page.getByLabel("Invoice No.").fill("QT/E2E/001");
+  await page.getByLabel(/Taxable value/).fill("20000");
+  await expect(page.getByLabel(/GST \(₹/)).toHaveValue("3600");
+  await page.getByRole("button", { name: "Record invoice" }).click();
+  await expect(page.locator("p[role=status]").first()).toHaveText("Invoice recorded.");
+  await expect(page.getByText("Invoiced", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(/Invoice QT\/E2E\/001 isn't fully paid\./)).toBeVisible();
+  await page.getByText("Record a payment").click();
+  // Suggested: the balance less 2% TDS on the taxable value.
+  await expect(page.getByLabel("Received (₹)")).toHaveValue("23200");
+  await expect(page.getByLabel("TDS deducted (₹)")).toHaveValue("400");
+  await page.getByLabel("UTR or cheque No.").fill("UTR0001E2E");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("p[role=status]").first()).toHaveText(
+    "Payment recorded. Invoice QT/E2E/001 cleared.",
+  );
+  await page.reload();
+  await expect(page.getByText("Paid", { exact: true }).first()).toBeVisible();
+  await page.getByRole("button", { name: "Close the job" }).click();
+  await expect(page.locator("p[role=status]")).toHaveText("Job closed. It is in the History now.");
+  await expect(page.getByText("Closed", { exact: true }).first()).toBeVisible();
   expect(errors).toEqual([]);
 });

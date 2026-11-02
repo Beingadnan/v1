@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { db } from "@/db/client";
 import { clientDecideDeviation } from "@/domain/analysis/analysis-service";
+import { acceptWcr } from "@/domain/billing/wcr-service";
 import { ReportsError } from "@/domain/reports/errors";
 import { clientApprove, clientReturn, clientReview } from "@/domain/reports/review-service";
 import { runAction, type ActionResult } from "@/lib/action-result";
@@ -88,6 +89,27 @@ export async function clientDecideAction(
   if (result.ok) {
     revalidatePath("/client");
     revalidatePath(`/client/deviations/${id}`);
+  }
+  return result;
+}
+
+/** The client QA head accepts a work completion report (phase 10). */
+export async function clientAcceptWcrAction(
+  _prev: unknown,
+  formData: FormData,
+): Promise<ActionResult<{ text: string }>> {
+  const actor = await userForAction();
+  if (!actor) return { ok: false, error: SESSION_ENDED };
+  const id = field(formData, "wcrId");
+  const result = await runAction(async () => {
+    const r = await acceptWcr(db, actor, id, field(formData, "password"), await getRequestInfo());
+    if (!r.ok) throw new ReportsError(r.message);
+    return { text: "Accepted. QA Tech has been told the work is complete." };
+  });
+  if (result.ok) {
+    revalidatePath("/client");
+    revalidatePath(`/client/wcr/${id}`);
+    revalidatePath("/billing");
   }
   return result;
 }

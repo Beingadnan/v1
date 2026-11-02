@@ -52,6 +52,14 @@ const nextConfig: NextConfig = {
         source: "/client/reports/:reportId/pdf",
         headers: [{ key: "X-Frame-Options", value: "SAMEORIGIN" }],
       },
+      {
+        source: "/client/wcr/:wcrId/pdf",
+        headers: [{ key: "X-Frame-Options", value: "SAMEORIGIN" }],
+      },
+      {
+        source: "/jobs/:jobId/wcr/:wcrId",
+        headers: [{ key: "X-Frame-Options", value: "SAMEORIGIN" }],
+      },
     ];
   },
 };

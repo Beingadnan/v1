@@ -9,6 +9,8 @@ import type { SessionUser } from "@/domain/auth/session-service";
 import { setStatus } from "@/domain/jobs/job-service";
 import type { JobStatus } from "@/domain/jobs/types";
 
+import { moneyStatus } from "@/domain/billing/billing-service";
+
 import { REPORT_RANK, type ReportStatus } from "./types";
 
 /** Job statuses that follow the reports (phase 9). */
@@ -55,6 +57,8 @@ export async function syncJobToReports(
   const min = ranks.length ? Math.min(...ranks) : 0;
   let to: JobStatus = from;
   if (min >= 2) to = BY_RANK[min]!;
+  // Every report is with or signed by the client and the WCR is signed: the money decides (phase 10).
+  if (min >= 3) to = (await moneyStatus(tx, job.id)) ?? to;
   else if (opts.rework || ["checked", "sent_to_client", "client_signed"].includes(from))
     to = "rework";
   if (to !== from) await setStatus(tx, actor, job, to, reason, request);

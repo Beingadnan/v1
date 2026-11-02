@@ -53,6 +53,7 @@ export async function saveDetailsAction(_prev: unknown, formData: FormData): Pro
     email: field(formData, "email"),
     website: field(formData, "website"),
     gstin: field(formData, "gstin"),
+    udyamNumber: field(formData, "udyamNumber"),
   });
 }
 

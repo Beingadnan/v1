@@ -4,6 +4,7 @@ import { ZodError } from "zod";
 
 import { AnalysisError } from "@/domain/analysis/errors";
 import { ReportsError } from "@/domain/reports/errors";
+import { BillingError } from "@/domain/billing/errors";
 import { AccountError } from "@/domain/auth/account-service";
 import { ForbiddenError } from "@/domain/auth/permissions";
 import { SettingsError } from "@/domain/admin/settings-service";
@@ -47,7 +48,8 @@ export async function runAction<T>(
       error instanceof FieldError ||
       error instanceof DataError ||
       error instanceof AnalysisError ||
-      error instanceof ReportsError
+      error instanceof ReportsError ||
+      error instanceof BillingError
     ) {
       return { ok: false, error: error.message };
     }

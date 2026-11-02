@@ -29,6 +29,12 @@ export const organisationDetailsSchema = z.object({
   email: z.union([z.literal(""), z.string().trim().email("Enter a valid email address.")]),
   website: text(200),
   gstin: gstinSchema,
+  udyamNumber: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .regex(/^(UDYAM-[A-Z]{2}-\d{2}-\d{7})?$/, "A Udyam number looks like UDYAM-MH-18-0012345.")
+    .default(""),
 });
 
 export const numberFormatsSchema = z
@@ -64,6 +70,7 @@ const SETTING_LABELS: Record<string, string> = {
   email: "email",
   website: "website",
   gstin: "GSTIN",
+  udyamNumber: "Udyam number",
   jobNumberFormat: "job number format",
   certificateNumberFormat: "certificate number format",
   mktActivationEnergyKjMol: "MKT activation energy",

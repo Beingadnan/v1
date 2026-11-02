@@ -69,6 +69,7 @@ type Details = {
   email: string;
   website: string;
   gstin: string;
+  udyamNumber: string;
 };
 
 export function DetailsForm({ values, canEdit }: { values: Details; canEdit: boolean }) {
@@ -108,6 +109,7 @@ export function DetailsForm({ values, canEdit }: { values: Details; canEdit: boo
         {input("email", "Email", { type: "email" })}
         {input("website", "Website")}
         {input("gstin", "GSTIN")}
+        {input("udyamNumber", "Udyam registration (MSME)")}
         {canEdit ? (
           <div className="flex items-center gap-3 sm:col-span-2">
             <Button type="submit" disabled={pending}>

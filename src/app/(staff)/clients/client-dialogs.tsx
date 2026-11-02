@@ -198,6 +198,7 @@ export type CompanyValues = {
   notes: string;
   postCalRequired: boolean;
   requalificationMonths: number;
+  paymentTermsDays: number;
   reportNumberFormat: string;
   active: boolean;
 };
@@ -284,6 +285,17 @@ function CompanyFields({
         defaultValue={values?.requalificationMonths ?? 12}
         result={result}
         required
+      />
+      <TextField
+        name="paymentTermsDays"
+        label="Payment terms"
+        type="number"
+        min={0}
+        max={365}
+        suffix="days"
+        hint="From the invoice date. 45 is the longest under the MSMED Act."
+        defaultValue={values?.paymentTermsDays ?? 45}
+        result={result}
       />
       <div className="sm:col-span-2">
         <CheckboxField

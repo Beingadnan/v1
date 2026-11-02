@@ -49,6 +49,7 @@ const COMPANY_FIELDS = [
   "notes",
   "postCalRequired",
   "requalificationMonths",
+  "paymentTermsDays",
   "reportNumberFormat",
 ] as const;
 const SITE_FIELDS = ["name", "code", "address", "city", "state", "gstin"] as const;

@@ -100,6 +100,7 @@ describe("permission matrix", () => {
     expect(permissionMatrix()).toMatchInlineSnapshot(`
       {
         "accounts": [
+          "billing.record",
           "clients.view",
           "files.view",
           "jobs.money",
@@ -109,6 +110,7 @@ describe("permission matrix", () => {
           "analysis.approve",
           "analysis.run",
           "audit.view",
+          "billing.record",
           "calibration.approve",
           "calibration.check",
           "calibration.perform",
@@ -122,6 +124,7 @@ describe("permission matrix", () => {
           "files.view",
           "instruments.manage",
           "instruments.view",
+          "jobs.close",
           "jobs.manage",
           "jobs.money",
           "jobs.view",
@@ -134,6 +137,7 @@ describe("permission matrix", () => {
           "settings.view",
           "users.manage",
           "users.view",
+          "wcr.issue",
         ],
         "client_qa": [
           "reports.client_review",
@@ -142,6 +146,7 @@ describe("permission matrix", () => {
           "deviation.client_decide",
           "reports.client_approve",
           "reports.client_review",
+          "wcr.accept",
         ],
         "field_engineer": [
           "clients.view",
@@ -167,6 +172,7 @@ describe("permission matrix", () => {
           "analysis.approve",
           "analysis.run",
           "audit.view",
+          "billing.record",
           "calibration.approve",
           "calibration.check",
           "calibration.perform",
@@ -180,6 +186,7 @@ describe("permission matrix", () => {
           "files.view",
           "instruments.manage",
           "instruments.view",
+          "jobs.close",
           "jobs.manage",
           "jobs.money",
           "jobs.view",
@@ -190,6 +197,7 @@ describe("permission matrix", () => {
           "reports.release",
           "settings.view",
           "users.view",
+          "wcr.issue",
         ],
         "report_preparer": [
           "analysis.run",
@@ -224,6 +232,7 @@ describe("permission matrix", () => {
           "reports.check",
           "reports.prepare",
           "reports.release",
+          "wcr.issue",
         ],
       }
     `);

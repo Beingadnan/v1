@@ -53,6 +53,7 @@ export const CLIENT_FIELD_LABELS: Record<string, string> = {
   notes: "notes",
   postCalRequired: "post-calibration rule",
   requalificationMonths: "requalification interval",
+  paymentTermsDays: "payment terms",
   reportNumberFormat: "report number format",
   city: "city",
   state: "state",

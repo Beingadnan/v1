@@ -34,6 +34,8 @@ export const organisationSettings = pgTable(
     email: text("email").notNull().default(""),
     website: text("website").notNull().default(""),
     gstin: text("gstin").notNull().default(""),
+    /** QA Tech's Udyam registration (phase 10): when set, overdue invoices note the MSME 45-day limit. */
+    udyamNumber: text("udyam_number").notNull().default(""),
     letterheadFileId: uuid("letterhead_file_id").references(() => storedFiles.id, {
       onDelete: "restrict",
     }),

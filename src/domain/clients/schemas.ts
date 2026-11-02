@@ -100,6 +100,17 @@ export const companySchema = z.object({
     .int("Use whole months.")
     .min(1, "Requalification interval must be at least 1 month.")
     .max(60, "Requalification interval must be at most 60 months."),
+  /** Days to pay an invoice (phase 10); blank means 45, the MSMED Act's longest. */
+  paymentTermsDays: z
+    .preprocess(
+      (v) => (v === "" || v === undefined || v === null ? 45 : v),
+      z.coerce
+        .number({ message: "Payment terms must be a number of days." })
+        .int("Use whole days.")
+        .min(0, "Payment terms can't be negative.")
+        .max(365, "Payment terms must be at most 365 days."),
+    )
+    .optional(),
   reportNumberFormat: text(120).superRefine((value, ctx) => {
     const check = checkReportNumberFormat(value);
     if (!check.ok) ctx.addIssue({ code: "custom", message: check.message });

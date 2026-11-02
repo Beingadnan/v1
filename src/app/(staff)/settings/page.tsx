@@ -45,6 +45,7 @@ export default async function SettingsPage() {
           email: settings.email,
           website: settings.website,
           gstin: settings.gstin,
+          udyamNumber: settings.udyamNumber,
         }}
       />
       <LetterheadForm hasImage={settings.letterheadFileId !== null} canEdit={canEdit} />

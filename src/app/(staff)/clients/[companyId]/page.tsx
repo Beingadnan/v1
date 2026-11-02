@@ -120,6 +120,7 @@ export default async function ClientPage({ params }: PageProps<"/clients/[compan
                     notes: company.notes,
                     postCalRequired: company.postCalRequired,
                     requalificationMonths: company.requalificationMonths,
+                    paymentTermsDays: company.paymentTermsDays,
                     reportNumberFormat: company.reportNumberFormat,
                     active: company.active,
                   }}
@@ -156,6 +157,7 @@ export default async function ClientPage({ params }: PageProps<"/clients/[compan
           <DueBadge nextDue={nextDue ?? null} />
         </Fact>
         <Fact label="Requalification">Every {company.requalificationMonths} months</Fact>
+        <Fact label="Payment terms">{company.paymentTermsDays} days</Fact>
         <Fact label="Post-calibration (mapping)">
           {company.postCalRequired ? "Required by client SOP" : "Not required by SOP"}
         </Fact>

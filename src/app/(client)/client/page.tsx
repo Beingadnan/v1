@@ -9,6 +9,7 @@ import { db } from "@/db/client";
 import { clientCompanies } from "@/db/schema";
 import { can } from "@/domain/auth/permissions";
 import { clientDeviations } from "@/domain/analysis/client-deviations";
+import { clientWcrs } from "@/domain/billing/queries";
 import { listClientReports, type ClientReportRow } from "@/domain/reports/client-queries";
 import type { ReportStatus } from "@/domain/reports/types";
 import { requireUser } from "@/lib/auth/dal";
@@ -84,6 +85,8 @@ export default async function ClientHomePage() {
   const rows = await listClientReports(db, user);
   const deviations = can(user, "deviation.client_decide") ? await clientDeviations(db, user) : [];
   const head = can(user, "reports.client_approve");
+  const wcrs = await clientWcrs(db, user);
+  const wcrTodo = wcrs.filter((w) => w.canAccept);
   const todo = rows.filter(
     (r) => r.status === "released" || (r.status === "reviewed" && head && !r.reviewedByMe),
   );
@@ -115,6 +118,26 @@ export default async function ClientHomePage() {
                     {d.number} · {d.code}
                   </strong>
                   <span className="text-sm">{d.title}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      {wcrTodo.length > 0 ? (
+        <section aria-labelledby="wcr" className="flex flex-col gap-2">
+          <h2 id="wcr" className="text-sm font-semibold text-muted-foreground">
+            Work completion reports to accept ({wcrTodo.length})
+          </h2>
+          <ul className="flex flex-col gap-2">
+            {wcrTodo.map((w) => (
+              <li key={w.id}>
+                <Link
+                  href={`/client/wcr/${w.id}`}
+                  className="flex flex-col gap-0.5 rounded-lg border border-attention bg-surface p-3 hover:border-primary"
+                >
+                  <strong>{w.number}</strong>
+                  <span className="text-sm">Issued {when(w.issuedAt)}</span>
                 </Link>
               </li>
             ))}

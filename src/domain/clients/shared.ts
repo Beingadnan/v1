@@ -84,6 +84,8 @@ export function diff(
   const before: Record<string, unknown> = {};
   const after: Record<string, Plain> = {};
   for (const [key, value] of Object.entries(next)) {
+    // A field left out (undefined) is not a change.
+    if (value === undefined) continue;
     if (!same(current[key], value)) {
       before[key] = current[key] ?? null;
       after[key] = value;
