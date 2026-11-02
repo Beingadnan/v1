@@ -11,6 +11,31 @@ Architecture decisions: [docs/adr/](docs/adr/).
 
 ## Status
 
+**Phase 10: Close and money.** From the last report to the bank:
+
+- **WCR (work completion report):** issued once every report is with the client. It is
+  drawn on the letterhead with the job, PO, work period and every piece of equipment
+  with its report, and frozen with its SHA-256. The client's QA head accepts it in the
+  app (a signature), or QA Tech records the signed paper scan. A wrong one is voided
+  and issued again.
+- **Invoices:** recorded from Tally once the WCR is signed. Each one is checked:
+  - the number's shape (GST Rule 46);
+  - unique in its financial year;
+  - total = taxable + GST.
+
+  The next number, the amount and 18% GST are suggested. A wrong entry is cancelled
+  with a reason.
+
+- **Payments:** amount received plus TDS (2% suggested, s.194J), mode and UTR or cheque
+  number. A few rupees can be written off with a reason, and nothing beyond the balance
+  is accepted. A wrong entry is reversed, never edited.
+- **Billing page:** outstanding and overdue totals, Invoice due (with Rule 47's 30
+  days), open invoices oldest-overdue first, WCRs to issue and to chase, and what
+  cleared lately. Payment terms are set per client (45 days by default). QA Tech's
+  Udyam number, when set, brings in the MSME 45-day rule.
+- **Closing:** a manager closes a job only when the WCR, every report and every invoice
+  are done, and the refusal says what is missing. Reopening needs a reason.
+
 **Phase 9: Review and sign-off.** From a drafted report to the client's signature:
 
 - **Done By:** the preparer re-enters their password. This freezes the PDF (SHA-256)
