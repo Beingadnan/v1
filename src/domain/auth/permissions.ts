@@ -33,9 +33,21 @@ export const ACTIONS = [
   "analysis.approve",
   "deviation.manage",
   "reports.prepare",
+  "reports.check",
+  "reports.release",
+  "reports.client_review",
+  "reports.client_approve",
+  "deviation.client_decide",
 ] as const;
 
 export type Action = (typeof ACTIONS)[number];
+
+/** Actions only a client user takes, on their own company's reports. */
+export const CLIENT_ACTIONS: readonly Action[] = [
+  "reports.client_review",
+  "reports.client_approve",
+  "deviation.client_decide",
+];
 
 const FIELD_AND_OFFICE: Action[] = [
   "files.upload",
@@ -46,7 +58,8 @@ const FIELD_AND_OFFICE: Action[] = [
 ];
 
 const MATRIX: Record<Role, ReadonlySet<Action>> = {
-  admin: new Set(ACTIONS),
+  // Admin sees and does everything QA Tech does; signing for the client is the client's.
+  admin: new Set(ACTIONS.filter((a) => !CLIENT_ACTIONS.includes(a))),
   manager: new Set<Action>([
     "users.view",
     "settings.view",
@@ -67,6 +80,8 @@ const MATRIX: Record<Role, ReadonlySet<Action>> = {
     "analysis.approve",
     "deviation.manage",
     "reports.prepare",
+    "reports.check",
+    "reports.release",
     ...FIELD_AND_OFFICE,
   ]),
   team_leader: new Set<Action>([
@@ -84,6 +99,8 @@ const MATRIX: Record<Role, ReadonlySet<Action>> = {
     "analysis.approve",
     "deviation.manage",
     "reports.prepare",
+    "reports.check",
+    "reports.release",
     ...FIELD_AND_OFFICE,
   ]),
   // Preparers in the office often receive the Excel by email and upload it.
@@ -113,8 +130,13 @@ const MATRIX: Record<Role, ReadonlySet<Action>> = {
   // Accounts follow jobs to raise invoices; they see the money, not the work tools.
   accounts: new Set<Action>(["files.view", "clients.view", "jobs.view", "jobs.money"]),
   // Client access is scoped to their own company's released records (phases 2, 9 and 13).
-  client_qa: new Set<Action>(),
-  client_qa_head: new Set<Action>(),
+  // QA reviews; the QA head approves and decides deviations.
+  client_qa: new Set<Action>(["reports.client_review"]),
+  client_qa_head: new Set<Action>([
+    "reports.client_review",
+    "reports.client_approve",
+    "deviation.client_decide",
+  ]),
 };
 
 export type Actor = { role: Role; status: string };

@@ -23,6 +23,8 @@ import {
 import { assertCan } from "@/domain/auth/permissions";
 import type { RequestInfo } from "@/domain/auth/policy";
 import type { SessionUser } from "@/domain/auth/session-service";
+import { isClientRole, ROLE_LABELS } from "@/domain/auth/roles";
+import { signRecordTx } from "@/domain/auth/signature-service";
 import { isUuid } from "@/domain/clients/shared";
 import { dataContext } from "@/domain/data/data-service";
 import { lockJob, setStatus } from "@/domain/jobs/job-service";
@@ -739,6 +741,96 @@ export async function decideDeviation(
       reason: v.note || undefined,
       request,
     });
+  });
+}
+
+const clientDecideSchema = z.object({
+  decision: z.enum(DEVIATION_DECISIONS),
+  note: z.string().trim().max(4000).default(""),
+});
+
+/**
+ * The client QA head decides a deviation in the app (phase 9): the decision
+ * is signed (meaning "Deviation decision", password re-entered) over a hash
+ * of the deviation's number, QA Tech's assessment, the decision and the note,
+ * and closes the deviation as a recorded paper decision does.
+ */
+export async function clientDecideDeviation(
+  db: Database,
+  actor: SessionUser,
+  deviationId: string,
+  input: unknown,
+  password: string,
+  request?: RequestInfo,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  assertCan(actor, "deviation.client_decide");
+  if (!isClientRole(actor.role) || !actor.clientCompanyId) {
+    throw new AnalysisError("Only the client's QA head decides here.");
+  }
+  const v = clientDecideSchema.parse(input);
+  if (!password) throw new AnalysisError("Enter your password to sign the decision.");
+  return db.transaction(async (tx) => {
+    const { d, l } = await loadDeviation(tx, actor, deviationId);
+    if (l.job.companyId !== actor.clientCompanyId) {
+      throw new AnalysisError("That deviation does not exist.");
+    }
+    if (d.closedAt) {
+      throw new AnalysisError(
+        `${d.number} was already closed (${DEVIATION_DECISION_LABELS[d.decision as DeviationDecision]}, ${d.decidedByName}).`,
+      );
+    }
+    if (!d.assessment) {
+      throw new AnalysisError("QA Tech hasn't written its assessment yet.");
+    }
+    if (v.decision === "exclude_probe" && !d.positionId) {
+      throw new AnalysisError(
+        "This deviation isn't about one position, so no probe can be excluded.",
+      );
+    }
+    const signed = await signRecordTx(
+      tx,
+      actor,
+      {
+        meaning: "deviation_decision",
+        entityType: "deviation",
+        entityId: d.id,
+        recordHash: sha({
+          number: d.number,
+          assessment: d.assessment,
+          decision: v.decision,
+          note: v.note,
+        }),
+        password,
+      },
+      request ?? {},
+    );
+    if (!signed.ok) return { ok: false as const, message: signed.message };
+    const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+    await tx
+      .update(deviations)
+      .set({
+        decision: v.decision,
+        decidedByName: actor.name,
+        decidedByTitle: ROLE_LABELS[actor.role],
+        decidedOn: today,
+        decisionNote: v.note,
+        decisionRecordedByUserId: actor.id,
+        decisionSignatureId: signed.signature.id,
+        closedAt: new Date(),
+      })
+      .where(eq(deviations.id, d.id));
+    await recordAudit(tx, {
+      organisationId: actor.organisationId,
+      actor: user(actor),
+      action: "deviation.decided",
+      entityType: "deviation",
+      entityId: d.id,
+      summary: `${d.number} (${ctxLine(l)}) closed: ${DEVIATION_DECISION_LABELS[v.decision]}, decided and signed in the app by ${actor.name}`,
+      after: { decision: v.decision, signatureId: signed.signature.id },
+      reason: v.note || undefined,
+      request,
+    });
+    return { ok: true as const };
   });
 }
 

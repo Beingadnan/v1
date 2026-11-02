@@ -1,9 +1,19 @@
 import "server-only";
 
-import { and, desc, eq, inArray, isNotNull, ne } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, ne } from "drizzle-orm";
 
 import type { Database } from "@/db/client-factory";
-import { clientCompanies, equipment, jobs, studies, studyReports, users } from "@/db/schema";
+import {
+  clientCompanies,
+  equipment,
+  jobs,
+  reportComments,
+  reportPaperSignoffs,
+  signatures,
+  studies,
+  studyReports,
+  users,
+} from "@/db/schema";
 import { approvalBlockers } from "@/domain/analysis/analysis-service";
 import { assertCan, can } from "@/domain/auth/permissions";
 import type { SessionUser } from "@/domain/auth/session-service";
@@ -11,8 +21,15 @@ import { isUuid } from "@/domain/clients/shared";
 import type { JobStatus } from "@/domain/jobs/types";
 
 import { reportContext } from "./report-data";
+import { clientRecipients } from "./review-service";
 import { conclusionText, observationText } from "./templates";
-import { revLabel, type ReportStatus } from "./types";
+import {
+  REPORT_SECTION_LABELS,
+  revLabel,
+  type ReportSection,
+  type ReportStatus,
+  type SignedVia,
+} from "./types";
 
 /** Everything the Report tab shows for a study. */
 export async function getStudyReport(db: Database, actor: SessionUser, studyId: string) {
@@ -23,6 +40,7 @@ export async function getStudyReport(db: Database, actor: SessionUser, studyId: 
       study: studies,
       jobStatus: jobs.status,
       jobNumber: jobs.number,
+      companyId: jobs.companyId,
       code: equipment.code,
     })
     .from(studies)
@@ -68,7 +86,43 @@ export async function getStudyReport(db: Database, actor: SessionUser, studyId: 
     };
   }
 
+  const ids = revisions.map((x) => x.r.id);
+  const sigs = ids.length
+    ? await db
+        .select()
+        .from(signatures)
+        .where(and(eq(signatures.entityType, "report"), inArray(signatures.entityId, ids)))
+        .orderBy(asc(signatures.signedAt))
+    : [];
+  const paper = ids.length
+    ? await db.select().from(reportPaperSignoffs).where(inArray(reportPaperSignoffs.reportId, ids))
+    : [];
+  const comments = await db
+    .select({ c: reportComments, by: users.name, rev: studyReports.rev })
+    .from(reportComments)
+    .innerJoin(users, eq(users.id, reportComments.byUserId))
+    .innerJoin(studyReports, eq(studyReports.id, reportComments.reportId))
+    .where(eq(reportComments.studyId, study.id))
+    .orderBy(asc(reportComments.createdAt));
+  const people = await clientRecipients(db, row.companyId);
+
   return {
+    me: actor.id,
+    recipients: people,
+    comments: comments.map(({ c, by, rev }) => ({
+      id: c.id,
+      rev: revLabel(rev),
+      section: c.section as ReportSection,
+      sectionLabel: REPORT_SECTION_LABELS[c.section as ReportSection],
+      page: c.page,
+      body: c.body,
+      side: c.side,
+      by,
+      at: c.createdAt,
+      answer: c.answer,
+      answeredBy: c.answeredByUserId ? (frozenBy.get(c.answeredByUserId) ?? null) : null,
+      answeredAt: c.answeredAt,
+    })),
     study: {
       id: study.id,
       code: row.code,
@@ -90,6 +144,37 @@ export async function getStudyReport(db: Database, actor: SessionUser, studyId: 
       frozenBy: r.frozenByUserId ? (frozenBy.get(r.frozenByUserId) ?? null) : null,
       sha256: r.sha256,
       pages: r.pages,
+      sections: r.layout?.sections ?? {},
+      checkedAt: r.checkedAt,
+      releasedAt: r.releasedAt,
+      releasedTo: people.filter((p) => r.releasedTo.includes(p.id)).map((p) => p.name),
+      returnedAt: r.returnedAt,
+      signedAt: r.signedAt,
+      signedVia: r.signedVia as SignedVia | null,
+      issuedSha256: r.signedSha256,
+      signatures: sigs
+        .filter((g) => g.entityId === r.id && g.recordHash === r.sha256)
+        .map((g) => ({
+          id: g.id,
+          userId: g.userId,
+          meaning: g.meaning,
+          name: g.signerName,
+          role: g.signerRole,
+          at: g.signedAt,
+        })),
+      paper: (() => {
+        const p = paper.find((x) => x.reportId === r.id);
+        return p
+          ? {
+              reviewedBy: p.reviewedByName,
+              reviewedOn: p.reviewedOn,
+              approvedBy: p.approvedByName,
+              approvedByTitle: p.approvedByTitle,
+              approvedOn: p.approvedOn,
+              scanSha256: p.scanSha256,
+            }
+          : null;
+      })(),
     })),
     draft: draft
       ? {
@@ -100,7 +185,11 @@ export async function getStudyReport(db: Database, actor: SessionUser, studyId: 
         }
       : null,
     template,
-    can: { prepare: can(actor, "reports.prepare") },
+    can: {
+      prepare: can(actor, "reports.prepare"),
+      check: can(actor, "reports.check"),
+      release: can(actor, "reports.release"),
+    },
   };
 }
 
@@ -146,7 +235,7 @@ export async function listReports(db: Database, actor: SessionUser) {
     .where(
       and(
         eq(studyReports.organisationId, actor.organisationId),
-        inArray(studyReports.status, ["draft", "frozen"]),
+        ne(studyReports.status, "superseded"),
         // A cancelled job's reports are void: they stay on the study, not in this list.
         ne(jobs.status, "cancelled"),
       ),
@@ -168,7 +257,14 @@ export async function listReports(db: Database, actor: SessionUser) {
       name: x.name,
       company: x.company,
       jobNumber: x.jobNumber,
-      at: x.r.frozenAt ?? x.r.createdAt,
+      at:
+        x.r.signedAt ??
+        x.r.returnedAt ??
+        x.r.releasedAt ??
+        x.r.checkedAt ??
+        x.r.frozenAt ??
+        x.r.createdAt,
+      frozenBy: x.r.frozenByUserId,
     })),
   };
 }

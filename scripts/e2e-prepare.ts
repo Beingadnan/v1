@@ -5,13 +5,20 @@
  */
 import path from "node:path";
 
+import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 
 import { createDatabase, createPool } from "@/db/client-factory";
+import { clientCompanies } from "@/db/schema";
 import { ensureOrganisation } from "@/db/seed/ensure-organisation";
 import { ensureQatechDefaults } from "@/db/seed/qatech-defaults";
-import { bootstrapAdmin, inviteUser, setPasswordWithToken } from "@/domain/auth/account-service";
+import {
+  bootstrapAdmin,
+  inviteClientUser,
+  inviteUser,
+  setPasswordWithToken,
+} from "@/domain/auth/account-service";
 import { toSessionUser } from "@/domain/auth/session-service";
 import { LocalBlobStore } from "@/lib/storage/blob-store";
 
@@ -30,6 +37,17 @@ export const E2E_USERS = {
     email: "manager@e2e.test",
     name: "Meera Manager",
     password: "approved and issued now 5",
+  },
+  // The client (FE2E Pharma): QA reviews, the QA head approves (phase 9).
+  clientQa: {
+    email: "qa@client.e2e.test",
+    name: "Priya Client",
+    password: "reviewed the graphs 6",
+  },
+  clientHead: {
+    email: "head@client.e2e.test",
+    name: "Sunil Client",
+    password: "approved for further use 7",
   },
 } as const;
 
@@ -124,6 +142,25 @@ async function main(): Promise<void> {
     };
     await seedAnalysisJob(db, blobs, people);
     await seedReportJob(db, blobs, people);
+    // The client's QA and QA head (phase 9), on the field job's company.
+    const [fe2e] = await db
+      .select({ id: clientCompanies.id })
+      .from(clientCompanies)
+      .where(eq(clientCompanies.code, "FE2E"));
+    for (const [key, role] of [
+      ["clientQa", "client_qa"],
+      ["clientHead", "client_qa_head"],
+    ] as const) {
+      const u = E2E_USERS[key];
+      const inv = await inviteClientUser(
+        db,
+        admin,
+        { companyId: fe2e!.id, name: u.name, email: u.email, role },
+        req,
+      );
+      const done = await setPasswordWithToken(db, { token: inv.token, password: u.password }, req);
+      if (!done.ok) throw new Error(done.message);
+    }
     console.log("e2e database ready");
   } finally {
     await pool.end();

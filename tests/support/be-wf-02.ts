@@ -15,6 +15,7 @@ import { eq } from "drizzle-orm";
 import type { Database } from "@/db/client-factory";
 import { jobs, sites, studies, studyEvents, users } from "@/db/schema";
 import { ensureOrganisation } from "@/db/seed/ensure-organisation";
+import { hashPassword } from "@/domain/auth/password";
 import { toSessionUser, type SessionUser } from "@/domain/auth/session-service";
 import { createCompany } from "@/domain/clients/company-service";
 import { createEquipment } from "@/domain/clients/equipment-service";
@@ -27,6 +28,9 @@ import { autoBook, createJob, setReadiness } from "@/domain/jobs/job-service";
 import { getJob } from "@/domain/jobs/queries";
 import { LocalBlobStore, type BlobStore } from "@/lib/storage/blob-store";
 import { storeFile } from "@/lib/storage/store-file";
+
+/** Everyone the seed makes signs with this password. */
+export const BE_WF_02_PASSWORD = "correct horse battery staple 9";
 
 export const BE_WF_02_FILE = path.resolve(
   __dirname,
@@ -55,16 +59,19 @@ export async function seedBeWf02(
   manager: SessionUser;
   studyId: string;
   jobId: string;
+  companyId: string;
   blobs: BlobStore;
 }> {
   const blobs: BlobStore = new LocalBlobStore(
     await mkdtemp(path.join(tmpdir(), "qtech-be-wf-02-")),
   );
   const org = (await ensureOrganisation(db, { slug, name: "QA Tech Real" })).organisation;
+  // A real (cheap) hash, so these people can sign (phase 9).
+  const passwordHash = await hashPassword(BE_WF_02_PASSWORD, { N: 1024, r: 8, p: 1 });
   const make = async (email: string, role: string, name: string) => {
     const [row] = await db
       .insert(users)
-      .values({ organisationId: org.id, email, name, role, status: "active", passwordHash: "x" })
+      .values({ organisationId: org.id, email, name, role, status: "active", passwordHash })
       .returning();
     return toSessionUser(row!)!;
   };
@@ -228,5 +235,5 @@ export async function seedBeWf02(
   if (!stored.ok) throw new Error(stored.message);
   await addDataFile(db, blobs, lead, studyId, { fileId: stored.file.id }, req);
   await markReceived(db, lead, studyId, req);
-  return { lead, manager, studyId, jobId: job.id, blobs };
+  return { lead, manager, studyId, jobId: job.id, companyId, blobs };
 }

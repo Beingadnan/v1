@@ -40,8 +40,9 @@ test("navigation marks modules that are not built yet as unavailable", async ({
   await expect(nav.getByRole("link", { name: "Home" })).toHaveAttribute("aria-current", "page");
   await expect(nav.getByRole("link", { name: "Jobs" })).toBeVisible();
   await expect(nav.getByRole("link", { name: "Reports" })).toBeVisible();
-  await expect(nav.getByText("Reviews")).toHaveAttribute("title", "Arrives in build phase 9");
-  await expect(nav.getByRole("link", { name: "Reviews" })).toHaveCount(0);
+  await expect(nav.getByRole("link", { name: "Reviews" })).toBeVisible();
+  await expect(nav.getByText("Billing")).toHaveAttribute("title", "Arrives in build phase 10");
+  await expect(nav.getByRole("link", { name: "Billing" })).toHaveCount(0);
 });
 
 test("unknown pages show the QA Tech 404 page once signed in", async ({ page }) => {

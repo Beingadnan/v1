@@ -48,6 +48,10 @@ const nextConfig: NextConfig = {
         source: "/studies/:studyId/report/:reportId",
         headers: [{ key: "X-Frame-Options", value: "SAMEORIGIN" }],
       },
+      {
+        source: "/client/reports/:reportId/pdf",
+        headers: [{ key: "X-Frame-Options", value: "SAMEORIGIN" }],
+      },
     ];
   },
 };

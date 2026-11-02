@@ -1,22 +1,48 @@
 "use client";
 
-import { Download, FileCheck2, FilePlus2, RefreshCw } from "lucide-react";
+import { Download, FilePlus2, MessageSquare, RefreshCw, Undo2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/form-controls";
-import { StatusBadge } from "@/components/ui/status-badge";
+import { CommentComposer } from "@/components/reports/comment-composer";
+import { SignDialog } from "@/components/reports/sign-dialog";
+import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
 import type { StudyReport } from "@/domain/reports/queries";
-import { REPORT_STATUS_LABELS } from "@/domain/reports/types";
+import { REPORT_STATUS_LABELS, type ReportStatus } from "@/domain/reports/types";
 import { cn } from "@/lib/utils";
 
 import {
+  answerCommentAction,
   createReportAction,
   editReportTextAction,
-  freezeReportAction,
   newRevisionAction,
+  returnForReworkAction,
+  signReportAction,
 } from "../report-actions";
+import { MailBox, PaperSignoffForm, ReleaseForm, type Mail } from "./release-panel";
+
+const TONES: Record<ReportStatus, StatusTone> = {
+  draft: "info",
+  checking: "attention",
+  checked: "attention",
+  released: "info",
+  reviewed: "info",
+  signed: "pass",
+  returned: "fail",
+  superseded: "neutral",
+};
+
+const MEANINGS: Record<string, string> = {
+  done_by: "Done By",
+  checked_by: "Checked By",
+  reviewed_by: "Reviewed By",
+  approved_by: "Approved By",
+};
+
+/** Revisions a new one can follow. */
+const REVISABLE: ReportStatus[] = ["checked", "released", "reviewed", "returned", "signed"];
 
 const when = (d: Date | string | null) =>
   d === null
@@ -30,6 +56,8 @@ const when = (d: Date | string | null) =>
         minute: "2-digit",
         hour12: false,
       }).format(new Date(d));
+
+const dmy = (iso: string) => iso.split("-").reverse().join(".");
 
 type Feedback = { ok: boolean; text: string } | null;
 type Result = { ok: true; data?: unknown } | { ok: false; error: string };
@@ -88,17 +116,82 @@ function Section({
   );
 }
 
-/** The report of one study: draft it, preview it, edit the wording, freeze, revise. */
+/** One review comment, with the preparer's answer (or the box to write it). */
+function CommentItem({
+  c,
+  canAnswer,
+  busy,
+  onAnswer,
+}: {
+  c: StudyReport["comments"][number];
+  canAnswer: boolean;
+  busy: boolean;
+  onAnswer: (text: string) => void;
+}) {
+  const [text, setText] = useState("");
+  return (
+    <li
+      className={cn(
+        "flex flex-col gap-1 rounded-md border p-2 text-sm",
+        c.answer ? "border-border" : "border-attention bg-attention-soft/40",
+      )}
+    >
+      <span className="text-xs text-muted-foreground">
+        {c.rev} · {c.sectionLabel}
+        {c.page ? `, page ${c.page}` : ""} · {c.side === "client" ? "client" : "checker"} {c.by},{" "}
+        {when(c.at)}
+      </span>
+      <span>{c.body}</span>
+      {c.answer ? (
+        <span className="text-xs text-pass">
+          {c.answeredBy}: {c.answer}
+        </span>
+      ) : canAnswer ? (
+        <form
+          className="flex flex-col gap-1.5 sm:flex-row"
+          onSubmit={(e) => {
+            e.preventDefault();
+            onAnswer(text);
+          }}
+        >
+          <Input
+            aria-label={`What was done about: ${c.body}`}
+            placeholder="Fixed: what you changed"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+          />
+          <Button type="submit" size="sm" disabled={busy || text.trim().length < 3}>
+            Answer
+          </Button>
+        </form>
+      ) : (
+        <span className="text-xs text-attention">Not answered yet</span>
+      )}
+    </li>
+  );
+}
+
+/**
+ * The report of one study, from draft to the client's signature: wording,
+ * preview, Done By, the checker's Checked By or return, release, the paper
+ * route, and new revisions.
+ */
 export function ReportPanel({ r }: { r: StudyReport }) {
   const router = useRouter();
   const [busy, start] = useTransition();
   const [feedback, setFeedback] = useState<Feedback>(null);
   const [revising, setRevising] = useState<string | null>(null);
+  const [returning, setReturning] = useState(false);
+  const [mail, setMail] = useState<Mail | null>(null);
   const [previewKey, setPreviewKey] = useState(0);
   const s = r.study;
   const canWork = r.can.prepare && r.open;
   const latest = r.revisions[0] ?? null;
   const shown = r.draft ? r.revisions.find((x) => x.id === r.draft!.id)! : latest;
+  const open = r.comments.filter((c) => !c.answer);
+  const signedDoneByMe = shown?.signatures.some(
+    (g) => g.meaning === "done_by" && g.userId === r.me,
+  );
 
   const go = (fn: () => Promise<Result>, done: (d: unknown) => string, after?: () => void) =>
     start(async () => {
@@ -111,23 +204,27 @@ export function ReportPanel({ r }: { r: StudyReport }) {
         router.refresh();
       } else setFeedback({ ok: false, text: res.error });
     });
+  const signed = (text: string) => {
+    setFeedback({ ok: true, text });
+    setPreviewKey((k) => k + 1);
+  };
+  const fields: Record<string, string> = shown ? { studyId: s.id, reportId: shown.id } : {};
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
         {shown ? (
-          <StatusBadge
-            tone={
-              shown.status === "frozen" ? "pass" : shown.status === "draft" ? "info" : "neutral"
-            }
-          >
+          <StatusBadge tone={TONES[shown.status]}>
             {shown.label} · {REPORT_STATUS_LABELS[shown.status]}
           </StatusBadge>
         ) : (
           <StatusBadge tone="neutral">No report yet</StatusBadge>
         )}
+        {shown?.signedVia === "paper" ? (
+          <span className="text-xs text-muted-foreground">signed on paper</span>
+        ) : null}
       </div>
-      {r.blocked && shown?.status !== "frozen" ? (
+      {r.blocked && shown?.status === "draft" ? (
         <p className="rounded-md bg-attention-soft px-3 py-2 text-sm text-attention">{r.blocked}</p>
       ) : null}
       {!r.open && !latest ? (
@@ -157,15 +254,37 @@ export function ReportPanel({ r }: { r: StudyReport }) {
       {shown ? (
         <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
           <div className="flex flex-col gap-2">
-            <div className="flex flex-wrap items-center gap-2 text-sm">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
               <a
                 className="inline-flex items-center gap-1 text-primary underline"
                 href={`/studies/${s.id}/report/${shown.id}?download=1`}
               >
                 <Download className="size-4" aria-hidden="true" />
                 Download {shown.label}
-                {shown.status === "draft" ? " (draft)" : ""}
+                {shown.status === "draft"
+                  ? " (draft)"
+                  : shown.status === "signed" && shown.signedVia === "app"
+                    ? " (issued, signed)"
+                    : ""}
               </a>
+              {shown.sha256 ? (
+                <a
+                  className="text-muted-foreground underline"
+                  href={`/studies/${s.id}/report/${shown.id}?copy=frozen&download=1`}
+                >
+                  Frozen PDF
+                </a>
+              ) : null}
+              {shown.paper ? (
+                <a
+                  className="text-primary underline"
+                  href={`/studies/${s.id}/report/${shown.id}?copy=scan`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Signed scan
+                </a>
+              ) : null}
               {shown.status === "draft" ? (
                 <button
                   type="button"
@@ -195,6 +314,34 @@ export function ReportPanel({ r }: { r: StudyReport }) {
           </div>
 
           <div className="flex flex-col gap-4">
+            {r.comments.length > 0 ? (
+              <section className="flex flex-col gap-1.5">
+                <h3 className="flex items-center gap-1.5 text-sm font-semibold">
+                  <MessageSquare className="size-4" aria-hidden="true" />
+                  Review comments
+                  {open.length ? (
+                    <span className="text-attention">({open.length} to answer)</span>
+                  ) : null}
+                </h3>
+                <ul className="flex flex-col gap-1.5">
+                  {r.comments.map((c) => (
+                    <CommentItem
+                      key={c.id}
+                      c={c}
+                      busy={busy}
+                      canAnswer={r.can.prepare && shown.status === "draft"}
+                      onAnswer={(text) =>
+                        go(
+                          () => answerCommentAction(s.id, c.id, text),
+                          () => "Answer saved.",
+                        )
+                      }
+                    />
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+
             {r.draft && r.template ? (
               <>
                 <Section
@@ -226,33 +373,132 @@ export function ReportPanel({ r }: { r: StudyReport }) {
                   }
                 />
                 {canWork ? (
-                  <div className="flex flex-col gap-1 rounded-lg border border-border bg-surface p-3">
+                  <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
                     <p className="text-sm">
-                      Freezing keeps this PDF as {shown.label}: it can&apos;t be changed after, only
-                      revised.
+                      Signing Done By freezes this PDF as {shown.label} and sends it to the checker.
+                      It can&apos;t be changed after, only returned or revised.
                     </p>
-                    <Button
-                      className="w-full sm:w-fit"
-                      disabled={busy}
-                      onClick={() =>
-                        go(
-                          () => freezeReportAction(s.id, r.draft!.id),
-                          (d) => {
-                            const x = d as { rev: number; pages: number; sha256: string };
-                            return `Rev ${String(x.rev).padStart(2, "0")} frozen: ${x.pages} pages, SHA-256 ${x.sha256.slice(0, 12)}…`;
-                          },
-                        )
-                      }
-                    >
-                      <FileCheck2 aria-hidden="true" />
-                      {busy ? "Working…" : `Freeze ${shown.label}`}
-                    </Button>
+                    {open.length ? (
+                      <p className="text-sm text-attention">
+                        Answer the review comments first: say what was fixed.
+                      </p>
+                    ) : null}
+                    <SignDialog
+                      label={`Sign Done By and send ${shown.label} for checking`}
+                      title="Sign as Done By"
+                      body={`You prepared ${s.reportNumber} ${shown.label}. It is frozen with your signature and goes to the checker.`}
+                      action={signReportAction}
+                      fields={{ ...fields, step: "done_by" }}
+                      disabled={busy || open.length > 0 || Boolean(r.blocked)}
+                      onSigned={signed}
+                    />
                   </div>
                 ) : null}
               </>
             ) : null}
 
-            {!r.draft && latest && canWork ? (
+            {shown.status === "checking" ? (
+              r.can.check ? (
+                signedDoneByMe ? (
+                  <p className="rounded-md bg-surface-muted px-3 py-2 text-sm">
+                    You signed Done By on {shown.label}. Another checker signs Checked By or returns
+                    it.
+                  </p>
+                ) : returning ? (
+                  <CommentComposer
+                    sections={shown.sections}
+                    submitLabel="Return to the preparer"
+                    busy={busy}
+                    onCancel={() => setReturning(false)}
+                    onSubmit={(comments) =>
+                      go(
+                        () => returnForReworkAction(s.id, shown.id, comments),
+                        () => `${shown.label} returned to the preparer.`,
+                        () => setReturning(false),
+                      )
+                    }
+                  />
+                ) : (
+                  <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
+                    <p className="text-sm">
+                      Check the PDF against the data. Sign Checked By, or send it back with comments
+                      pinned to the sections that need changing.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <SignDialog
+                        label="Sign Checked By"
+                        title="Sign as Checked By"
+                        body={`You checked ${s.reportNumber} ${shown.label}: the numbers, the wording and the annexures.`}
+                        action={signReportAction}
+                        fields={{ ...fields, step: "checked_by" }}
+                        disabled={busy}
+                        onSigned={signed}
+                      />
+                      <Button
+                        variant="secondary"
+                        className="w-full sm:w-fit"
+                        onClick={() => setReturning(true)}
+                      >
+                        <Undo2 aria-hidden="true" />
+                        Return with comments
+                      </Button>
+                    </div>
+                  </div>
+                )
+              ) : (
+                <p className="rounded-md bg-surface-muted px-3 py-2 text-sm">
+                  With the checker: a team leader or manager signs Checked By.
+                </p>
+              )
+            ) : null}
+
+            {mail ? <MailBox mail={mail} /> : null}
+            {shown.status === "checked" && r.can.release && !mail ? (
+              <ReleaseForm
+                studyId={s.id}
+                reportId={shown.id}
+                label={shown.label}
+                people={r.recipients}
+                onReleased={(m) => {
+                  setMail(m);
+                  setFeedback({ ok: true, text: `${shown.label} released to the client.` });
+                }}
+              />
+            ) : null}
+            {(shown.status === "released" || shown.status === "reviewed") && !mail ? (
+              <p className="rounded-md bg-info-soft px-3 py-2 text-sm text-info">
+                With the client since {when(shown.releasedAt)} ({shown.releasedTo.join(", ")}).
+                {shown.status === "reviewed"
+                  ? " Reviewed; waiting for the QA head's approval."
+                  : ""}
+              </p>
+            ) : null}
+            {["checked", "released", "reviewed"].includes(shown.status) && r.can.release ? (
+              <details className="rounded-lg border border-border bg-surface p-3">
+                <summary className="cursor-pointer text-sm font-medium">
+                  Signed on paper instead?
+                </summary>
+                <div className="mt-3">
+                  <PaperSignoffForm studyId={s.id} reportId={shown.id} label={shown.label} />
+                </div>
+              </details>
+            ) : null}
+            {shown.status === "returned" ? (
+              <p className="rounded-md bg-fail-soft px-3 py-2 text-sm text-fail">
+                The client returned {shown.label} on {when(shown.returnedAt)}. Start a new revision
+                that answers their comments.
+              </p>
+            ) : null}
+            {shown.status === "signed" && shown.paper ? (
+              <p className="rounded-md bg-pass-soft px-3 py-2 text-sm text-pass">
+                Signed on paper: reviewed by {shown.paper.reviewedBy} ({dmy(shown.paper.reviewedOn)}
+                ), approved by {shown.paper.approvedBy}
+                {shown.paper.approvedByTitle ? `, ${shown.paper.approvedByTitle}` : ""} (
+                {dmy(shown.paper.approvedOn)}).
+              </p>
+            ) : null}
+
+            {!r.draft && latest && r.can.prepare && REVISABLE.includes(latest.status) ? (
               revising !== null ? (
                 <form
                   className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3"
@@ -286,6 +532,20 @@ export function ReportPanel({ r }: { r: StudyReport }) {
                   Start a new revision
                 </Button>
               )
+            ) : null}
+
+            {shown.signatures.length ? (
+              <section className="flex flex-col gap-1">
+                <h3 className="text-sm font-semibold">Signatures on {shown.label}</h3>
+                <ul className="flex flex-col gap-0.5 text-sm">
+                  {shown.signatures.map((g) => (
+                    <li key={g.id}>
+                      <strong>{MEANINGS[g.meaning] ?? g.meaning}</strong>: {g.name} ({g.role}),{" "}
+                      {when(g.at)}
+                    </li>
+                  ))}
+                </ul>
+              </section>
             ) : null}
 
             <section className="flex flex-col gap-1">

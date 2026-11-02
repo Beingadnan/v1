@@ -1,11 +1,12 @@
 import "server-only";
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne } from "drizzle-orm";
 import { z } from "zod";
 
 import type { Database, Transaction } from "@/db/client-factory";
 import {
   equipment,
+  reportComments,
   storedFiles,
   studies,
   studyReports,
@@ -17,6 +18,7 @@ import { approvalBlockers } from "@/domain/analysis/analysis-service";
 import { assertCan } from "@/domain/auth/permissions";
 import type { RequestInfo } from "@/domain/auth/policy";
 import type { SessionUser } from "@/domain/auth/session-service";
+import { signRecordTx } from "@/domain/auth/signature-service";
 import { isUuid } from "@/domain/clients/shared";
 import { lockJob, setStatus } from "@/domain/jobs/job-service";
 import { JOB_STATUS_LABELS, type JobStatus } from "@/domain/jobs/types";
@@ -25,13 +27,16 @@ import type { BlobStore } from "@/lib/storage/blob-store";
 import { storeFile } from "@/lib/storage/store-file";
 
 import { ReportsError } from "./errors";
+import { syncJobToReports } from "./job-sync";
 import { buildReportPdf } from "./report-data";
-import { revLabel, unprintable } from "./types";
+import { revLabel, unprintable, type ReportStatus } from "./types";
 
 const user = (actor: SessionUser) => ({ type: "user" as const, userId: actor.id });
 
 /** Job statuses in which a report can be drafted and frozen. */
 const REPORT_OPEN: readonly JobStatus[] = ["analysis", "report_draft", "rework"];
+/** A revision can also be started once the reports have moved on (the job goes to Rework). */
+const REVISABLE_JOB: readonly JobStatus[] = ["checked", "sent_to_client", "client_signed"];
 
 type Loaded = { study: Study; job: Job; code: string };
 
@@ -250,21 +255,45 @@ export async function previewReport(
   });
 }
 
+/** Comments on any revision of the study that the preparer hasn't answered. */
+export async function openComments(tx: Transaction | Database, studyId: string) {
+  return tx
+    .select()
+    .from(reportComments)
+    .where(and(eq(reportComments.studyId, studyId), isNull(reportComments.answer)))
+    .orderBy(reportComments.createdAt);
+}
+
+/** Revisions a new frozen revision replaces. */
+const REPLACED: ReportStatus[] = [
+  "checking",
+  "checked",
+  "released",
+  "reviewed",
+  "signed",
+  "returned",
+];
+
+export type SignOutcome<T> = ({ ok: true } & T) | { ok: false; message: string };
+
 /**
- * Freezes a draft: renders it once, keeps the PDF with its SHA-256, records
- * the run it was built from, and supersedes the revision before it. A freeze
- * is refused if the analysis approval no longer stands or a certificate's
- * PDF is missing.
+ * Submits a draft for checking: renders it once, keeps the PDF with its
+ * SHA-256, records the run it was built from, supersedes the revision before
+ * it, and signs Done By (the preparer re-enters their password) over that
+ * hash, all in one transaction. Refused if the analysis approval no longer
+ * stands, a certificate's PDF is missing, or a review comment is unanswered.
  */
 export async function freezeReport(
   db: Database,
   blobs: BlobStore,
   actor: SessionUser,
   reportId: string,
+  input: { password: string },
   request?: RequestInfo,
-) {
+): Promise<SignOutcome<{ rev: number; sha256: string; pages: number }>> {
   assertCan(actor, "reports.prepare");
   if (!isUuid(reportId)) throw new ReportsError("That report does not exist.");
+  if (!input.password) throw new ReportsError("Enter your password to sign Done By.");
   // Render outside the transaction (it reads only), then check nothing moved while it did.
   const [r0] = await db
     .select()
@@ -274,6 +303,12 @@ export async function freezeReport(
     );
   if (!r0) throw new ReportsError("That report does not exist.");
   if (r0.status !== "draft") throw new ReportsError(`${revLabel(r0.rev)} is already frozen.`);
+  const open0 = await openComments(db, r0.studyId);
+  if (open0.length) {
+    throw new ReportsError(
+      `Answer the ${open0.length === 1 ? "review comment" : `${open0.length} review comments`} first (what was fixed).`,
+    );
+  }
   const [study0] = await db.select().from(studies).where(eq(studies.id, r0.studyId));
   const run0 = await approvedRun(db, actor.organisationId, study0!);
   const built = await buildReportPdf(db, blobs, actor, study0!, run0.id, {
@@ -281,7 +316,8 @@ export async function freezeReport(
     observation: r0.observation,
     conclusion: r0.conclusion,
     watermark: null,
-    doneBy: await nameOf(db, r0.createdByUserId),
+    // Names and times are stamped from the signatures (phase 9).
+    doneBy: "",
     checkedBy: "",
   });
   if (built.missing.length > 0) {
@@ -307,19 +343,42 @@ export async function freezeReport(
     if (run.id !== run0.id || r.observation !== r0.observation || r.conclusion !== r0.conclusion) {
       throw new ReportsError("The report changed while it was being frozen. Freeze it again.");
     }
+    if ((await openComments(tx, r.studyId)).length) {
+      throw new ReportsError("A review comment came in while you were signing. Answer it first.");
+    }
+    const signed = await signRecordTx(
+      tx,
+      actor,
+      {
+        meaning: "done_by",
+        entityType: "report",
+        entityId: r.id,
+        recordHash: stored.file.sha256,
+        password: input.password,
+      },
+      request ?? {},
+    );
+    if (!signed.ok) return { ok: false as const, message: signed.message };
     const now = new Date();
     await tx
       .update(studyReports)
       .set({ status: "superseded", supersededAt: now })
-      .where(and(eq(studyReports.studyId, r.studyId), eq(studyReports.status, "frozen")));
+      .where(
+        and(
+          eq(studyReports.studyId, r.studyId),
+          ne(studyReports.id, r.id),
+          inArray(studyReports.status, REPLACED),
+        ),
+      );
     await tx
       .update(studyReports)
       .set({
-        status: "frozen",
+        status: "checking",
         runId: run.id,
         fileId: stored.file.id,
         sha256: stored.file.sha256,
         pages: built.pages,
+        layout: built.layout,
         frozenByUserId: actor.id,
         frozenAt: now,
       })
@@ -330,11 +389,11 @@ export async function freezeReport(
       action: "report.frozen",
       entityType: "study",
       entityId: r.studyId,
-      summary: `${actor.name} froze ${l.study.reportNumber} ${revLabel(r.rev)} (${built.pages} pages, from analysis run ${run.runNo})`,
+      summary: `${actor.name} froze ${l.study.reportNumber} ${revLabel(r.rev)} (${built.pages} pages, from analysis run ${run.runNo}), signed Done By and sent it for checking`,
       after: { rev: r.rev, sha256: stored.file.sha256, runId: run.id, pages: built.pages },
       request,
     });
-    return { rev: r.rev, sha256: stored.file.sha256, pages: built.pages };
+    return { ok: true as const, rev: r.rev, sha256: stored.file.sha256, pages: built.pages };
   });
 }
 
@@ -350,11 +409,16 @@ export async function newRevision(
   const why = z.string().trim().min(5, "Say why the report is revised.").max(1000).parse(reason);
   return db.transaction(async (tx) => {
     const l = await load(tx, actor, studyId);
-    assertOpen(l, "Revising the report");
+    if (!REVISABLE_JOB.includes(l.job.status as JobStatus)) assertOpen(l, "Revising the report");
     const last = await latest(tx, l.study.id);
     if (!last) throw new ReportsError("There's no report to revise yet.");
     if (last.status === "draft")
       throw new ReportsError(`${revLabel(last.rev)} is already being drafted.`);
+    if (last.status === "checking") {
+      throw new ReportsError(
+        `${revLabel(last.rev)} is with the checker. The checker returns it if it needs changes.`,
+      );
+    }
     const [r] = await tx
       .insert(studyReports)
       .values({
@@ -378,6 +442,9 @@ export async function newRevision(
       reason: why,
       after: { reportId: r!.id, rev: last.rev + 1 },
       request,
+    });
+    await syncJobToReports(tx, actor, l.job, `${l.study.reportNumber} is being revised`, request, {
+      rework: true,
     });
     return { id: r!.id, rev: last.rev + 1 };
   });

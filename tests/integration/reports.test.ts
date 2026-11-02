@@ -14,6 +14,7 @@ import { PDFDocument } from "pdf-lib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { auditLog, certificates, jobs, studyReports, users } from "@/db/schema";
+import { hashPassword } from "@/domain/auth/password";
 import { approveAnalysis, runAnalysis } from "@/domain/analysis/analysis-service";
 import { setLetterhead } from "@/domain/admin/settings-service";
 import { attachCertificateFile } from "@/domain/instruments/certificate-service";
@@ -27,14 +28,16 @@ import {
   newRevision,
   previewReport,
 } from "@/domain/reports/report-service";
+import { checkReport } from "@/domain/reports/review-service";
 import type { BlobStore } from "@/lib/storage/blob-store";
 import { storeFile } from "@/lib/storage/store-file";
 
-import { BE_WF_02_FILE, seedBeWf02 } from "../support/be-wf-02";
+import { BE_WF_02_FILE, BE_WF_02_PASSWORD, seedBeWf02 } from "../support/be-wf-02";
 import { openTestDatabase } from "../support/test-db";
 
 const { db, close } = openTestDatabase();
 const req = { ipAddress: "203.0.113.93" };
+const pw = { password: BE_WF_02_PASSWORD };
 let lead: SessionUser;
 let preparer: SessionUser;
 let accounts: SessionUser;
@@ -77,7 +80,7 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 8: the BE-WF-02 report", () =
           name,
           role,
           status: "active",
-          passwordHash: "x",
+          passwordHash: await hashPassword(BE_WF_02_PASSWORD, { N: 1024, r: 8, p: 1 }),
         })
         .returning();
       return toSessionUser(row!)!;
@@ -212,7 +215,7 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 8: the BE-WF-02 report", () =
   });
 
   it("refuses to freeze while a certificate's PDF is missing", async () => {
-    await expect(freezeReport(db, blobs, preparer, reportId, req)).rejects.toThrow(
+    await expect(freezeReport(db, blobs, preparer, reportId, pw, req)).rejects.toThrow(
       /These certificates have no PDF on file: QATECH\/BHIWANDI\/04\/26\/PDL-77/,
     );
   });
@@ -232,7 +235,12 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 8: the BE-WF-02 report", () =
     const [pdl77] = await db
       .select({ id: certificates.id })
       .from(certificates)
-      .where(eq(certificates.number, "QATECH/BHIWANDI/04/26/PDL-77"));
+      .where(
+        and(
+          eq(certificates.number, "QATECH/BHIWANDI/04/26/PDL-77"),
+          eq(certificates.organisationId, lead.organisationId),
+        ),
+      );
     await expect(
       attachCertificateFile(
         db,
@@ -251,7 +259,8 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 8: the BE-WF-02 report", () =
       attachCertificateFile(db, lead, { certificateId: pdl77!.id, fileId: stored.file.id }, req),
     ).rejects.toThrow("QATECH/BHIWANDI/04/26/PDL-77 already has its PDF.");
 
-    const f = await freezeReport(db, blobs, preparer, reportId, req);
+    const f = await freezeReport(db, blobs, preparer, reportId, pw, req);
+    if (!f.ok) throw new Error(f.message);
     expect(f.rev).toBe(0);
     const pdf = (await frozenReport(db, blobs, preparer, reportId))!;
     expect(createHash("sha256").update(pdf.bytes).digest("hex")).toBe(f.sha256);
@@ -261,7 +270,8 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 8: the BE-WF-02 report", () =
       const text = textOf(pdf.bytes);
       expect(text).not.toContain("DRAFT");
       expect(text).toContain("PDL-77 certificate (test)");
-      expect(text).toContain("MANGESH PHALSKAR");
+      // Names are stamped from the signatures, not frozen into the PDF (phase 9).
+      expect(text).not.toContain("MANGESH PHALSKAR");
     }
     await expect(
       editReportText(
@@ -272,12 +282,17 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 8: the BE-WF-02 report", () =
         req,
       ),
     ).rejects.toThrow("Rev 00 is frozen and can't be changed.");
-    await expect(freezeReport(db, blobs, preparer, reportId, req)).rejects.toThrow(
+    await expect(freezeReport(db, blobs, preparer, reportId, pw, req)).rejects.toThrow(
       "Rev 00 is already frozen.",
     );
   });
 
   it("issues Rev 01 with a reason, and Rev 00 becomes superseded", async () => {
+    // Rev 00 is with the checker; it's checked before anyone revises it (phase 9).
+    await expect(
+      newRevision(db, preparer, studyId, "Client asked to correct the department name", req),
+    ).rejects.toThrow("Rev 00 is with the checker.");
+    expect((await checkReport(db, lead, reportId, pw, req)).ok).toBe(true);
     await expect(newRevision(db, preparer, studyId, "no", req)).rejects.toThrow(
       "Say why the report is revised.",
     );
@@ -289,7 +304,7 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 8: the BE-WF-02 report", () =
       req,
     );
     expect(r1.rev).toBe(1);
-    await freezeReport(db, blobs, preparer, r1.id, req);
+    expect((await freezeReport(db, blobs, preparer, r1.id, pw, req)).ok).toBe(true);
     const rows = await db
       .select({ rev: studyReports.rev, status: studyReports.status, reason: studyReports.reason })
       .from(studyReports)
@@ -297,7 +312,7 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 8: the BE-WF-02 report", () =
       .orderBy(studyReports.rev);
     expect(rows).toEqual([
       { rev: 0, status: "superseded", reason: "" },
-      { rev: 1, status: "frozen", reason: "Client asked to correct the department name" },
+      { rev: 1, status: "checking", reason: "Client asked to correct the department name" },
     ]);
     const actions = (
       await db

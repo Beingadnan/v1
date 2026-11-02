@@ -47,8 +47,12 @@ export function proxy(request: NextRequest) {
   return response;
 }
 
-/** The report PDF route (src/app/(staff)/studies/[studyId]/report/[reportId]). */
-const REPORT_PDF = /^\/studies\/[^/]+\/report\/[^/]+$/;
+/**
+ * The report PDF routes, shown in a frame on our own pages: staff
+ * (src/app/(staff)/studies/[studyId]/report/[reportId]) and client
+ * (src/app/(client)/client/reports/[reportId]/pdf).
+ */
+const REPORT_PDF = /^\/(studies\/[^/]+\/report\/[^/]+|client\/reports\/[^/]+\/pdf)$/;
 
 export function buildContentSecurityPolicy(nonce: string, isDev: boolean): string {
   const directives = [

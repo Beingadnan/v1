@@ -5,7 +5,7 @@ import PDFDocument from "pdfkit";
 import type { CycleResult, EngineResult, Stats } from "@/domain/analysis/engine";
 import { BOX_EDGES, mm, projector, spreadLabels, type Point } from "@/domain/field/layout";
 
-import { FT09_FORM } from "./types";
+import { FT09_FORM, type ReportLayout, type ReportSection, type SignBox } from "./types";
 
 /**
  * QA Tech's mapping report (form QATM/PVAL/FT-09) as a PDF, laid out like the
@@ -171,6 +171,7 @@ export type RenderedReport = {
   bodyPages: number;
   rawPages: number;
   totalPages: number;
+  layout: ReportLayout;
 };
 
 class Builder {
@@ -179,6 +180,8 @@ class Builder {
   kinds: Kind[] = [];
   /** First page of each section, for the index. */
   marks = new Map<string, number>();
+  /** The signature block's cells, for stamping signatures on the frozen PDF (phase 9). */
+  signBoxes: ReportLayout["signBoxes"] = null;
 
   constructor(private d: ReportData) {
     this.doc = new PDFDocument({
@@ -955,6 +958,7 @@ class Builder {
       ["Reviewed By", cw, { bold: true, align: "center" }],
       ["Approved By", cw, { bold: true, align: "center" }],
     ]);
+    const sigY = this.y;
     this.row(36, [
       ["Signature", c0, { bold: true, align: "center" }],
       ["", cw],
@@ -962,6 +966,22 @@ class Builder {
       ["", cw],
       ["", cw],
     ]);
+    const nameY = this.y;
+    // pdf-lib measures from the bottom left; pdfkit from the top left.
+    const box = (i: number, y: number, h: number): SignBox => ({
+      page: this.kinds.length,
+      x: M + c0 + cw * i,
+      y: A4.h - y - h,
+      w: cw,
+      h,
+    });
+    const col = (i: number) => ({ signature: box(i, sigY, 36), name: box(i, nameY, 18) });
+    this.signBoxes = {
+      done_by: col(0),
+      checked_by: col(1),
+      reviewed_by: col(2),
+      approved_by: col(3),
+    };
     this.row(18, [
       ["Name", c0, { bold: true, align: "center" }],
       [d.signatures.doneBy.toUpperCase(), cw, { bold: true, align: "center" }],
@@ -1278,10 +1298,26 @@ export async function renderReport(d: ReportData): Promise<RenderedReport> {
   const pdf = await final.done();
   // The first pass is only measured; end it so pdfkit frees it.
   first.doc.end();
+  const sections: ReportLayout["sections"] = { general: 1, cover: 1 };
+  const marked: [ReportSection, string][] = [
+    ["details", "details"],
+    ["diagram", "diagram"],
+    ["graphs", "graph"],
+    ["conclusion", "conclusion"],
+    ["raw", "raw"],
+    ["postcal", "postcal"],
+    ["deviations", "deviations"],
+  ];
+  for (const [section, mark] of marked) {
+    const page = final.marks.get(mark);
+    if (page !== undefined) sections[section] = page;
+  }
+  if (d.certificatePages) sections.certificates = final.kinds.length + 1;
   return {
     pdf,
     bodyPages: counts.get("body") ?? 0,
     rawPages: counts.get("raw") ?? 0,
     totalPages: final.kinds.length,
+    layout: { sections, signBoxes: final.signBoxes },
   };
 }

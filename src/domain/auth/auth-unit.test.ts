@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { checkNumberFormat, formatNumber, parseNumber } from "../numbering/format";
 
 import { hashPassword, verifyPassword, checkPasswordStrength, needsRehash } from "./password";
-import { ACTIONS, can, permissionMatrix } from "./permissions";
+import { ACTIONS, CLIENT_ACTIONS, can, permissionMatrix } from "./permissions";
 import { ROLES } from "./roles";
 import { generateToken, hashToken, isWellFormedToken } from "./tokens";
 
@@ -69,20 +69,25 @@ describe("permission matrix", () => {
     expect(Object.keys(permissionMatrix()).sort()).toEqual([...ROLES].sort());
   });
 
-  it("gives admin every action and only admin user/settings management", () => {
+  it("gives admin every QA Tech action and only admin user/settings management", () => {
     for (const action of ACTIONS)
-      expect(can({ role: "admin", status: "active" }, action)).toBe(true);
+      expect(can({ role: "admin", status: "active" }, action)).toBe(
+        !CLIENT_ACTIONS.includes(action),
+      );
     for (const role of ROLES.filter((r) => r !== "admin")) {
       expect(can({ role, status: "active" }, "users.manage")).toBe(false);
       expect(can({ role, status: "active" }, "settings.manage")).toBe(false);
     }
   });
 
-  it("gives client roles nothing on staff records", () => {
-    for (const action of ACTIONS) {
+  it("gives client roles nothing on staff records, and only the head approves", () => {
+    for (const action of ACTIONS.filter((a) => !CLIENT_ACTIONS.includes(a))) {
       expect(can({ role: "client_qa", status: "active" }, action)).toBe(false);
       expect(can({ role: "client_qa_head", status: "active" }, action)).toBe(false);
     }
+    expect(can({ role: "client_qa", status: "active" }, "reports.client_review")).toBe(true);
+    expect(can({ role: "client_qa", status: "active" }, "reports.client_approve")).toBe(false);
+    expect(can({ role: "client_qa_head", status: "active" }, "reports.client_approve")).toBe(true);
   });
 
   it("denies everything to users who are not active", () => {
@@ -122,14 +127,22 @@ describe("permission matrix", () => {
           "jobs.view",
           "postcal.record",
           "ratecard.manage",
+          "reports.check",
           "reports.prepare",
+          "reports.release",
           "settings.manage",
           "settings.view",
           "users.manage",
           "users.view",
         ],
-        "client_qa": [],
-        "client_qa_head": [],
+        "client_qa": [
+          "reports.client_review",
+        ],
+        "client_qa_head": [
+          "deviation.client_decide",
+          "reports.client_approve",
+          "reports.client_review",
+        ],
         "field_engineer": [
           "clients.view",
           "data.import",
@@ -172,7 +185,9 @@ describe("permission matrix", () => {
           "jobs.view",
           "postcal.record",
           "ratecard.manage",
+          "reports.check",
           "reports.prepare",
+          "reports.release",
           "settings.view",
           "users.view",
         ],
@@ -206,7 +221,9 @@ describe("permission matrix", () => {
           "jobs.money",
           "jobs.view",
           "postcal.record",
+          "reports.check",
           "reports.prepare",
+          "reports.release",
         ],
       }
     `);

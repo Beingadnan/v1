@@ -15,6 +15,17 @@ export const USERS = {
     name: "Meera Manager",
     password: "approved and issued now 5",
   },
+  // The client (FE2E Pharma): QA reviews, the QA head approves (phase 9).
+  clientQa: {
+    email: "qa@client.e2e.test",
+    name: "Priya Client",
+    password: "reviewed the graphs 6",
+  },
+  clientHead: {
+    email: "head@client.e2e.test",
+    name: "Sunil Client",
+    password: "approved for further use 7",
+  },
 } as const;
 
 export function e2eDatabaseUrl(): string {

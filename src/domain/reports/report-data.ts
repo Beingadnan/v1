@@ -498,6 +498,7 @@ export async function buildReportPdf(
     bytes,
     pages: r.totalPages + annex.pages,
     bodyPages: r.bodyPages,
+    layout: r.layout,
     missing: annex.missing,
     data,
   };

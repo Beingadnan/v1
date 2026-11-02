@@ -26,6 +26,7 @@ import {
 
 import { instruments } from "./instruments";
 import { studies } from "./jobs";
+import { signatures } from "./signatures";
 import { storedFiles } from "./stored-files";
 import { users } from "./users";
 
@@ -145,6 +146,10 @@ export const deviations = pgTable(
       onDelete: "restrict",
     }),
     decisionRecordedByUserId: byUser("decision_recorded_by_user_id"),
+    /** Phase 9: the client QA head's electronic signature, when decided in the app. */
+    decisionSignatureId: uuid("decision_signature_id").references(() => signatures.id, {
+      onDelete: "restrict",
+    }),
     closedAt: timestamp("closed_at", { withTimezone: true }),
   },
   (t) => [

@@ -174,6 +174,8 @@ export const studies = pgTable(
     analysisRunId: uuid("analysis_run_id"),
     analysisApprovedAt: timestamp("analysis_approved_at", { withTimezone: true }),
     analysisApprovedByUserId: uuid("analysis_approved_by_user_id"),
+    /** Phase 9: set when the client signs the report; the study is in the company archive. */
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
