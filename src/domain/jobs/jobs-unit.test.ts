@@ -420,3 +420,80 @@ describe("job dates", () => {
     ]);
   });
 });
+
+describe("readiness: long enough on site", () => {
+  const input = (end: string): ReadinessInput => ({
+    poNumber: "PO-1",
+    plannedStart: "2026-11-04",
+    plannedEnd: end,
+    studies: [
+      {
+        workType: "temperature_mapping",
+        loggerCount: 9,
+        postCalRequired: false,
+        durationHours: 24,
+        label: "FZ-01",
+      },
+      {
+        workType: "temperature_mapping",
+        loggerCount: 9,
+        postCalRequired: false,
+        durationHours: 72,
+        label: "CR-01",
+      },
+      {
+        workType: "temperature_rh_mapping",
+        loggerCount: 5,
+        postCalRequired: false,
+        durationHours: 168,
+        label: "DSP-02",
+      },
+    ],
+    booked: [],
+    isRequalification: false,
+    manual: {},
+  });
+  const fit = (end: string) =>
+    computeReadiness(input(end)).items.find((i) => i.key === "dates_fit")!;
+
+  it("names the studies that don't fit and the last day that would", () => {
+    expect(fit("2026-11-06")).toMatchObject({
+      state: "pending",
+      detail:
+        "04.11.2026–06.11.2026 gives 48 h, but DSP-02 needs 168 h; CR-01 needs 72 h. Move the last day to 11.11.2026 or shorten the study.",
+    });
+  });
+
+  it("is ready when the last day leaves time for the longest study", () => {
+    expect(fit("2026-11-11")).toMatchObject({
+      state: "ready",
+      detail: "168 h on site; the longest study needs 168 h.",
+    });
+  });
+});
+
+describe("readiness: cycles run one after another", () => {
+  it("counts every cycle of a study", () => {
+    const r = computeReadiness({
+      poNumber: "PO-1",
+      plannedStart: "2026-10-26",
+      plannedEnd: "2026-11-02",
+      studies: [
+        {
+          workType: "temperature_mapping",
+          loggerCount: 9,
+          postCalRequired: false,
+          durationHours: 72,
+          cycleCount: 4,
+          label: "CR-01",
+        },
+      ],
+      booked: [],
+      isRequalification: false,
+      manual: {},
+    }).items.find((i) => i.key === "dates_fit")!;
+    expect(r.detail).toBe(
+      "26.10.2026–02.11.2026 gives 168 h, but CR-01 needs 288 h (4 cycles of 72 h). Move the last day to 07.11.2026 or shorten the study.",
+    );
+  });
+});

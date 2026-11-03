@@ -141,3 +141,64 @@ describe.skipIf(!has("All site portable datalogger lis Baddi.xlsx"))("Baddi list
     expect(planSummary(plan)).toMatchObject({ instruments: 184, certificates: 16, unassigned: 9 });
   });
 });
+
+describe.skipIf(!has("Testo Data Loggers.xlsx"))(
+  "Nagpur Testo list, three blocks side by side",
+  () => {
+    it("reads all 118 loggers from the three blocks", async () => {
+      const r = await read("Testo Data Loggers.xlsx");
+      const codes = r.rows.map((x) => x.code);
+      expect(codes).toHaveLength(118);
+      expect(codes).toContain("T-TRH0269"); // first block
+      expect(codes).toContain("T-TRH0552"); // second block
+      expect(r.rows.find((x) => x.code === "T-TRH0821")!.serialNo).toBe("83592649"); // third
+      expect(codes.every((c) => /^T-TRH\d+$/.test(c))).toBe(true);
+    });
+  },
+);
+
+describe.skipIf(!has("Elitech 50 certificate.xlsx"))(
+  "Elitech workbook: serial and ID on two rows",
+  () => {
+    it("reads ET-TRH IDs with their EF serials", async () => {
+      const r = await read("Elitech 50 certificate.xlsx");
+      const first = r.workbookCertificates[0]!;
+      expect(first.instruments[0]).toEqual({ code: "ET-TRH001", serialNo: "EF7213101920" });
+      expect(r.workbookCertificates.flatMap((c) => c.instruments)).toHaveLength(54);
+    });
+  },
+);
+
+describe.skipIf(!has("Elitech 50 certificate.xlsx") || !has("23.07.2026 PDL-12.xlsx"))(
+  "a certificate sheet copied from another",
+  () => {
+    it("warns that Elitech PDL-01 reads exactly what PDL-12 reads", async () => {
+      const { readingPrint } = await import("./instrument-import");
+      const pdl12 = (await read("23.07.2026 PDL-12.xlsx")).workbookCertificates[0]!;
+      const prints = pdl12.instruments.map((_, ii) =>
+        readingPrint(
+          pdl12.points.map((p, pi) => ({
+            reference: p.reference,
+            reading: pdl12.readings[pi]![ii]!,
+          })),
+        ),
+      );
+      const plan = planInstrumentImport(await read("Elitech 50 certificate.xlsx"), {
+        ...snapshot,
+        readingPrints: [{ number: pdl12.number, prints }],
+      });
+      expect(plan.problems.join("\n")).toMatch(
+        /PDL-01\/Rev-01: \d+ of its 20 instruments read exactly what QATECH\/BHIWANDI\/07\/26\/PDL-12 reads/,
+      );
+    });
+  },
+);
+
+describe.skipIf(!has("25.07.2026 PDL-14.xlsx"))("PDL-14: working cells right of the table", () => {
+  it("reads only the loggers, not the numbers typed beside the table", async () => {
+    const r = await read("25.07.2026 PDL-14.xlsx");
+    const codes = r.workbookCertificates.flatMap((c) => c.instruments.map((i) => i.code));
+    expect(codes.filter((c) => !/^T-TRH\d+$/.test(c))).toEqual([]);
+    expect(codes).toContain("T-TRH091");
+  });
+});

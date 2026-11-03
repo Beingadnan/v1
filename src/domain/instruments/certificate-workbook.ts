@@ -253,6 +253,8 @@ export function readCertificateSheet(
       const raw = g.text(head, c);
       if (!raw) break; // the table ends at the first empty heading; working cells sit further right
       if (raw === previous) continue; // a merged heading repeated
+      // A bare reading (-25.2, 15.3) is a working cell right of the table, not a logger.
+      if (/^-?\d+(\.\d+)?$/.test(raw.trim()) && !/^\d{6,12}$/.test(raw.trim())) break;
       previous = raw;
       const parts = raw.split(/[\s/]+/).filter(Boolean);
       const serialNo = parts.find((p) => /^\d{6,12}$/.test(p)) ?? "";
@@ -268,6 +270,19 @@ export function readCertificateSheet(
       }
       block.push(index);
       blockCols.push(c);
+    }
+    // Elitech sheets print "Serial No." on one row and "ID No." on the row under it.
+    if (
+      /^serial/.test(lc(g.text(head, uucCol)).trim()) &&
+      /^id\.? ?no/.test(lc(g.text(head + 1, uucCol)).trim())
+    ) {
+      blockCols.forEach((c, i) => {
+        const id = g.text(head + 1, c).trim();
+        const inst = instruments[block[i]!]!;
+        if (!id || inst.code.toLowerCase() === id.toLowerCase()) return;
+        if (!inst.serialNo) inst.serialNo = inst.code;
+        inst.code = id;
+      });
     }
     let r = head + 1;
     for (; r <= g.rows; r++) {

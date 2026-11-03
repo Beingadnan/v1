@@ -381,6 +381,75 @@ describe("importing FT-05 certificate workbooks and serial lists", () => {
     expect(cert.masters.map((m) => m.certificate?.number)).toEqual([`ARAI/CAL/9701/${run}`]);
     // Imported loggers take the model's accuracy, so pass/fail is judged (Testo 174H model exists).
     expect(cert.items.find((i) => i.instrument.code === "TRH-9701")!.result).not.toBeNull();
+
+    // A report's annexure redraws it from its readings: no scan needed.
+    const { certificateAnnex } = await import("@/domain/reports/report-data");
+    const annex = await certificateAnnex(db, blobs, manager, {
+      placed: [],
+      covering: new Map([["L-01", { id: cert.id }]]),
+      masters: [],
+    } as unknown as Parameters<typeof certificateAnnex>[3]);
+    expect(annex.missing).toEqual([]);
+    expect(Buffer.from(annex.pdfs[0]!).subarray(0, 5).toString()).toBe("%PDF-");
+  });
+
+  it("adds a logger left out the first time (no ID yet) to the recorded certificate when the file is imported again", async () => {
+    const { createInstrument } = await import("@/domain/instruments/instrument-service");
+    const { getCertificate, listInstruments: list } = await import("@/domain/instruments/queries");
+    const number = `QATECH/BHIWANDI/07/26/PDL-${(Number(run) % 40) + 50}`;
+    const file = async () => {
+      const stored = await storeFile(db, blobs, {
+        organisationId: manager.organisationId,
+        actor: { type: "user", userId: manager.id },
+        fileName: "TRH-9801 to TRH-9803.xlsx",
+        bytes: await certificateWorkbook(number, [
+          { id: `TRH-98${run}1`, serial: `98${run}1` },
+          { id: `TRH-98${run}2`, serial: `98${run}2` },
+          { id: "", serial: `98${run}3` },
+        ]),
+        maxBytes: 5 * 1024 * 1024,
+      });
+      if (!stored.ok) throw new Error(stored.message);
+      return stored.file.id;
+    };
+    const first = await file();
+    await applyInstrumentImport(db, blobs, manager, first, { defaultType: "portable_logger" }, req);
+    const [one] = await list(db, manager, { q: `TRH-98${run}1` });
+    const certId = one!.latest!.id;
+    expect((await getCertificate(db, manager, certId))!.items).toHaveLength(2);
+
+    // The lab registers the third logger, then imports the same workbook again.
+    await createInstrument(
+      db,
+      manager,
+      { type: "portable_logger", code: `TRH-98${run}3`, serialNo: `98${run}3` },
+      req,
+    );
+    const again = await file();
+    const preview = await previewInstrumentImport(db, blobs, manager, again, {
+      defaultType: "portable_logger",
+    });
+    expect(preview.plan.alreadyRecorded).toEqual([]);
+    expect(preview.plan.fullCertificates.map((c) => [c.existingId, c.codes])).toEqual([
+      [certId, [`TRH-98${run}3`]],
+    ]);
+    await applyInstrumentImport(db, blobs, manager, again, { defaultType: "portable_logger" }, req);
+    const cert = (await getCertificate(db, manager, certId))!;
+    expect(cert.items.map((i) => i.instrument.code)).toEqual([
+      `TRH-98${run}1`,
+      `TRH-98${run}2`,
+      `TRH-98${run}3`,
+    ]);
+    expect(cert.points).toHaveLength(2);
+    const third = cert.items.find((i) => i.instrument.code === `TRH-98${run}3`)!.instrument.id;
+    expect(cert.readings.filter((r) => r.instrumentId === third).map((r) => r.deviation)).toEqual([
+      "0.005",
+    ]);
+    // A third import changes nothing.
+    const thrice = await previewInstrumentImport(db, blobs, manager, await file(), {
+      defaultType: "portable_logger",
+    });
+    expect(thrice.plan.alreadyRecorded).toEqual([number]);
   });
 
   it("continues the number series after imported numbers, so none is handed out twice", async () => {

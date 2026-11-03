@@ -118,6 +118,7 @@ export const RATE_BASIS_LABELS: Record<RateBasis, string> = {
 /** Readiness items QA Tech checks before field work. */
 export const READINESS_ITEMS = [
   "purchase_order",
+  "dates_fit",
   "protocol",
   "site_access",
   "loggers_booked",
@@ -136,6 +137,11 @@ export const READINESS_INFO: Record<
     label: "Purchase order",
     calculated: true,
     hint: "Ready when the PO number is on the job.",
+  },
+  dates_fit: {
+    label: "Long enough on site",
+    calculated: true,
+    hint: "From the first day to the last there is time for the longest study.",
   },
   protocol: {
     label: "Approved protocol",

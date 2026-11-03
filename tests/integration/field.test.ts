@@ -583,6 +583,16 @@ describe("phase 5: an engineer places 9 loggers for BE-WF-02 and records start a
       { id: randomUUID(), cycle: "door_open", kind: "door_closed", at: t(44) },
       req,
     );
+    // The empty cycle can't start while the door-open cycle runs, nor inside its time.
+    await expect(
+      recordEvent(
+        db,
+        engineer,
+        roomStudy,
+        { id: randomUUID(), cycle: "empty", kind: "start", at: t(30) },
+        req,
+      ),
+    ).rejects.toThrow("Door open is still running. End it before starting empty.");
     await recordEvent(
       db,
       engineer,
@@ -590,6 +600,15 @@ describe("phase 5: an engineer places 9 loggers for BE-WF-02 and records start a
       { id: randomUUID(), cycle: "door_open", kind: "end", at: t(10) },
       req,
     );
+    await expect(
+      recordEvent(
+        db,
+        engineer,
+        roomStudy,
+        { id: randomUUID(), cycle: "empty", kind: "start", at: t(20) },
+        req,
+      ),
+    ).rejects.toThrow(/^Door open ran until .*; empty can't start inside it\.$/);
     s = await study(roomStudy);
     // Only one of its two cycles is done.
     expect(s.status).toBe("in_progress");

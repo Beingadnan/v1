@@ -58,6 +58,7 @@ export function InstrumentImportFlow({
     defaultType: "portable_logger",
     assignPrefix: "",
     assignModelId: models[0]?.id ?? "",
+    listModelId: "",
   });
   const [pending, startTransition] = useTransition();
 
@@ -146,6 +147,9 @@ export function InstrumentImportFlow({
     const s = preview.summary;
     const recheck = (next: ImportChoices) => check(preview.fileId, preview.fileName, next);
     const nothing = s.instruments + s.certificateLinks === 0;
+    const modelless = preview.plan.instruments.filter(
+      (i) => !i.generated && !i.make && !i.model,
+    ).length;
     return (
       <div className="flex flex-col gap-5">
         <section className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
@@ -174,6 +178,42 @@ export function InstrumentImportFlow({
           </ul>
           <div className="max-w-sm">{typeSelect(recheck)}</div>
         </section>
+
+        {modelless > 0 || choices.listModelId ? (
+          <section
+            aria-labelledby="list-model"
+            className="flex flex-col gap-3 rounded-lg border border-attention/30 bg-attention-soft p-4"
+          >
+            <h2 id="list-model" className="font-semibold">
+              {modelless > 0
+                ? `${plural(modelless, "new instrument")} with no make or model in the file`
+                : "Model given to the new instruments"}
+            </h2>
+            <p className="text-sm">
+              Pick their model so they take its range, resolution and accuracy, and calibration can
+              judge them pass or fail.
+            </p>
+            <label className="flex max-w-sm flex-col gap-1 text-sm">
+              <span className="font-medium">Model</span>
+              <select
+                value={choices.listModelId ?? ""}
+                onChange={(e) => {
+                  const next = { ...choices, listModelId: e.target.value };
+                  setChoices(next);
+                  recheck(next);
+                }}
+                className="h-9 rounded-md border border-input bg-surface px-3 text-sm"
+              >
+                <option value="">No model (set it later)</option>
+                {models.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </section>
+        ) : null}
 
         {s.unassigned > 0 || choices.assignPrefix ? (
           <section
@@ -259,6 +299,7 @@ export function InstrumentImportFlow({
                     <TableCell>
                       {c.number}
                       <p className="text-xs text-muted-foreground">
+                        {c.existingId ? "Already recorded: adds these instruments · " : ""}
                         {c.make} {c.model} · {c.sheets.join(", ")}
                         {c.missing ? ` · ${c.missing} without an ID left out` : ""}
                       </p>

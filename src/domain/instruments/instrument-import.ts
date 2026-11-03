@@ -17,6 +17,7 @@ import ExcelJS from "exceljs";
 import { cellText, dateText } from "@/domain/clients/import/workbook";
 
 import { firstCodes, lastCodeIn, nextCodes } from "./codes";
+import { INSTRUMENT_CODE } from "./schemas";
 import {
   isCertificateSheet,
   readCertificateSheet,
@@ -102,22 +103,38 @@ function guessSerialColumn(sheet: ExcelJS.Worksheet): { col: number; firstRow: n
   return best ? { col: best.col, firstRow: best.firstRow } : null;
 }
 
+/**
+ * Column groups in a header row. A list printed as blocks side by side
+ * (Sr. No. | Serial No. | ID, three times across) gives one group per block.
+ */
+function headerGroups(values: ExcelJS.CellValue[]): Partial<Record<keyof ListRow, number>>[] {
+  const groups: Partial<Record<keyof ListRow, number>>[] = [];
+  let current: Partial<Record<keyof ListRow, number>> = {};
+  values.forEach((v, i) => {
+    const text = norm(cellText(v ?? null));
+    if (!text || /^sr\.? ?no\.?$/.test(text)) return;
+    const col = COLUMNS.find((c) => c.match.test(text));
+    if (!col) return;
+    if (current[col.key] !== undefined) {
+      // The same heading again: a new block starts here.
+      groups.push(current);
+      current = {};
+    }
+    current[col.key] = i;
+  });
+  groups.push(current);
+  return groups.filter((g) => g.code !== undefined || g.serialNo !== undefined);
+}
+
 function readListSheet(sheet: ExcelJS.Worksheet, problems: string[]): ListRow[] {
   // Header: the first of the top ten rows that names an ID or serial column.
   let header = 0;
-  const at: Partial<Record<keyof ListRow, number>> = {};
+  let groups: Partial<Record<keyof ListRow, number>>[] = [];
   for (let r = 1; r <= Math.min(10, sheet.rowCount) && !header; r++) {
-    const values = sheet.getRow(r).values as ExcelJS.CellValue[];
-    const found: Partial<Record<keyof ListRow, number>> = {};
-    values.forEach((v, i) => {
-      const text = norm(cellText(v ?? null));
-      if (!text || /^sr\.? ?no\.?$/.test(text)) return;
-      const col = COLUMNS.find((c) => c.match.test(text) && found[c.key] === undefined);
-      if (col) found[col.key] = i;
-    });
-    if (found.code !== undefined || found.serialNo !== undefined) {
+    const found = headerGroups(sheet.getRow(r).values as ExcelJS.CellValue[]);
+    if (found.length) {
       header = r;
-      Object.assign(at, found);
+      groups = found;
     }
   }
   if (!header) {
@@ -128,14 +145,51 @@ function readListSheet(sheet: ExcelJS.Worksheet, problems: string[]): ListRow[] 
       }
       return [];
     }
-    at.serialNo = guess.col;
+    groups = [{ serialNo: guess.col }];
     header = guess.firstRow - 1;
     const letter = String.fromCharCode(64 + guess.col);
     problems.push(
       `Sheet “${sheet.name}” has no column headings: column ${letter} was read as serial numbers.`,
     );
   }
+  const rows = groups.flatMap((at) => readBlock(sheet, header, at, problems));
 
+  // "Id No" filled with the model name ("EBI 20-T1" on every row) is not an ID.
+  const codes = rows.map((x) => x.code).filter(Boolean);
+  if (codes.length >= 3 && new Set(codes.map((c) => c.toLowerCase())).size <= codes.length / 2) {
+    for (const row of rows) {
+      if (!row.model) row.model = row.code;
+      row.code = "";
+    }
+    problems.push(
+      `Sheet “${sheet.name}”: the ID column repeats “${codes[0]}”, so it was read as the model, not as QA Tech IDs.`,
+    );
+    return rows;
+  }
+  // Serial numbers pasted below a list land in its ID column: an all-digit "ID"
+  // on a row with nothing else, in a list whose IDs have letters, is not one.
+  const lettered = codes.filter((c) => /[a-z]/i.test(c)).length;
+  if (lettered >= 3 && lettered >= codes.length / 2) {
+    return rows.filter((row) => {
+      if (!row.code || /[a-z]/i.test(row.code)) return true;
+      const bare = !row.name && !row.make && !row.model && !row.calibratedOn && !row.certificateNo;
+      problems.push(
+        bare
+          ? `${sheet.name} row ${row.row}: ID “${row.code}” looks like a serial number, not a QA Tech ID; skipped.`
+          : `${sheet.name} row ${row.row}: ID “${row.code}” looks like a serial number; check it.`,
+      );
+      return !bare;
+    });
+  }
+  return rows;
+}
+
+function readBlock(
+  sheet: ExcelJS.Worksheet,
+  header: number,
+  at: Partial<Record<keyof ListRow, number>>,
+  problems: string[],
+): ListRow[] {
   const rows: ListRow[] = [];
   let lastCert = "";
   let lastDate: string | null = null;
@@ -185,18 +239,6 @@ function readListSheet(sheet: ExcelJS.Worksheet, problems: string[]): ListRow[] 
     }
     rows.push(row);
   }
-
-  // "Id No" filled with the model name ("EBI 20-T1" on every row) is not an ID.
-  const codes = rows.map((x) => x.code).filter(Boolean);
-  if (codes.length >= 3 && new Set(codes.map((c) => c.toLowerCase())).size <= codes.length / 2) {
-    for (const row of rows) {
-      if (!row.model) row.model = row.code;
-      row.code = "";
-    }
-    problems.push(
-      `Sheet “${sheet.name}”: the ID column repeats “${codes[0]}”, so it was read as the model, not as QA Tech IDs.`,
-    );
-  }
   return rows;
 }
 
@@ -232,15 +274,36 @@ export async function readInstrumentList(bytes: Uint8Array): Promise<ReadResult>
 export type Snapshot = {
   models: { id: string; make: string; model: string }[];
   instruments: { id: string; code: string; serialNo: string; make: string; tier?: string }[];
-  certificates: { id: string; number: string; labName: string; itemIds: string[] }[];
+  certificates: {
+    id: string;
+    number: string;
+    labName: string;
+    itemIds: string[];
+    /** ISO date; absent in older snapshots. */
+    calibratedOn?: string | null;
+    /** "imported", "internal" or "external"; absent in older snapshots. */
+    kind?: string;
+  }[];
   sites: { id: string; code: string; name: string }[];
   labName: string;
+  /**
+   * Each recorded certificate's readings, one print per instrument
+   * ("reference=reading;" per point in order), to spot a sheet copied from
+   * another certificate.
+   */
+  readingPrints?: { number: string; prints: string[] }[];
 };
+
+/** One instrument's readings on a certificate, comparable across certificates. */
+export const readingPrint = (pairs: { reference: string; reading: string }[]) =>
+  pairs.map((p) => `${Number(p.reference)}=${Number(p.reading)}`).join(";");
 
 export type ImportOptions = {
   defaultType: InstrumentType;
   /** Give serials without a QA Tech ID the next IDs of this prefix, as this model. */
   assign?: { prefix: string; modelId: string | null } | null;
+  /** Model for new instruments from a list that names neither make nor model. */
+  listModelId?: string | null;
 };
 
 export type PlannedModel = {
@@ -298,6 +361,10 @@ export type PlannedFullCertificate = Omit<
   }[];
   /** Instruments printed on it that could not be imported (no QA Tech ID). */
   missing: number;
+  /** Why it was imported under a number other than the one printed. */
+  note?: string;
+  /** Set when the certificate is already recorded: only these instruments are added to it. */
+  existingId?: string;
 };
 export type ImportPlan = {
   models: PlannedModel[];
@@ -503,6 +570,13 @@ export function planInstrumentImport(
       return instrument.code;
     }
 
+    if (!INSTRUMENT_CODE.test(o.code)) {
+      plan.skipped.push({
+        row: o.where,
+        reason: `“${o.code}” isn't a QA Tech ID (letters, numbers, spaces and - _ . / ( ), starting with a letter or number).`,
+      });
+      return null;
+    }
     const existing = byCode.get(o.code.toLowerCase());
     const sameSerial = o.serialNo
       ? (bySerial.get(o.serialNo) ?? []).find(
@@ -606,9 +680,25 @@ export function planInstrumentImport(
   // Certificate workbooks: one full certificate per number.
   const workbookNumbers = new Set<string>();
   for (const wc of mergeWorkbookCertificates(read.workbookCertificates, plan.problems)) {
-    const key = wc.number.toLowerCase();
+    let key = wc.number.toLowerCase();
+    let note: string | undefined;
+    const earlier = existingCerts.get(key);
+    if (earlier?.calibratedOn && wc.calibratedOn && earlier.calibratedOn !== wc.calibratedOn) {
+      // The same number printed on a different calibration: keep both, so these
+      // instruments don't lose their calibration, and say so.
+      const dated = `${wc.number} (${wc.calibratedOn.split("-").reverse().join(".")})`;
+      const first = wc.instruments[0]?.code || wc.instruments[0]?.serialNo || "";
+      const last = wc.instruments.at(-1)?.code || wc.instruments.at(-1)?.serialNo || "";
+      note = `QA Tech printed ${wc.number} on two calibrations: ${earlier.calibratedOn.split("-").reverse().join(".")} (already recorded) and ${wc.calibratedOn.split("-").reverse().join(".")} (this file). This one is recorded as ${dated}.`;
+      plan.problems.push(
+        `${wc.number} is already recorded for a calibration on ${earlier.calibratedOn.split("-").reverse().join(".")}; this file's is dated ${wc.calibratedOn.split("-").reverse().join(".")} (${first}${last && last !== first ? ` to ${last}` : ""}). It is imported as “${dated}” so these instruments keep their calibration. Check which number the lab meant.`,
+      );
+      wc.number = dated;
+      key = dated.toLowerCase();
+    }
     workbookNumbers.add(key);
-    if (existingCerts.has(key)) {
+    const recorded = existingCerts.get(key);
+    if (recorded && recorded.kind !== "imported") {
       plan.alreadyRecorded.push(wc.number);
       // Still register any of its instruments that are new.
       for (const i of wc.instruments) {
@@ -626,6 +716,7 @@ export function planInstrumentImport(
     const type = instrumentTypeFromText(wc.equipmentName) ?? options.defaultType;
     const codes: string[] = [];
     const columns: number[] = [];
+    let alreadyOn = 0;
     wc.instruments.forEach((i, index) => {
       const code = resolveInstrument({
         code: i.code,
@@ -636,11 +727,19 @@ export function planInstrumentImport(
         rangeText: wc.rangeText,
         where: `${wc.number} (${wc.sheets.join(", ")})`,
       });
-      if (code && !codes.includes(code)) {
+      const onIt = recorded
+        ? recorded.itemIds.includes(byCode.get(code?.toLowerCase() ?? "")?.id ?? "")
+        : false;
+      if (onIt) alreadyOn += 1;
+      if (code && !codes.includes(code) && !onIt) {
         codes.push(code);
         columns.push(index);
       }
     });
+    if (recorded && codes.length === 0) {
+      plan.alreadyRecorded.push(wc.number);
+      continue;
+    }
     const { kind, siteId } = siteFor(wc.number);
     const masters = wc.masters.map((m) => {
       // Linked when that master's certificate is recorded (by number), else by serial.
@@ -671,7 +770,9 @@ export function planInstrumentImport(
       codes,
       readings: wc.readings.map((row) => columns.map((c) => row[c] ?? "")),
       masters,
-      missing: wc.instruments.length - codes.length,
+      missing: wc.instruments.length - codes.length - alreadyOn,
+      ...(note ? { note } : {}),
+      ...(recorded ? { existingId: recorded.id } : {}),
     });
   }
 
@@ -688,7 +789,56 @@ export function planInstrumentImport(
   }
   plan.certificates = plan.certificates.filter((c) => !c.existingId || c.codes.length > 0);
   plan.fullCertificates = plan.fullCertificates.filter((c) => c.codes.length > 0);
+  flagCopiedReadings(plan, snapshot.readingPrints ?? []);
+  const listModel = options.listModelId
+    ? snapshot.models.find((m) => m.id === options.listModelId)
+    : undefined;
+  if (listModel) {
+    for (const i of plan.instruments) {
+      if (i.make || i.model) continue;
+      i.make = listModel.make;
+      i.model = listModel.model;
+      i.modelKey = modelKey(listModel.make, listModel.model);
+    }
+  }
   return plan;
+}
+
+/**
+ * Warns when most of a certificate's instruments read exactly what another
+ * certificate's instruments read, point for point: a sheet copied and
+ * relabelled rather than measured. Data integrity (ALCOA+) asks for this to
+ * be checked before it is recorded.
+ */
+function flagCopiedReadings(plan: ImportPlan, recorded: { number: string; prints: string[] }[]) {
+  const printsOf = (c: PlannedFullCertificate) =>
+    c.codes
+      .map((_, ii) => {
+        const pairs = c.points.map((p, pi) => ({
+          reference: p.reference,
+          reading: c.readings[pi]?.[ii] ?? "",
+        }));
+        return pairs.every((x) => x.reading !== "") ? readingPrint(pairs) : "";
+      })
+      .filter(Boolean);
+  const others = [
+    ...recorded.map((r) => ({ number: r.number, prints: new Set(r.prints) })),
+    ...plan.fullCertificates.map((c) => ({ number: c.number, prints: new Set(printsOf(c)) })),
+  ];
+  for (const c of plan.fullCertificates) {
+    const mine = printsOf(c);
+    if (mine.length < 5) continue;
+    for (const o of others) {
+      if (o.number === c.number) continue;
+      const same = mine.filter((p) => o.prints.has(p)).length;
+      if (same >= 5 && same >= mine.length * 0.8) {
+        plan.problems.push(
+          `${c.number}: ${same} of its ${mine.length} instruments read exactly what ${o.number} reads, at every point. Check that these readings were measured, not copied from that sheet.`,
+        );
+        break;
+      }
+    }
+  }
 }
 
 export function planSummary(plan: ImportPlan) {

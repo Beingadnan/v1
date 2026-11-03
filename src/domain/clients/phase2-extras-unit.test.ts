@@ -83,3 +83,19 @@ describe("duplicate client names", () => {
     expect(companyNameKey("Watson Pharma")).not.toBe(companyNameKey("Watson Labs"));
   });
 });
+
+describe("numbers as people type them (found testing on 2 Nov 2026)", () => {
+  it("drops units, converts mm and cm, and reads a decimal comma", async () => {
+    const { cleanNumber } = await import("./schemas");
+    expect(cleanNumber("3.5 m", "m")).toBe(3.5);
+    expect(cleanNumber("3500 mm", "m")).toBe(3.5);
+    expect(cleanNumber("240cm", "m")).toBe(2.4);
+    expect(cleanNumber("2,5", "m")).toBe(2.5);
+    expect(cleanNumber("-20 °C", "C")).toBe(-20);
+    expect(cleanNumber("−18", "C")).toBe(-18);
+    expect(cleanNumber("65 %RH", "%")).toBe(65);
+    expect(cleanNumber("1,250", "m")).toBe(1250);
+    expect(cleanNumber("abc", "m")).toBe("abc");
+    expect(cleanNumber("", "C")).toBe("");
+  });
+});

@@ -403,7 +403,8 @@ const sectionRank = (kind: string) => {
   const t = INSTRUMENT_TYPES.findIndex((x) => INSTRUMENT_TYPE_INFO[x].certificateKind === kind);
   return SECTION_ORDER.length + (t >= 0 ? t : INSTRUMENT_TYPES.length);
 };
-const trailingNumber = (number: string) => Number(/(\d+)\D*$/.exec(number)?.[1] ?? 0);
+const trailingNumber = (number: string) =>
+  Number(/(\d+)\D*$/.exec(number.replace(/ \(\d{2}\.\d{2}\.\d{4}\)$/, ""))?.[1] ?? 0);
 
 export type IndexRow = {
   id: string;
@@ -471,6 +472,27 @@ export async function calibrationIndex(
  * Instruments from a pasted list of IDs or serial numbers (one per line, or
  * separated by commas/tabs, as copied from Excel), in the order given.
  */
+/**
+ * A range as people write it: "E-TRH0533 - E-TRH0540", "E-TRH0533 to 0540",
+ * "E-TRH0533-0540". The numbers keep the first one's width. Anything else,
+ * or a range of more than 200, is left as typed (found testing, 2 Nov 2026).
+ */
+export function expandRange(token: string): string[] {
+  const m = token.match(/^(.*?)(\d+)\s*(?:-|–|to)\s*(.*?)(\d+)$/i);
+  if (!m) return [token];
+  const [, prefix, from, prefix2, to] = m as unknown as [string, string, string, string, string];
+  if (prefix2 && prefix2.toLowerCase() !== prefix.toLowerCase()) return [token];
+  if (!prefix || /\d$/.test(prefix)) return [token];
+  const a = Number(from);
+  const b = Number(to);
+  if (b <= a || b - a > 199) return [token];
+  const width = from.length;
+  return Array.from(
+    { length: b - a + 1 },
+    (_, i) => `${prefix}${String(a + i).padStart(width, "0")}`,
+  );
+}
+
 export async function resolveInstrumentList(
   db: DbExecutor,
   actor: SessionUser,
@@ -482,7 +504,8 @@ export async function resolveInstrumentList(
       text
         .split(/[\n\r,;\t]+/)
         .map((t) => t.trim())
-        .filter(Boolean),
+        .filter(Boolean)
+        .flatMap(expandRange),
     ),
   ].slice(0, 200);
   if (tokens.length === 0) return { ids: [], unknown: [], ambiguous: [] };

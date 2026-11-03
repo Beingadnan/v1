@@ -432,11 +432,11 @@ export async function certificateAnnex(
   for (const id of certIds) {
     const cert = await getCertificate(db as Database, actor, id);
     if (!cert) continue;
-    if (cert.kind === "internal" && settings) {
+    const redraw = async () =>
       pdfs.push(
         new Uint8Array(
           await renderFt05(cert, {
-            organisation: settings,
+            organisation: settings!,
             letterhead,
             signatures: [],
             highlightSerials: usedSerials,
@@ -444,9 +444,15 @@ export async function certificateAnnex(
           }),
         ),
       );
+    if (cert.kind === "internal" && settings) {
+      await redraw();
     } else if (cert.fileId) {
       const f = await bytesOf(db, blobs, actor.organisationId, cert.fileId);
       if (f) pdfs.push(await asPdf(f.bytes, f.mime));
+    } else if (cert.kind === "imported" && cert.readings.length > 0 && settings) {
+      // Imported from QA Tech's own FT-05 workbook with every reading: redrawn like
+      // a certificate made here, so no scan is needed.
+      await redraw();
     } else missing.push(cert.number);
   }
   for (const m of ctx.masters) {

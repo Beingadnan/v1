@@ -577,6 +577,22 @@ export async function recordEvent(
     const progress = cycleProgress(cycles, events, thermal).find((c) => c.cycle === cycle)!;
     if (kind === "start") {
       if (progress.startedAt) throw new FieldError(`${progress.label} has already started.`);
+      // One equipment runs one condition at a time: cycles don't overlap.
+      const all = cycleProgress(cycles, events, thermal);
+      const clash = all.find(
+        (c) =>
+          c.cycle !== cycle &&
+          c.startedAt &&
+          v.at >= c.startedAt &&
+          (c.endedAt === null || v.at < c.endedAt),
+      );
+      if (clash) {
+        throw new FieldError(
+          clash.endedAt
+            ? `${clash.label} ran until ${formatDateTime(clash.endedAt)}; ${progress.label.toLowerCase()} can't start inside it.`
+            : `${clash.label} is still running. End it before starting ${progress.label.toLowerCase()}.`,
+        );
+      }
       const positions = await tx
         .select({ label: studyPositions.label, instrumentId: studyPositions.instrumentId })
         .from(studyPositions)

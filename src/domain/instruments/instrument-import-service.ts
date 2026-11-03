@@ -33,11 +33,13 @@ import {
   planInstrumentImport,
   planSummary,
   readInstrumentList,
+  readingPrint,
   type ImportOptions,
   type ImportPlan,
+  type PlannedFullCertificate,
   type Snapshot,
 } from "./instrument-import";
-import { isInstrumentType, type InstrumentType } from "./types";
+import { isInstrumentType, type InstrumentType, type Quantity } from "./types";
 
 /** Rows per INSERT: well under Postgres's 65,535-parameter limit. */
 const CHUNK = 500;
@@ -45,6 +47,106 @@ function chunks<T>(rows: T[]): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < rows.length; i += CHUNK) out.push(rows.slice(i, i + CHUNK));
   return out;
+}
+
+/**
+ * A certificate recorded by an earlier import gains the instruments this file
+ * names and it lacks (for example once their IDs are known), with their
+ * readings. Test points are matched by quantity and reference; new ones are
+ * added after the existing ones.
+ */
+async function addToImportedCertificate(
+  tx: DbExecutor,
+  organisationId: string,
+  c: PlannedFullCertificate,
+  idByCode: Map<string, string>,
+) {
+  const certId = c.existingId!;
+  const [cert] = await tx
+    .select({ accuracy: certificates.accuracy })
+    .from(certificates)
+    .where(and(eq(certificates.id, certId), eq(certificates.organisationId, organisationId)));
+  const existingPoints = await tx
+    .select({
+      seq: certificatePoints.seq,
+      quantity: certificatePoints.quantity,
+      reference: certificatePoints.reference,
+    })
+    .from(certificatePoints)
+    .where(eq(certificatePoints.certificateId, certId));
+  const [{ items } = { items: 0 }] = await tx
+    .select({ items: sql<number>`count(*)::int` })
+    .from(certificateItems)
+    .where(eq(certificateItems.certificateId, certId));
+
+  const pointKey = (q: string, ref: string) => `${q}|${Number(ref)}`;
+  const seqByKey = new Map(existingPoints.map((p) => [pointKey(p.quantity, p.reference), p.seq]));
+  let nextSeq = Math.max(0, ...existingPoints.map((p) => p.seq)) + 1;
+  const newPoints: {
+    seq: number;
+    quantity: (typeof c.points)[number]["quantity"];
+    reference: string;
+    condition: string;
+  }[] = [];
+  const seqs = c.points.map((p) => {
+    const key = pointKey(p.quantity, p.reference);
+    let seq = seqByKey.get(key);
+    if (seq === undefined) {
+      seq = nextSeq++;
+      seqByKey.set(key, seq);
+      newPoints.push({ seq, quantity: p.quantity, reference: p.reference, condition: p.condition });
+    }
+    return seq;
+  });
+  if (newPoints.length) {
+    await tx
+      .insert(certificatePoints)
+      .values(newPoints.map((p) => ({ organisationId, certificateId: certId, ...p })));
+  }
+  const points = [
+    ...existingPoints.map((p) => ({ ...p, quantity: p.quantity as Quantity })),
+    ...newPoints.map(({ seq, quantity, reference }) => ({ seq, quantity, reference })),
+  ];
+  const ids = c.codes.map((code) => idByCode.get(code.toLowerCase())!);
+  const readings = c.points.flatMap((_, pi) =>
+    ids.flatMap((instrumentId, ii) => {
+      const reading = c.readings[pi]?.[ii] ?? "";
+      return reading ? [{ seq: seqs[pi]!, instrumentId, reading }] : [];
+    }),
+  );
+  const evaluated = evaluate((cert?.accuracy ?? {}) as AccuracySpec, points, readings);
+  await tx.insert(certificateItems).values(
+    ids.map((instrumentId, i) => ({
+      organisationId,
+      certificateId: certId,
+      instrumentId,
+      position: items + i,
+      result:
+        readings.filter((r) => r.instrumentId === instrumentId).length === c.points.length
+          ? (evaluated.results.get(instrumentId) ?? null)
+          : null,
+    })),
+  );
+  for (const part of chunks(evaluated.readings)) {
+    await tx.insert(certificateReadings).values(
+      part.map((r) => ({
+        organisationId,
+        certificateId: certId,
+        seq: r.seq,
+        instrumentId: r.instrumentId,
+        reading: r.reading,
+        deviation: r.deviation,
+        tolerance: r.tolerance === null ? null : String(r.tolerance),
+        judgement: r.judgement,
+      })),
+    );
+  }
+  await tx
+    .update(certificates)
+    .set({
+      title: sql`regexp_replace(${certificates.title}, '\\(\\d+\\)$', ${`(${items + ids.length})`})`,
+    })
+    .where(eq(certificates.id, certId));
 }
 
 async function loadFile(db: Database, blobs: BlobStore, actor: SessionUser, fileId: string) {
@@ -85,6 +187,8 @@ async function loadSnapshot(executor: DbExecutor, organisationId: string): Promi
       id: certificates.id,
       number: certificates.number,
       labName: certificates.labName,
+      calibratedOn: certificates.calibratedOn,
+      kind: certificates.kind,
       itemIds: sql<
         string[]
       >`coalesce((select array_agg(${certificateItems.instrumentId}::text) from ${certificateItems} where ${certificateItems.certificateId} = ${certificates.id}), '{}')`,
@@ -99,10 +203,46 @@ async function loadSnapshot(executor: DbExecutor, organisationId: string): Promi
     .select({ shortName: organisationSettings.shortName })
     .from(organisationSettings)
     .where(eq(organisationSettings.organisationId, organisationId));
+  // Readings of the certificates recorded in the last two years, to spot copied sheets.
+  const readingRows = await executor
+    .select({
+      number: certificates.number,
+      instrumentId: certificateReadings.instrumentId,
+      seq: certificateReadings.seq,
+      reference: certificatePoints.reference,
+      reading: certificateReadings.reading,
+    })
+    .from(certificateReadings)
+    .innerJoin(certificates, eq(certificates.id, certificateReadings.certificateId))
+    .innerJoin(
+      certificatePoints,
+      and(
+        eq(certificatePoints.certificateId, certificateReadings.certificateId),
+        eq(certificatePoints.seq, certificateReadings.seq),
+      ),
+    )
+    .where(
+      and(
+        eq(certificates.organisationId, organisationId),
+        sql`${certificates.calibratedOn} > current_date - interval '2 years'`,
+      ),
+    )
+    .orderBy(certificates.number, certificateReadings.instrumentId, certificateReadings.seq);
+  const byCert = new Map<string, Map<string, { reference: string; reading: string }[]>>();
+  for (const r of readingRows) {
+    const perCert = byCert.get(r.number) ?? new Map();
+    byCert.set(r.number, perCert);
+    perCert.set(r.instrumentId, [...(perCert.get(r.instrumentId) ?? []), r]);
+  }
+  const readingPrints = [...byCert].map(([number, per]) => ({
+    number,
+    prints: [...per.values()].map(readingPrint),
+  }));
   return {
     models,
     instruments: list,
     certificates: certs,
+    readingPrints,
     sites: siteRows,
     labName: settings?.shortName ?? "",
   };
@@ -119,6 +259,8 @@ export type ImportChoices = {
   assignPrefix?: string;
   /** Model for those serials when the file doesn't say. */
   assignModelId?: string;
+  /** Model for new instruments when a list names neither make nor model. */
+  listModelId?: string;
 };
 
 function importOptions(choices: ImportChoices): ImportOptions {
@@ -135,6 +277,7 @@ function importOptions(choices: ImportChoices): ImportOptions {
             choices.assignModelId && isUuid(choices.assignModelId) ? choices.assignModelId : null,
         }
       : null,
+    listModelId: choices.listModelId && isUuid(choices.listModelId) ? choices.listModelId : null,
   };
 }
 
@@ -332,6 +475,10 @@ export async function applyInstrumentImport(
 
       // Full certificates from FT-05 workbooks: header, points, readings, masters.
       for (const c of plan.fullCertificates) {
+        if (c.existingId) {
+          await addToImportedCertificate(tx, actor.organisationId, c, idByCode);
+          continue;
+        }
         const model = c.modelKey ? modelByKey.get(c.modelKey) : undefined;
         const unlinked = c.masters.filter((m) => !m.certificateId);
         const [cert] = await tx
@@ -365,6 +512,7 @@ export async function applyInstrumentImport(
             environmentHumidity: c.environmentHumidity,
             remarks: [
               `Imported from ${file.firstFileName} (${c.sheets.join(", ")}).`,
+              ...(c.note ? [c.note] : []),
               ...unlinked.map(
                 (m) =>
                   `Reference standard as printed: ${m.label}, certificate ${m.certificateNo}${m.validUntil ? `, due ${m.validUntil}` : ""}.`,
@@ -441,7 +589,8 @@ export async function applyInstrumentImport(
       if (settings) {
         for (const number of [
           ...plan.certificates.filter((c) => !c.unnumbered).map((c) => c.number),
-          ...plan.fullCertificates.map((c) => c.number),
+          // A number printed twice is recorded with its date after it; the series uses the number.
+          ...plan.fullCertificates.map((c) => c.number.replace(/ \(\d{2}\.\d{2}\.\d{4}\)$/, "")),
         ]) {
           await noteUsedNumber(tx, {
             organisationId: actor.organisationId,

@@ -19,10 +19,40 @@ const blankToNull = (value: unknown) =>
     ? null
     : value;
 
+type Unit = "m" | "C" | "%";
+
+/**
+ * A number as people type it: "3.5 m", "3500 mm", "-20 °C", "−20", "2,5",
+ * "65 %RH". The unit is dropped (mm and cm become metres); a lone comma with
+ * one or two digits after it is a decimal point, other commas group thousands.
+ * Anything else is left for the number check to refuse.
+ */
+export function cleanNumber(value: unknown, unit: Unit): unknown {
+  if (typeof value !== "string") return value;
+  let v = value.trim().replace(/[−–]/g, "-").replace(/\s+/g, "");
+  if (v === "") return v;
+  let scale = 1;
+  if (unit === "m") {
+    const m = v.match(/^(.*?)(mm|cm|mtrs?|meters?|metres?|m)$/i);
+    if (m) {
+      v = m[1]!;
+      const u = m[2]!.toLowerCase();
+      scale = u === "mm" ? 0.001 : u === "cm" ? 0.01 : 1;
+    }
+  } else if (unit === "C") {
+    v = v.replace(/(°C|°|degC|deg|C)$/i, "");
+  } else {
+    v = v.replace(/(%RH|RH%|%|RH)$/i, "");
+  }
+  v = /^-?\d+,\d{1,2}$/.test(v) ? v.replace(",", ".") : v.replace(/,/g, "");
+  if (!/^-?\d+(\.\d+)?$/.test(v)) return value;
+  return Math.round(Number(v) * scale * 10000) / 10000;
+}
+
 /** Optional number from a form field or spreadsheet cell; "" becomes null. */
-const optionalNumber = (label: string, min: number, max: number) =>
+const optionalNumber = (label: string, min: number, max: number, unit?: Unit) =>
   z.preprocess(
-    blankToNull,
+    (v) => blankToNull(unit ? cleanNumber(v, unit) : v),
     z.coerce
       .number({ message: `${label} must be a number.` })
       .min(min, `${label} must be at least ${min}.`)
@@ -174,14 +204,14 @@ const equipmentFields = {
   make: text(100),
   model: text(100),
   serialNo: text(100),
-  lengthM: optionalNumber("Length", 0.01, 10000),
-  widthM: optionalNumber("Width", 0.01, 10000),
-  heightM: optionalNumber("Height", 0.01, 1000),
-  setPointC: optionalNumber("Set point", -273, 1000),
-  tempMinC: optionalNumber("Lowest temperature", -273, 1000),
-  tempMaxC: optionalNumber("Highest temperature", -273, 1000),
-  rhMinPct: optionalNumber("Lowest RH", 0, 100),
-  rhMaxPct: optionalNumber("Highest RH", 0, 100),
+  lengthM: optionalNumber("Length", 0.01, 10000, "m"),
+  widthM: optionalNumber("Width", 0.01, 10000, "m"),
+  heightM: optionalNumber("Height", 0.01, 1000, "m"),
+  setPointC: optionalNumber("Set point", -273, 1000, "C"),
+  tempMinC: optionalNumber("Lowest temperature", -273, 1000, "C"),
+  tempMaxC: optionalNumber("Highest temperature", -273, 1000, "C"),
+  rhMinPct: optionalNumber("Lowest RH", 0, 100, "%"),
+  rhMaxPct: optionalNumber("Highest RH", 0, 100, "%"),
   defaultChannels: optionalInteger("Number of loggers", 1, 500),
   readingIntervalMinutes: optionalInteger("Reading interval", 1, 1440),
   studyDurationHours: optionalInteger("Study duration", 1, 2160),

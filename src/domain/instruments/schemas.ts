@@ -14,6 +14,38 @@ const blankToUndefined = (v: unknown) => (v === "" || v === null ? undefined : v
 const blankToNull = (v: unknown) =>
   v === undefined || v === null || (typeof v === "string" && v.trim() === "") ? null : v;
 
+/**
+ * A calibration interval as people write it: "12", "12 months", "12 m",
+ * "1 year", "2 yrs". Returns months, or the value unchanged when it isn't one.
+ */
+export function cleanMonths(v: unknown): unknown {
+  if (typeof v !== "string") return v;
+  const m = v.trim().match(/^(\d+(?:\.\d+)?)\s*(m|mo|mon|month|months|y|yr|yrs|year|years)?\.?$/i);
+  if (!m) return v;
+  const n = Number(m[1]);
+  return m[2] && /^y/i.test(m[2]) ? n * 12 : n;
+}
+
+const monthsNumber = () =>
+  z.coerce
+    .number({ message: "Calibration interval must be a number of months, like 12." })
+    .int("Calibration interval must be whole months.")
+    .min(1, "Calibration interval must be at least 1 month.")
+    .max(60, "Calibration interval must be at most 60 months.");
+/** On a model: blank means 12. */
+const modelMonths = z.preprocess(
+  (v) => cleanMonths(blankToUndefined(v)),
+  monthsNumber().default(12),
+);
+/** On an instrument: blank means "as its model". */
+const instrumentMonths = z.preprocess(
+  (v) => cleanMonths(blankToNull(v)),
+  monthsNumber().nullable(),
+);
+
+/** What a QA Tech instrument ID may look like, typed or imported. */
+export const INSTRUMENT_CODE = /^[A-Za-z0-9][A-Za-z0-9 ._/()-]{0,39}$/;
+
 export const isoDate = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Use a date like 2026-03-26.")
@@ -116,10 +148,7 @@ export const modelSchema = z.object({
   accuracyText: text(300),
   calibrationSop: text(60),
   defaultPoints: z.array(pointSchema).max(20).default([]),
-  intervalMonths: z.preprocess(
-    blankToUndefined,
-    z.coerce.number().int().min(1).max(60).default(12),
-  ),
+  intervalMonths: modelMonths,
 });
 /**
  * What a caller may pass: every field optional and unchecked, because the
@@ -136,7 +165,7 @@ export const instrumentSchema = z.object({
   type: z.enum(INSTRUMENT_TYPES, { message: "Choose the instrument type." }),
   tier: z.preprocess(blankToUndefined, z.enum(INSTRUMENT_TIERS).default("working")),
   code: required(40, "Enter QA Tech's ID number, e.g. E-TRH0524.").regex(
-    /^[A-Za-z0-9][A-Za-z0-9 ._/()-]*$/,
+    INSTRUMENT_CODE,
     "The ID can use letters, numbers, spaces and - _ . / ( ) only.",
   ),
   serialNo: text(60),
@@ -149,7 +178,7 @@ export const instrumentSchema = z.object({
   homeSiteId: z.preprocess(blankToNull, z.string().uuid().nullable()),
   ownerCompanyId: z.preprocess(blankToNull, z.string().uuid().nullable()),
   status: z.preprocess(blankToUndefined, z.enum(INSTRUMENT_STATUSES).default("active")),
-  intervalMonths: z.preprocess(blankToNull, z.coerce.number().int().min(1).max(60).nullable()),
+  intervalMonths: instrumentMonths,
   notes: text(2000),
 });
 export type InstrumentInput = { [K in keyof z.input<typeof instrumentSchema>]?: unknown };

@@ -319,7 +319,10 @@ function BulkForm({
 }) {
   const { result, pending, onSubmit } = useFormAction(bulkAddAction);
   const [serials, setSerials] = useState("");
-  const count = serials.split(/[\s,;]+/).filter(Boolean).length;
+  const typed = serials.split(/[\s,;]+/).filter(Boolean);
+  // The same serial twice is added once (found testing, 2 Nov 2026): say so before adding.
+  const count = new Set(typed.map((x) => x.toLowerCase())).size;
+  const repeated = typed.length - count;
   useCloseOnSuccess(result?.ok, () => {});
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
@@ -372,7 +375,7 @@ function BulkForm({
         result={result}
         hint={
           count
-            ? `${count} serial number${count === 1 ? "" : "s"}`
+            ? `${count} serial number${count === 1 ? "" : "s"}${repeated ? ` (${repeated} repeated, added once)` : ""}`
             : "One per line, or separated by commas or spaces."
         }
         onInput={(e: React.FormEvent<HTMLInputElement>) =>

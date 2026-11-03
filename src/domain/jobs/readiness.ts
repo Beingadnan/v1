@@ -30,7 +30,17 @@ export type ReadinessInput = {
   poNumber: string;
   plannedStart: string;
   plannedEnd: string;
-  studies: { workType: WorkType; loggerCount: number; postCalRequired: boolean }[];
+  studies: {
+    workType: WorkType;
+    loggerCount: number;
+    postCalRequired: boolean;
+    /** Hours the loggers record for; null when not set. */
+    durationHours?: number | null;
+    /** Equipment ID, to name the study. */
+    label?: string;
+    /** Cycles run one after another (empty, loaded…); each runs for durationHours. */
+    cycleCount?: number;
+  }[];
   booked: BookedInstrument[];
   /** Any equipment on the job studied before: a requalification. */
   isRequalification: boolean;
@@ -168,6 +178,44 @@ export function computeReadiness(input: ReadinessInput): {
             detail: `${plural(masters.length, "master")} valid through the study.`,
           }
         : { state: "pending" as const, detail: `Not valid through the study: ${listFew(bad)}.` };
+    })(),
+    dates_fit: (() => {
+      const days =
+        (Date.parse(`${input.plannedEnd}T00:00:00Z`) -
+          Date.parse(`${input.plannedStart}T00:00:00Z`)) /
+        86_400_000;
+      const hours = days * 24;
+      // Cycles run one after another, each for the study's duration.
+      const total = (s: ReadinessInput["studies"][number]) =>
+        (s.durationHours ?? 0) * Math.max(1, s.cycleCount ?? 1);
+      const long = input.studies
+        .filter((s) => s.workType !== "onsite_calibration" && total(s) > hours)
+        .sort((a, b) => total(b) - total(a));
+      if (long.length === 0) {
+        const max = Math.max(0, ...input.studies.map(total));
+        return max
+          ? {
+              state: "ready" as const,
+              detail: `${hours} h on site; the longest study needs ${max} h.`,
+            }
+          : { state: "na" as const, detail: "No study duration set." };
+      }
+      const need = total(long[0]!);
+      const lastDay = new Date(
+        Date.parse(`${input.plannedStart}T00:00:00Z`) + Math.ceil(need / 24) * 86_400_000,
+      )
+        .toISOString()
+        .slice(0, 10);
+      return {
+        state: "pending" as const,
+        detail: `${dmy(input.plannedStart)}–${dmy(input.plannedEnd)} gives ${hours} h, but ${listFew(
+          long.map((s) =>
+            (s.cycleCount ?? 1) > 1
+              ? `${s.label ?? "a study"} needs ${total(s)} h (${s.cycleCount} cycles of ${s.durationHours} h)`
+              : `${s.label ?? "a study"} needs ${total(s)} h`,
+          ),
+        )}. Move the last day to ${dmy(lastDay)} or shorten the study.`,
+      };
     })(),
     protocol: null,
     site_access: null,

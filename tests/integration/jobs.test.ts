@@ -712,6 +712,53 @@ describe("clashes, holds and repeat visits", () => {
     expect(entry!.summary).toMatch(/ and 52 more for job /);
   });
 
+  it("books an SSPRT for °C and the RH indicator for %RH, not the RH indicator for both", async () => {
+    const master = async (code: string, type: "humidity_indicator" | "reference_thermometer") => {
+      const m = await createInstrument(
+        db,
+        manager,
+        { type, tier: "master", code, serialNo: `${code}-SN`, homeSiteId: bhwId },
+        req,
+      );
+      await createExternalCertificate(
+        db,
+        manager,
+        {
+          number: `CERT-${code}`,
+          ulrNo: "",
+          labName: "Outside lab",
+          calibratedOn: "2026-04-06",
+          validUntil: "2027-04-05",
+          instrumentIds: [m.id],
+        },
+        req,
+      );
+    };
+    // The RH indicator is registered first, so it would win on order alone.
+    await master("TL-38", "humidity_indicator");
+    await master("TL-65", "reference_thermometer");
+    const rh = await createJob(
+      db,
+      leader,
+      {
+        companyId: watsonId,
+        clientSiteId: seawoodsId,
+        plannedStart: "2027-01-11",
+        plannedEnd: "2027-01-14",
+        items: [{ equipmentId: wf03, loggerCount: "2" }],
+      },
+      req,
+    );
+    const { studies: studiesTable } = await import("@/db/schema");
+    await db
+      .update(studiesTable)
+      .set({ workType: "temperature_rh_mapping", postCalRequired: true })
+      .where(eq(studiesTable.jobId, rh.id));
+    const booked = await autoBook(db, leader, rh.id, req);
+    expect(booked.masters).toEqual(["TL-65", "TL-38"]);
+    expect(booked.short).toEqual([]);
+  });
+
   it("audits every change", async () => {
     const rows = await db
       .select({ action: auditLog.action })

@@ -1,0 +1,2 @@
+ALTER TABLE "job_readiness" DROP CONSTRAINT "job_readiness_key_check";--> statement-breakpoint
+ALTER TABLE "job_readiness" ADD CONSTRAINT "job_readiness_key_check" CHECK ("job_readiness"."key" in ('purchase_order', 'dates_fit', 'protocol', 'site_access', 'loggers_booked', 'loggers_valid', 'masters_valid', 'previous_report'));

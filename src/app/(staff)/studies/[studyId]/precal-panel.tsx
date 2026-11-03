@@ -75,6 +75,8 @@ export function PrecalPanel({
   const queued = pending.filter((p) => p.kind === "precal");
 
   function submit() {
+    const sentCode = code;
+    const sentReading = reading;
     start(async () => {
       const r = await run({
         studyId,
@@ -110,8 +112,9 @@ export function PrecalPanel({
           ok: d.result === "pass",
           text: `${d.code}: ${d.result === "pass" ? "PASS" : "FAIL"}, deviation ${d.deviation} (allowed ±${d.tolerance}).${next}`,
         });
-        setCode("");
-        setReading("");
+        // Clear only what was sent: the next logger may already be typed in.
+        setCode((c) => (c === sentCode ? "" : c));
+        setReading((x) => (x === sentReading ? "" : x));
         router.refresh();
       } else setFeedback({ ok: false, text: r.error });
     });

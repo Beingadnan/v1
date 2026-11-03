@@ -127,6 +127,9 @@ export async function readinessInputFor(
       workType: studies.workType,
       loggerCount: studies.loggerCount,
       postCalRequired: studies.postCalRequired,
+      durationHours: studies.durationHours,
+      cycles: studies.cycles,
+      label: equipment.code,
       lastStudyOn: equipment.lastStudyOn,
     })
     .from(studies)
@@ -157,6 +160,9 @@ export async function readinessInputFor(
       workType: s.workType as ReadinessInput["studies"][number]["workType"],
       loggerCount: s.loggerCount,
       postCalRequired: s.postCalRequired,
+      durationHours: s.durationHours,
+      cycleCount: s.cycles.length,
+      label: s.label,
     })),
     booked: booked.map((b) => ({ ...b, certificates: certs.get(b.id) ?? [] })),
     bookedIds: booked.map((b) => b.id),
@@ -1072,10 +1078,14 @@ export async function autoBook(
         quantities.push("humidity");
       }
       const pool = (await candidates(tx, actor, job, {})).filter((c) => c.tier === "master");
+      const bookedNow: { type: string }[] = [];
+      const breadth = (c: { type: string }) =>
+        (TYPE_MEASURES[c.type as InstrumentType] ?? []).length;
       for (const q of quantities) {
         const measures = (c: { type: string }) =>
           (TYPE_MEASURES[c.type as InstrumentType] ?? []).includes(q as never);
         if (input.booked.some((b) => b.tier === "master" && measures(b))) continue;
+        if (bookedNow.some(measures)) continue;
         const usable = pool
           .filter(
             (c) =>
@@ -1085,13 +1095,17 @@ export async function autoBook(
               c.busyOn.length === 0 &&
               validThrough(c, job.plannedStart, job.plannedEnd).ok,
           )
+          // A dedicated reference first (an SSPRT for °C, not the RH indicator), then the home site.
           .sort(
-            (a, b) => Number(b.homeSiteId === job.siteId) - Number(a.homeSiteId === job.siteId),
+            (a, b) =>
+              breadth(a) - breadth(b) ||
+              Number(b.homeSiteId === job.siteId) - Number(a.homeSiteId === job.siteId),
           );
         const m = usable[0];
         if (m) {
           await insertBookings(tx, actor, job.id, [m.id]);
           result.masters.push(m.code);
+          bookedNow.push(m);
         } else {
           result.short.push({ type: `${q} master`, count: 1 });
         }

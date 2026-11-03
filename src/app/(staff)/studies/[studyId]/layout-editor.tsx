@@ -153,8 +153,15 @@ export function LayoutEditor({
       );
       if (r.ok) {
         setDirty(false);
-        // Stay on Layout (the page would otherwise open the next step and hide this message).
-        router.replace(`/studies/${studyId}?tab=layout`, { scroll: false });
+        // Stay on Layout (the page would otherwise open the next step and hide this message),
+        // unless the person has already moved on while the save was on its way.
+        const now = new URLSearchParams(window.location.search).get("tab");
+        if (
+          window.location.pathname === `/studies/${studyId}` &&
+          (now === null || now === "layout")
+        ) {
+          router.replace(`/studies/${studyId}?tab=layout`, { scroll: false });
+        }
       }
     });
   }
