@@ -86,7 +86,7 @@ test("phase 4 exit test: a Watson job with 2 freezers, found by PO, held back by
   await page.getByLabel("PO number").fill(`PO-${run}`);
   await page.getByRole("button", { name: "Create job with 2 items" }).click();
   await expect(
-    page.getByRole("heading", { level: 1, name: /^QT\/J\/\d{4}\/\d{4}$/ }),
+    page.getByRole("heading", { level: 1, name: /^QT\/\d{2}\/\d{4}\/\d{4}$/ }),
   ).toBeVisible();
   const jobUrl = page.url();
   await expect(
@@ -114,8 +114,8 @@ test("phase 4 exit test: a Watson job with 2 freezers, found by PO, held back by
 
   // Found by its PO number.
   await page.goto(`/jobs?q=PO-${run}`);
-  await expect(page.getByRole("link", { name: /^QT\/J\// })).toHaveCount(1);
-  await page.getByRole("link", { name: /^QT\/J\// }).click();
+  await expect(page.getByRole("link", { name: /^QT\/\d{2}\// })).toHaveCount(1);
+  await page.getByRole("link", { name: /^QT\/\d{2}\// }).click();
   await expect(page).toHaveURL(jobUrl);
 
   // The client moves the visit to July: J-0003 is out of date and field work can't start.

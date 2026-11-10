@@ -31,8 +31,10 @@ export function defaultLoggerCount(e: EquipmentForStudy): number {
   if (e.defaultChannels !== null && e.defaultChannels > 0) return e.defaultChannels;
   const n = (v: string | null) => (v === null ? null : Number(v));
   return (
-    suggestLoggerCount({ lengthM: n(e.lengthM), widthM: n(e.widthM), heightM: n(e.heightM) })
-      ?.count ?? 0
+    suggestLoggerCount(
+      { lengthM: n(e.lengthM), widthM: n(e.widthM), heightM: n(e.heightM) },
+      e.type === "room" ? "room" : "box",
+    )?.count ?? 0
   );
 }
 
@@ -60,4 +62,22 @@ export function uniqueReportNumber(base: string, taken: ReadonlySet<string>): st
     if (!taken.has(candidate.toLowerCase())) return candidate;
   }
   throw new Error(`No free report number for ${base}`);
+}
+
+/**
+ * Whether a study has pre- and post-calibration. QA Tech chooses per study
+ * (yes/no); thermal validation (autoclaves, ovens) always has both, as the
+ * sensors are calibrated before the runs and checked after them.
+ */
+export function calibrationOf(study: {
+  workType: string;
+  preCalRequired: boolean;
+  postCalRequired: boolean;
+}): { pre: boolean; post: boolean; locked: boolean } {
+  const locked = study.workType === "thermal_validation";
+  return {
+    pre: locked || study.preCalRequired,
+    post: locked || study.postCalRequired,
+    locked,
+  };
 }

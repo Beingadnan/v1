@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 
 import { StatusBadge } from "@/components/ui/status-badge";
 import { db } from "@/db/client";
+import type { SessionUser } from "@/domain/auth/session-service";
 import { can } from "@/domain/auth/permissions";
 import { getStudyAnalysis } from "@/domain/analysis/queries";
 import { getStudyData } from "@/domain/data/queries";
@@ -21,7 +22,6 @@ import { LayoutEditor } from "./layout-editor";
 import { RoomSize } from "./room-size";
 import { ShowActiveTab } from "./show-active-tab";
 import { LoggerPanel } from "./logger-panel";
-import { PhotosPanel } from "./photos-panel";
 import { PrecalPanel } from "./precal-panel";
 import { TimesPanel } from "./times-panel";
 
@@ -29,10 +29,8 @@ export const metadata = { title: "Study" };
 
 const TABS = [
   { key: "layout", label: "Layout" },
-  { key: "loggers", label: "Loggers" },
   { key: "precal", label: "Pre-cal" },
   { key: "times", label: "Times" },
-  { key: "photos", label: "Photos" },
   { key: "data", label: "Data" },
   { key: "postcal", label: "Post-cal" },
   { key: "analysis", label: "Analysis" },
@@ -40,10 +38,26 @@ const TABS = [
 ] as const;
 type Tab = (typeof TABS)[number]["key"];
 
+/** What the Data, Analysis, Post-cal and Report tabs read beyond the study itself. */
+async function tabData(actor: SessionUser, studyId: string, tab: Tab) {
+  const [data, analysis, report] = await Promise.all([
+    tab === "data" ? getStudyData(db, actor, studyId) : null,
+    tab === "analysis" || tab === "postcal" ? getStudyAnalysis(db, actor, studyId) : null,
+    tab === "report" ? getStudyReport(db, actor, studyId) : null,
+  ]);
+  return { data, analysis, report };
+}
+
 export default async function StudyPage({ params, searchParams }: PageProps<"/studies/[studyId]">) {
   const actor = await requirePermission("jobs.view");
-  const { studyId } = await params;
-  const s = await getFieldStudy(db, actor, studyId);
+  const [{ studyId }, { tab: asked }] = await Promise.all([params, searchParams]);
+  // The tab's own data is read alongside the study when the link names the tab (every tab
+  // click does), instead of after it: one wait instead of two on a distant database.
+  const named = TABS.some((t) => t.key === asked) ? (asked as Tab) : null;
+  const [s, early] = await Promise.all([
+    getFieldStudy(db, actor, studyId),
+    named ? tabData(actor, studyId, named) : Promise.resolve(null),
+  ]);
   if (!s) notFound();
   const canWork = can(actor, "field.perform");
   const onSite = ["ready", "field_work", "data_issue"].includes(s.job.status);
@@ -51,12 +65,16 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
   const done = s.status === "completed";
 
   const placed = s.positions.filter((p) => p.instrumentId).length;
-  // Open where the work is: positions first, then loggers, then the times.
+  // Pre- and post-cal only when the study has them (QA Tech chooses per study).
+  const tabs = TABS.filter(
+    (t) => (t.key !== "precal" || s.precalNeeded) && (t.key !== "postcal" || s.postcalNeeded),
+  );
+  // Open where the work is: positions and their loggers first, then the times.
   const suggested: Tab =
     s.positions.length === 0
       ? "layout"
       : placed < s.positions.length && !done
-        ? "loggers"
+        ? "layout"
         : done
           ? s.study.analysisApprovedAt
             ? "report"
@@ -64,13 +82,16 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
               ? "analysis"
               : "data"
           : "times";
-  const asked = (await searchParams).tab;
-  const tab: Tab = TABS.some((t) => t.key === asked) ? (asked as Tab) : suggested;
-  const data = tab === "data" ? await getStudyData(db, actor, studyId) : null;
-  const analysis =
-    tab === "analysis" || tab === "postcal" ? await getStudyAnalysis(db, actor, studyId) : null;
-  const report = tab === "report" ? await getStudyReport(db, actor, studyId) : null;
+  const tab: Tab = named && tabs.some((t) => t.key === named) ? named : suggested;
+  const { data, analysis, report } = early ?? (await tabData(actor, studyId, tab));
   const preRows = s.precal.filter((r) => r.phase === "pre");
+  const overrideProps = {
+    overrides: s.overrides,
+    me: actor.id,
+    canAsk:
+      can(actor, "field.perform") || can(actor, "postcal.record") || can(actor, "analysis.approve"),
+    canDecide: can(actor, "analysis.approve"),
+  };
   const postRows = s.precal.filter((r) => r.phase === "post");
   const postOpen = [
     "field_work",
@@ -144,27 +165,24 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
 
       <ShowActiveTab />
       <nav aria-label="Study steps" className="-mx-4 flex gap-1 overflow-x-auto px-4">
-        {TABS.map((t) => {
+        {tabs.map((t) => {
           const count =
             t.key === "layout"
-              ? s.positions.length
-              : t.key === "loggers"
-                ? `${placed}/${s.positions.length}`
-                : t.key === "photos"
-                  ? s.photos.length
-                  : t.key === "data"
-                    ? (DATA_MARK[s.study.dataStatus] ?? "")
-                    : t.key === "precal"
-                      ? preRows.length
-                      : t.key === "postcal"
-                        ? `${new Set(postRows.map((r) => r.instrumentId)).size}/${placed}`
-                        : t.key === "analysis"
-                          ? s.study.analysisApprovedAt
-                            ? "✓"
-                            : ""
-                          : t.key === "report"
-                            ? ""
-                            : `${s.cycles.filter((c) => c.done).length}/${s.cycles.length}`;
+              ? // Positions with a logger, of all positions.
+                `${placed}/${s.positions.length}`
+              : t.key === "data"
+                ? (DATA_MARK[s.study.dataStatus] ?? "")
+                : t.key === "precal"
+                  ? preRows.length
+                  : t.key === "postcal"
+                    ? `${new Set(postRows.map((r) => r.instrumentId)).size}/${placed}`
+                    : t.key === "analysis"
+                      ? s.study.analysisApprovedAt
+                        ? "✓"
+                        : ""
+                      : t.key === "report"
+                        ? ""
+                        : `${s.cycles.filter((c) => c.done).length}/${s.cycles.length}`;
           return (
             <Link
               key={t.key}
@@ -208,24 +226,33 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
               ambient: p.ambient,
               placed: !!p.instrumentId,
             }))}
+            previous={s.positions.length === 0 ? s.previousLayout : null}
+            room={s.equipment.type === "room"}
+            initialFeatures={s.study.planFeatures}
           />
+          {s.positions.length > 0 ? (
+            <section id="loggers" aria-labelledby="loggers-h" className="flex flex-col gap-3">
+              <h2 id="loggers-h" className="font-semibold">
+                Logger at each position
+              </h2>
+              <LoggerPanel
+                studyId={studyId}
+                readOnly={!canWork || !onSite || done}
+                spare={s.spare}
+                positions={s.positions.map((p) => ({
+                  id: p.id,
+                  label: p.label,
+                  note: p.note,
+                  ambient: p.ambient,
+                  instrumentId: p.instrumentId,
+                  code: p.code,
+                  serialNo: p.serialNo,
+                  due: p.certificate?.validUntil ?? null,
+                }))}
+              />
+            </section>
+          ) : null}
         </div>
-      ) : tab === "loggers" ? (
-        <LoggerPanel
-          studyId={studyId}
-          readOnly={!canWork || !onSite || done}
-          spare={s.spare}
-          positions={s.positions.map((p) => ({
-            id: p.id,
-            label: p.label,
-            note: p.note,
-            ambient: p.ambient,
-            instrumentId: p.instrumentId,
-            code: p.code,
-            serialNo: p.serialNo,
-            due: p.certificate?.validUntil ?? null,
-          }))}
-        />
       ) : tab === "precal" ? (
         <PrecalPanel
           studyId={studyId}
@@ -233,6 +260,7 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
           needed={s.precalNeeded}
           masters={s.masters.map((m) => ({ id: m.id, code: m.code }))}
           rows={preRows}
+          {...overrideProps}
         />
       ) : tab === "postcal" ? (
         analysis ? (
@@ -243,6 +271,7 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
             needed={analysis.study.postCalRequired}
             masters={analysis.masters.map((m) => ({ id: m.id, code: m.code }))}
             rows={postRows}
+            {...overrideProps}
             waiting={analysis.postCal
               .filter((p) => p.readings.length === 0)
               .map((p) => ({ code: p.code, label: p.label }))}
@@ -271,14 +300,7 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
         data ? (
           <DataPanel data={data} />
         ) : null
-      ) : (
-        <PhotosPanel
-          studyId={studyId}
-          readOnly={!canWork || !onSite}
-          positions={s.positions.map((p) => p.label)}
-          photos={s.photos}
-        />
-      )}
+      ) : null}
 
       <a
         href={`/studies/${studyId}/ft12`}

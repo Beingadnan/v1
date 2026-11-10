@@ -33,15 +33,17 @@ export async function listUsers(db: Database, actor: SessionUser) {
 
 export async function getSettings(db: Database, actor: SessionUser) {
   assertCan(actor, "settings.view");
-  const [settings] = await db
-    .select()
-    .from(organisationSettings)
-    .where(eq(organisationSettings.organisationId, actor.organisationId));
-  const siteRows = await db
-    .select()
-    .from(sites)
-    .where(eq(sites.organisationId, actor.organisationId))
-    .orderBy(asc(sites.code));
+  const [[settings], siteRows] = await Promise.all([
+    db
+      .select()
+      .from(organisationSettings)
+      .where(eq(organisationSettings.organisationId, actor.organisationId)),
+    db
+      .select()
+      .from(sites)
+      .where(eq(sites.organisationId, actor.organisationId))
+      .orderBy(asc(sites.code)),
+  ]);
   return { settings: settings ?? null, sites: siteRows };
 }
 

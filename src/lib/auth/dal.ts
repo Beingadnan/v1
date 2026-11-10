@@ -7,6 +7,7 @@ import { db } from "@/db/client";
 import { can, type Action } from "@/domain/auth/permissions";
 import { validateSession, type SessionUser } from "@/domain/auth/session-service";
 
+import { rememberedSession } from "./session-cache";
 import { readSessionCookie } from "./session-cookie";
 
 /**
@@ -17,8 +18,10 @@ import { readSessionCookie } from "./session-cookie";
  * `cache` makes repeated calls within one request share one database lookup.
  */
 export const getCurrentSession = cache(
-  async (): Promise<{ user: SessionUser; sessionId: string } | null> =>
-    validateSession(db, await readSessionCookie()),
+  async (): Promise<{ user: SessionUser; sessionId: string } | null> => {
+    const token = await readSessionCookie();
+    return rememberedSession(token, () => validateSession(db, token));
+  },
 );
 
 export async function requireUser(): Promise<SessionUser & { sessionId: string }> {

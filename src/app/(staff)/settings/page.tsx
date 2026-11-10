@@ -14,8 +14,10 @@ export const metadata = { title: "Settings" };
 export default async function SettingsPage() {
   const actor = await requirePermission("settings.view");
   const canEdit = can(actor, "settings.manage");
-  const { settings, sites } = await getSettings(db, actor);
-  const typeDefaults = await getEffectiveTypeDefaults(db, actor.organisationId);
+  const [{ settings, sites }, typeDefaults] = await Promise.all([
+    getSettings(db, actor),
+    getEffectiveTypeDefaults(db, actor.organisationId),
+  ]);
 
   if (!settings) {
     return (

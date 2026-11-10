@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { parseCodes, pickInstruments, sparesFor, type Candidate } from "./booking";
-import { jobValue, priceStudy, type RateLine } from "./pricing";
+import { jobValue } from "./pricing";
 import {
   computeReadiness,
+  datesShortfall,
   validThrough,
   type BookedInstrument,
   type ReadinessInput,
@@ -65,19 +66,46 @@ describe("computeReadiness", () => {
       { workType: "temperature_mapping", loggerCount: 1, postCalRequired: false },
     ],
     booked: [],
-    isRequalification: false,
+    previousReports: [],
     manual: {},
   };
   const state = (r: ReturnType<typeof computeReadiness>, key: string) =>
     r.items.find((i) => i.key === key)!;
 
-  it("keeps a person's note apart from the help text", () => {
+  it("works out the gate pass, and keeps an old tick from before the gate pass step", () => {
+    expect(state(computeReadiness(base), "site_access")).toMatchObject({
+      state: "pending",
+      calculated: true,
+    });
+    expect(
+      state(
+        computeReadiness({ ...base, gatePass: { number: "GP-12", notNeeded: false } }),
+        "site_access",
+      ),
+    ).toMatchObject({ state: "ready", detail: "Gate pass GP-12" });
+    expect(
+      state(
+        computeReadiness({ ...base, gatePass: { number: "", notNeeded: true } }),
+        "site_access",
+      ),
+    ).toMatchObject({ state: "na", detail: "No gate pass at this site." });
     const ticked = computeReadiness({
       ...base,
-      manual: { protocol: { state: "ready", note: "" } },
+      manual: { site_access: { state: "ready", note: "" } },
     });
-    expect(state(ticked, "protocol")).toMatchObject({ state: "ready", note: "" });
-    expect(state(ticked, "protocol").detail).toMatch(/^The client's or QA Tech's mapping protocol/);
+    expect(state(ticked, "site_access")).toMatchObject({ state: "ready", note: "" });
+    expect(state(ticked, "site_access").detail).toBe("Ticked before the gate pass step.");
+  });
+
+  it("no longer lists the protocol or the days on site (QA Tech, Nov 2026)", () => {
+    expect(computeReadiness(base).items.map((i) => i.key)).toEqual([
+      "purchase_order",
+      "site_access",
+      "loggers_booked",
+      "loggers_valid",
+      "masters_valid",
+      "previous_report",
+    ]);
   });
 
   it("starts pending and becomes ready when everything is in place", () => {
@@ -92,10 +120,7 @@ describe("computeReadiness", () => {
       ...base,
       poNumber: " 4500012345 ",
       booked: ["T1", "T2", "T3", "T4"].map((c) => logger(c, "2027-02-01")),
-      manual: {
-        protocol: { state: "ready", note: "" },
-        site_access: { state: "na", note: "Own staff" },
-      },
+      manual: { site_access: { state: "na", note: "Own staff" } },
     });
     expect(done.items.filter((i) => i.state === "pending")).toEqual([]);
     expect(done.ready).toBe(true);
@@ -138,18 +163,36 @@ describe("computeReadiness", () => {
     expect(state(computeReadiness(postCal), "masters_valid").state).toBe("pending");
   });
 
-  it("asks for the previous report only on a requalification, and lets people override", () => {
+  it("finds the previous report in QTech, and asks only for one made before QTech", () => {
+    const inQtech = computeReadiness({
+      ...base,
+      previousReports: [
+        { label: "BE-WF-02", lastStudyOn: "2025-11-10", report: "W/11/25/BE-WF-02" },
+      ],
+      manual: { previous_report: { state: "pending", note: "" } },
+    });
+    // Found by itself; an old tick doesn't hide it.
+    expect(state(inQtech, "previous_report")).toMatchObject({
+      state: "ready",
+      calculated: true,
+      detail: "In QTech: BE-WF-02 W/11/25/BE-WF-02.",
+    });
+    const before = { label: "BE-WF-03", lastStudyOn: "2024-05-02", report: null };
     expect(
-      state(computeReadiness({ ...base, isRequalification: true }), "previous_report").state,
-    ).toBe("pending");
+      state(computeReadiness({ ...base, previousReports: [before] }), "previous_report"),
+    ).toMatchObject({
+      state: "pending",
+      calculated: false,
+      detail: "Mapped before QTech, keep the last report to hand: BE-WF-03 (02.05.2024).",
+    });
     const ticked = computeReadiness({
       ...base,
-      isRequalification: true,
-      manual: { previous_report: { state: "ready", note: "Report 05/25 on file" } },
+      previousReports: [before],
+      manual: { previous_report: { state: "ready", note: "Report 05/24 on file" } },
     });
     expect(state(ticked, "previous_report")).toMatchObject({
       state: "ready",
-      detail: "Report 05/25 on file",
+      detail: "Report 05/24 on file",
     });
     // A person can't override a calculated item.
     const forced = computeReadiness({
@@ -237,94 +280,20 @@ describe("pickInstruments", () => {
   });
 });
 
-describe("pricing", () => {
-  const line = (over: Partial<RateLine>): RateLine => ({
-    id: "x",
-    workType: "temperature_mapping",
-    equipmentType: "",
-    durationHours: null,
-    basis: "per_study",
-    price: "10000",
-    active: true,
-    ...over,
-  });
-  const study = {
-    workType: "temperature_mapping" as const,
-    equipmentType: "walk_in_freezer",
-    durationHours: 72,
-    cycles: ["empty", "loaded", "door_open"],
-    loggerCount: 15,
-    volumeM3: 30,
-  };
-
-  it("uses the most specific line", () => {
-    const lines = [
-      line({ id: "any" }),
-      line({ id: "wif", equipmentType: "walk_in_freezer", price: "18000" }),
-      line({ id: "wif72", equipmentType: "walk_in_freezer", durationHours: 72, price: "25000" }),
-      line({ id: "wif24", equipmentType: "walk_in_freezer", durationHours: 24, price: "1" }),
-      line({
-        id: "off",
-        equipmentType: "walk_in_freezer",
-        durationHours: 72,
-        price: "99",
-        active: false,
-      }),
-    ];
-    expect(priceStudy(lines, study)).toEqual({ price: 25000, note: "₹25,000 per study" });
-    expect(priceStudy(lines, { ...study, durationHours: 24 }).price).toBe(1);
-    expect(priceStudy(lines, { ...study, equipmentType: "freezer" }).price).toBe(10000);
-    expect(priceStudy(lines, { ...study, workType: "thermal_validation" })).toEqual({
-      price: null,
-      note: "No rate-card line for this work.",
+describe("job value", () => {
+  it("comes from the PO; an old custom quote counts only without one", () => {
+    expect(jobValue({ quotedValue: 50000, poValue: 45000 })).toEqual({
+      expected: 45000,
+      source: "po",
     });
-  });
-
-  it("prices RH mapping from the mapping line unless RH has its own", () => {
-    const rh = {
-      ...study,
-      workType: "temperature_rh_mapping" as const,
-      equipmentType: "warehouse",
-    };
-    const mapping = line({ equipmentType: "warehouse", basis: "per_logger", price: "650" });
-    expect(priceStudy([mapping], rh).price).toBe(9750);
-    const own = line({ workType: "temperature_rh_mapping", basis: "per_logger", price: "800" });
-    expect(priceStudy([mapping, own], rh).price).toBe(12000);
-    // Not the other way round.
-    expect(priceStudy([own], { ...study, equipmentType: "warehouse" }).price).toBeNull();
-  });
-
-  it("multiplies by cycles, loggers or volume", () => {
-    expect(priceStudy([line({ basis: "per_cycle", price: "4500" })], study)).toEqual({
-      price: 13500,
-      note: "₹4,500 per cycle × 3 cycles",
-    });
-    expect(priceStudy([line({ basis: "per_logger", price: "650.5" })], study).price).toBe(9757.5);
-    expect(priceStudy([line({ basis: "per_m3", price: "120" })], study).price).toBe(3600);
-    expect(
-      priceStudy([line({ basis: "per_m3", price: "120" })], { ...study, volumeM3: null }).price,
-    ).toBeNull();
-  });
-
-  it("compares the expected value with the PO", () => {
-    expect(jobValue({ studyPrices: [25000, 25000], quotedValue: null, poValue: 45000 })).toEqual({
-      expected: 50000,
-      source: "rate_card",
-      unpriced: 0,
-      poDifference: -5000,
-    });
-    expect(jobValue({ studyPrices: [null], quotedValue: 30000, poValue: 30000.4 })).toMatchObject({
+    expect(jobValue({ quotedValue: 30000, poValue: null })).toEqual({
       expected: 30000,
       source: "quote",
-      poDifference: 0,
     });
-    expect(jobValue({ studyPrices: [null, null], quotedValue: null, poValue: null })).toMatchObject(
-      {
-        expected: null,
-        source: "none",
-        unpriced: 2,
-      },
-    );
+    expect(jobValue({ quotedValue: null, poValue: null })).toEqual({
+      expected: null,
+      source: "none",
+    });
   });
 });
 
@@ -421,7 +390,7 @@ describe("job dates", () => {
   });
 });
 
-describe("readiness: long enough on site", () => {
+describe("dates too short for the studies", () => {
   const input = (end: string): ReadinessInput => ({
     poNumber: "PO-1",
     plannedStart: "2026-11-04",
@@ -450,32 +419,25 @@ describe("readiness: long enough on site", () => {
       },
     ],
     booked: [],
-    isRequalification: false,
+    previousReports: [],
     manual: {},
   });
-  const fit = (end: string) =>
-    computeReadiness(input(end)).items.find((i) => i.key === "dates_fit")!;
+  const fit = (end: string) => datesShortfall(input(end));
 
   it("names the studies that don't fit and the last day that would", () => {
-    expect(fit("2026-11-06")).toMatchObject({
-      state: "pending",
-      detail:
-        "04.11.2026–06.11.2026 gives 48 h, but DSP-02 needs 168 h; CR-01 needs 72 h. Move the last day to 11.11.2026 or shorten the study.",
-    });
+    expect(fit("2026-11-06")).toBe(
+      "04.11.2026–06.11.2026 gives 48 h, but DSP-02 needs 168 h; CR-01 needs 72 h. Move the last day to 11.11.2026 or shorten the study.",
+    );
   });
 
-  it("is ready when the last day leaves time for the longest study", () => {
-    expect(fit("2026-11-11")).toMatchObject({
-      state: "ready",
-      detail: "168 h on site; the longest study needs 168 h.",
-    });
+  it("says nothing when the last day leaves time for the longest study", () => {
+    expect(fit("2026-11-11")).toBeNull();
   });
 });
 
-describe("readiness: cycles run one after another", () => {
+describe("dates: cycles run one after another", () => {
   it("counts every cycle of a study", () => {
-    const r = computeReadiness({
-      poNumber: "PO-1",
+    const r = datesShortfall({
       plannedStart: "2026-10-26",
       plannedEnd: "2026-11-02",
       studies: [
@@ -488,11 +450,8 @@ describe("readiness: cycles run one after another", () => {
           label: "CR-01",
         },
       ],
-      booked: [],
-      isRequalification: false,
-      manual: {},
-    }).items.find((i) => i.key === "dates_fit")!;
-    expect(r.detail).toBe(
+    });
+    expect(r).toBe(
       "26.10.2026–02.11.2026 gives 168 h, but CR-01 needs 288 h (4 cycles of 72 h). Move the last day to 07.11.2026 or shorten the study.",
     );
   });

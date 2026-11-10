@@ -2,6 +2,7 @@ import "server-only";
 
 import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
 
+import { ORDER_TYPE_SHORT, isContractType, type OrderType } from "@/domain/jobs/types";
 import type { Database } from "@/db/client-factory";
 import {
   clientCompanies,
@@ -11,10 +12,10 @@ import {
   organisationSettings,
   payments,
   signatures,
-  studies,
   users,
   type Invoice,
   type Payment,
+  type Job,
 } from "@/db/schema";
 import { assertCan, can } from "@/domain/auth/permissions";
 import { isClientRole } from "@/domain/auth/roles";
@@ -36,7 +37,7 @@ import {
   rupees,
   type PaymentMode,
 } from "./types";
-import { wcrBlockers } from "./wcr-service";
+import { wcrBlockerCounts, wcrBlockers } from "./wcr-service";
 
 const todayIst = () =>
   new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
@@ -94,80 +95,102 @@ function invoiceView(inv: Invoice, paid: Payment[], termsDays: number, today: st
 export type InvoiceView = ReturnType<typeof invoiceView>;
 
 /** Everything the job page's "Close and money" panel shows. */
-export async function jobMoney(db: Database, actor: SessionUser, jobId: string) {
+export async function jobMoney(
+  db: Database,
+  actor: SessionUser,
+  jobId: string,
+  /** The job and its client's payment terms when the caller already read them (the job page). */
+  loaded?: { job: Job; terms: number },
+) {
   assertCan(actor, "jobs.view");
   if (!isUuid(jobId)) return null;
-  const [row] = await db
-    .select({ job: jobs, terms: clientCompanies.paymentTermsDays })
-    .from(jobs)
-    .innerJoin(clientCompanies, eq(clientCompanies.id, jobs.companyId))
-    .where(and(eq(jobs.id, jobId), eq(jobs.organisationId, actor.organisationId)));
+  const [row] = loaded
+    ? loaded.job.id === jobId && loaded.job.organisationId === actor.organisationId
+      ? [loaded]
+      : []
+    : await db
+        .select({ job: jobs, terms: clientCompanies.paymentTermsDays })
+        .from(jobs)
+        .innerJoin(clientCompanies, eq(clientCompanies.id, jobs.companyId))
+        .where(and(eq(jobs.id, jobId), eq(jobs.organisationId, actor.organisationId)));
   if (!row) return null;
   const { job } = row;
   const today = todayIst();
-  const [w] = await db
-    .select({ w: jobWcrs, issuedBy: users.name })
-    .from(jobWcrs)
-    .innerJoin(users, eq(users.id, jobWcrs.issuedByUserId))
-    .where(and(eq(jobWcrs.jobId, job.id), ne(jobWcrs.status, "void")));
-  const acceptedBy = w?.w.signatureId
-    ? (
-        await db
-          .select({
-            name: signatures.signerName,
-            role: signatures.signerRole,
-            at: signatures.signedAt,
-          })
-          .from(signatures)
-          .where(eq(signatures.id, w.w.signatureId))
-      )[0]
-    : undefined;
   const money = can(actor, "jobs.money");
-  const invs = money
-    ? await db
-        .select()
-        .from(invoices)
-        .where(eq(invoices.jobId, job.id))
-        .orderBy(asc(invoices.createdAt))
-    : [];
-  const paid = invs.length
-    ? await db
-        .select()
-        .from(payments)
-        .where(
-          inArray(
-            payments.invoiceId,
-            invs.map((i) => i.id),
-          ),
-        )
-    : [];
+  const status = job.status as JobStatus;
+  // The job is checked against the organisation above; the rest goes out in one round
+  // (the client's signature by a join, the payments by a subquery of the job's invoices).
+  const settled = ["cancelled", "on_hold", "closed"].includes(status);
+  const [[w], invs, [last], closing, paid, blockers] = await Promise.all([
+    db
+      .select({
+        w: jobWcrs,
+        issuedBy: users.name,
+        signer: {
+          name: signatures.signerName,
+          role: signatures.signerRole,
+          at: signatures.signedAt,
+        },
+      })
+      .from(jobWcrs)
+      .innerJoin(users, eq(users.id, jobWcrs.issuedByUserId))
+      .leftJoin(signatures, eq(signatures.id, jobWcrs.signatureId))
+      .where(and(eq(jobWcrs.jobId, job.id), ne(jobWcrs.status, "void"))),
+    money
+      ? db
+          .select()
+          .from(invoices)
+          .where(eq(invoices.jobId, job.id))
+          .orderBy(asc(invoices.createdAt))
+      : Promise.resolve([]),
+    money
+      ? db
+          .select({ number: invoices.number })
+          .from(invoices)
+          .where(eq(invoices.organisationId, actor.organisationId))
+          .orderBy(desc(invoices.createdAt))
+          .limit(1)
+      : Promise.resolve([]),
+    status === "closed" || status === "cancelled" ? Promise.resolve([]) : closeBlockers(db, job),
+    money
+      ? db
+          .select()
+          .from(payments)
+          .where(
+            inArray(
+              payments.invoiceId,
+              db.select({ id: invoices.id }).from(invoices).where(eq(invoices.jobId, job.id)),
+            ),
+          )
+      : Promise.resolve([]),
+    // Only needed while no WCR is out; read alongside rather than after finding that out.
+    settled ? Promise.resolve([]) : wcrBlockers(db, job.id),
+  ]);
+  const acceptedBy = w?.w.signatureId && w.signer?.name ? w.signer : undefined;
+  const wcrOpen = w ? [] : blockers;
   const views = invs.map((i) => invoiceView(i, paid, row.terms, today));
-  const prices = await db
-    .select({ price: studies.price })
-    .from(studies)
-    .where(eq(studies.jobId, job.id));
   const value = jobValue({
-    studyPrices: prices.map((p) => (p.price === null ? null : Number(p.price))),
     quotedValue: job.quotedValue === null ? null : Number(job.quotedValue),
     poValue: job.poValue === null ? null : Number(job.poValue),
   });
   const invoicedTaxable = views
     .filter((v) => v.status !== "cancelled")
     .reduce((s, v) => s + paise(v.taxable), 0);
-  const [last] = money
-    ? await db
-        .select({ number: invoices.number })
-        .from(invoices)
-        .where(eq(invoices.organisationId, actor.organisationId))
-        .orderBy(desc(invoices.createdAt))
-        .limit(1)
-    : [];
   const remaining =
     value.expected !== null ? Math.max(0, paise(value.expected) - invoicedTaxable) : null;
-  const status = job.status as JobStatus;
   const wcrSignedOn = w?.w.signedAt ? istDate(w.w.signedAt) : null;
+  // The client's order: an invoice can go out without it, but people should know.
+  const short = ORDER_TYPE_SHORT[job.orderType as OrderType] ?? "PO";
+  const orderMissing = isContractType(job.orderType)
+    ? job.contractId
+      ? null
+      : `${short} pending: the client's ${short} isn't picked on the job yet.`
+    : job.poNumber.trim()
+      ? null
+      : `${short} pending: the invoice will go out without the client's ${short} number.`;
   return {
     status,
+    orderMissing,
     wcr: w
       ? {
           id: w.w.id,
@@ -184,8 +207,7 @@ export async function jobMoney(db: Database, actor: SessionUser, jobId: string) 
             : null,
         }
       : null,
-    wcrBlockers:
-      w || ["cancelled", "on_hold", "closed"].includes(status) ? [] : await wcrBlockers(db, job.id),
+    wcrBlockers: wcrOpen,
     invoices: views,
     expected: value.expected,
     /** Days since the WCR was signed, against Rule 47's 30. */
@@ -197,8 +219,7 @@ export async function jobMoney(db: Database, actor: SessionUser, jobId: string) 
       gstPct: DEFAULT_GST_PCT,
       today,
     },
-    closeBlockers:
-      status === "closed" || status === "cancelled" ? [] : await closeBlockers(db, job),
+    closeBlockers: closing,
     can: {
       issueWcr: can(actor, "wcr.issue"),
       money,
@@ -218,52 +239,62 @@ export type JobMoney = NonNullable<Awaited<ReturnType<typeof jobMoney>>>;
 export async function billingOverview(db: Database, actor: SessionUser) {
   assertCan(actor, "jobs.money");
   const today = todayIst();
-  const live = await db
-    .select({
-      job: jobs,
-      company: clientCompanies.name,
-      terms: clientCompanies.paymentTermsDays,
-    })
-    .from(jobs)
-    .innerJoin(clientCompanies, eq(clientCompanies.id, jobs.companyId))
-    .where(
-      and(
-        eq(jobs.organisationId, actor.organisationId),
-        inArray(jobs.status, [
-          "sent_to_client",
-          "client_signed",
-          "wcr_signed",
-          "invoiced",
-          "paid",
-          "rework",
-        ]),
+  const LIVE = [
+    "sent_to_client",
+    "client_signed",
+    "wcr_signed",
+    "invoiced",
+    "paid",
+    "rework",
+  ] as const;
+  const issuing = can(actor, "wcr.issue");
+  // Everything in one round: the WCRs, invoices, payments and WCR checks take the live
+  // jobs as a subquery instead of waiting for their ids (ADR 0018).
+  const liveIds = (statuses: readonly string[]) =>
+    db
+      .select({ id: jobs.id })
+      .from(jobs)
+      .where(
+        and(eq(jobs.organisationId, actor.organisationId), inArray(jobs.status, [...statuses])),
+      );
+  const liveInvoices = and(
+    inArray(invoices.jobId, liveIds(LIVE)),
+    ne(invoices.status, "cancelled"),
+  );
+  const [live, [settings], wcrs, invs, paid, blockers] = await Promise.all([
+    db
+      .select({
+        job: jobs,
+        company: clientCompanies.name,
+        terms: clientCompanies.paymentTermsDays,
+      })
+      .from(jobs)
+      .innerJoin(clientCompanies, eq(clientCompanies.id, jobs.companyId))
+      .where(and(eq(jobs.organisationId, actor.organisationId), inArray(jobs.status, [...LIVE])))
+      .orderBy(asc(jobs.number)),
+    db
+      .select({ udyam: organisationSettings.udyamNumber })
+      .from(organisationSettings)
+      .where(eq(organisationSettings.organisationId, actor.organisationId)),
+    db
+      .select()
+      .from(jobWcrs)
+      .where(and(inArray(jobWcrs.jobId, liveIds(LIVE)), ne(jobWcrs.status, "void"))),
+    db.select().from(invoices).where(liveInvoices),
+    db
+      .select()
+      .from(payments)
+      .where(
+        inArray(
+          payments.invoiceId,
+          db.select({ id: invoices.id }).from(invoices).where(liveInvoices),
+        ),
       ),
-    )
-    .orderBy(asc(jobs.number));
-  const ids = live.map((r) => r.job.id);
-  const wcrs = ids.length
-    ? await db
-        .select()
-        .from(jobWcrs)
-        .where(and(inArray(jobWcrs.jobId, ids), ne(jobWcrs.status, "void")))
-    : [];
-  const invs = ids.length
-    ? await db
-        .select()
-        .from(invoices)
-        .where(and(inArray(invoices.jobId, ids), ne(invoices.status, "cancelled")))
-    : [];
-  const paid = invs.length
-    ? await db
-        .select()
-        .from(payments)
-        .where(
-          inArray(
-            payments.invoiceId,
-            invs.map((i) => i.id),
-          ),
-        )
-    : [];
+    // Only jobs that may need a WCR.
+    issuing
+      ? wcrBlockerCounts(db, liveIds(["sent_to_client", "client_signed"]))
+      : Promise.resolve(new Map<string, number>()),
+  ]);
   const wcrToIssue: { jobId: string; number: string; company: string }[] = [];
   const wcrWaiting: { jobId: string; number: string; company: string; days: number }[] = [];
   const invoiceDue: {
@@ -280,9 +311,9 @@ export async function billingOverview(db: Database, actor: SessionUser) {
     const base = { jobId: r.job.id, number: r.job.number, company: r.company };
     if (!w) {
       if (
-        can(actor, "wcr.issue") &&
+        issuing &&
         ["sent_to_client", "client_signed"].includes(r.job.status) &&
-        (await wcrBlockers(db, r.job.id)).length === 0
+        blockers.get(r.job.id) === 0
       ) {
         wcrToIssue.push(base);
       }
@@ -315,10 +346,6 @@ export async function billingOverview(db: Database, actor: SessionUser) {
   }
   open.sort((a, b) => b.overdueDays - a.overdueDays || b.days - a.days);
   invoiceDue.sort((a, b) => b.days - a.days);
-  const [settings] = await db
-    .select({ udyam: organisationSettings.udyamNumber })
-    .from(organisationSettings)
-    .where(eq(organisationSettings.organisationId, actor.organisationId));
   return {
     wcrToIssue,
     wcrWaiting,

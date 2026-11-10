@@ -17,7 +17,8 @@ import { formatNumber, parseNumber, seriesScope } from "./format";
  * duplicates and no gaps.
  *
  * Counters are kept per organisation, kind, site, year — and per month and
- * certificate kind when the format contains {MM} / {KIND}.
+ * certificate kind when the format contains {MM} / {KIND}. Job numbers count
+ * through the year even when they show the month.
  */
 export async function allocateNumber(
   tx: Transaction,
@@ -41,7 +42,11 @@ export async function allocateNumber(
   const year = Number(parts.find((p) => p.type === "year")?.value);
   const month = Number(parts.find((p) => p.type === "month")?.value);
   const siteCode = input.siteCode ?? "";
-  const { period, series } = seriesScope(input.format, { month, kind: input.certificateKind });
+  const { period, series } = seriesScope(
+    input.format,
+    { month, kind: input.certificateKind },
+    input.kind !== "job",
+  );
 
   const [row] = await tx
     .insert(numberSeries)
@@ -110,10 +115,11 @@ export async function noteUsedNumber(
     if (!site) return false;
     siteCode = site.code;
   }
-  const { period, series } = seriesScope(input.format, {
-    month: parsed.month ?? 1,
-    kind: parsed.kind,
-  });
+  const { period, series } = seriesScope(
+    input.format,
+    { month: parsed.month ?? 1, kind: parsed.kind },
+    input.kind !== "job",
+  );
   await tx
     .insert(numberSeries)
     .values({

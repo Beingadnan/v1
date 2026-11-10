@@ -39,8 +39,8 @@ export const organisationSettings = pgTable(
     letterheadFileId: uuid("letterhead_file_id").references(() => storedFiles.id, {
       onDelete: "restrict",
     }),
-    /** e.g. "QT/J/{YYYY}/{SEQ:4}" */
-    jobNumberFormat: text("job_number_format").notNull().default("QT/J/{YYYY}/{SEQ:4}"),
+    /** e.g. "QT/{MM}/{YYYY}/{SEQ:4}" (QT/11/2026/0041; the count runs through the year) */
+    jobNumberFormat: text("job_number_format").notNull().default("QT/{MM}/{YYYY}/{SEQ:4}"),
     /** e.g. "QATECH/{SITE_NAME}/{MM}/{YY}/{KIND}-{SEQ:2}" — per site, month and kind. */
     certificateNumberFormat: text("certificate_number_format")
       .notNull()

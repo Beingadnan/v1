@@ -7,6 +7,7 @@ import { db } from "@/db/client";
 import { setPasswordWithToken } from "@/domain/auth/account-service";
 import { login } from "@/domain/auth/login-service";
 import { setSessionCookie } from "@/lib/auth/session-cookie";
+import { forgetSessions } from "@/lib/auth/session-cache";
 import { getRequestInfo } from "@/lib/request-info";
 import { safeNextPath } from "@/lib/safe-redirect";
 
@@ -63,5 +64,6 @@ export async function setPasswordAction(_prev: FormState, formData: FormData): P
     await getRequestInfo(),
   );
   if (!result.ok) return { error: result.message };
+  forgetSessions();
   redirect("/login?password=set");
 }

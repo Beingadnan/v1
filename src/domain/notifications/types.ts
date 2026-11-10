@@ -12,6 +12,10 @@ export const NOTIFICATION_KINDS = [
   "deviation_to_decide",
   "deviation_decided",
   "capa_assigned",
+  "order_pending",
+  "invoice_pending",
+  "contract_expiring",
+  "override_to_approve",
 ] as const;
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 
@@ -22,6 +26,7 @@ export const IMMEDIATE: readonly NotificationKind[] = [
   "wcr_to_accept",
   "deviation_to_decide",
   "capa_assigned",
+  "override_to_approve",
 ];
 
 export const EMAIL_STATUSES = ["none", "pending", "sent", "skipped", "failed"] as const;

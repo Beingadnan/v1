@@ -25,6 +25,7 @@ import {
 import {
   EQUIPMENT_TYPE_INFO,
   EQUIPMENT_TYPES,
+  isArea,
   type EquipmentType,
 } from "@/domain/clients/equipment-types";
 import {
@@ -124,6 +125,12 @@ export function EquipmentForm({
   const isNew = !values?.id;
   const [siteId, setSiteId] = useState(values?.siteId ?? sites[0]?.id ?? "");
   const [type, setType] = useState<EquipmentType | "">(values?.type ?? "");
+  // Equipment (a box with a door) or a room or store mapped as an area.
+  const [kind, setKind] = useState<"equipment" | "area">(
+    isArea(values?.type) ? "area" : "equipment",
+  );
+  const area = kind === "area";
+  const types = EQUIPMENT_TYPES.filter((t) => isArea(t) === area);
   const [filledFrom, setFilledFrom] = useState<{ type: EquipmentType; count: number } | null>(null);
   const [size, setSize] = useState({
     lengthM: values?.lengthM ?? "",
@@ -134,11 +141,14 @@ export function EquipmentForm({
   const showRh =
     (type !== "" && EQUIPMENT_TYPE_INFO[type].hasRh) ||
     Boolean(values?.rhMinPct || values?.rhMaxPct);
-  const suggestion = suggestLoggerCount({
-    lengthM: Number(size.lengthM) || null,
-    widthM: Number(size.widthM) || null,
-    heightM: Number(size.heightM) || null,
-  });
+  const suggestion = suggestLoggerCount(
+    {
+      lengthM: Number(size.lengthM) || null,
+      widthM: Number(size.widthM) || null,
+      heightM: Number(size.heightM) || null,
+    },
+    type === "room" ? "room" : "box",
+  );
 
   useEffect(() => {
     if (result?.ok && isNew) router.push(`/clients/${companyId}/equipment/${result.data.id}`);
@@ -235,11 +245,51 @@ export function EquipmentForm({
         />
       </Group>
 
-      <Group title="Equipment" description="As written on the client's equipment label.">
+      <Group
+        title={area ? "Room or area" : "Equipment"}
+        description={
+          area
+            ? "As the client names the room, e.g. on its door or in their SOP."
+            : "As written on the client's equipment label."
+        }
+      >
+        <fieldset className="flex flex-wrap gap-2 sm:col-span-2 lg:col-span-3">
+          <legend className="mb-1.5 text-sm font-medium">What is mapped</legend>
+          {(
+            [
+              ["equipment", "Equipment", "Fridge, freezer, chamber, autoclave…"],
+              ["area", "Room or area", "Dispensing, sampling, store, warehouse"],
+            ] as const
+          ).map(([value, title, hint]) => (
+            <label
+              key={value}
+              className={`flex min-w-48 flex-1 cursor-pointer flex-col rounded-md border px-3 py-2 text-sm ${
+                kind === value ? "border-primary bg-brand-soft" : "border-input"
+              }`}
+            >
+              <span className="flex items-center gap-2 font-medium">
+                <input
+                  type="radio"
+                  name="mappedKind"
+                  value={value}
+                  checked={kind === value}
+                  disabled={readOnly}
+                  onChange={() => {
+                    setKind(value);
+                    if (type !== "" && isArea(type) !== (value === "area")) setType("");
+                  }}
+                  className="size-4 accent-primary"
+                />
+                {title}
+              </span>
+              <span className="text-xs text-muted-foreground">{hint}</span>
+            </label>
+          ))}
+        </fieldset>
         <TextField
           name="code"
-          label="Equipment ID"
-          placeholder="BE-WF-02"
+          label={area ? "Room ID" : "Equipment ID"}
+          placeholder={area ? "WH013" : "BE-WF-02"}
           required
           defaultValue={v?.code}
           {...common}
@@ -247,8 +297,8 @@ export function EquipmentForm({
         <TextField
           className="sm:col-span-2"
           name="name"
-          label="Equipment name"
-          placeholder="Cold Storage (Walk In Freezer)"
+          label={area ? "Room name" : "Equipment name"}
+          placeholder={area ? "Dispensing-2" : "Cold Storage (Walk In Freezer)"}
           required
           defaultValue={v?.name}
           {...common}
@@ -269,28 +319,46 @@ export function EquipmentForm({
               ? undefined
               : EQUIPMENT_TYPE_INFO[type].study === "thermal_validation"
                 ? "Thermal validation: post-calibration always required."
-                : "Temperature mapping."
+                : type === "room"
+                  ? "Mapped at working height along the walls, drawn as a floor plan."
+                  : "Temperature mapping."
           }
           {...common}
         >
           <option value="" disabled>
             Choose a type
           </option>
-          {EQUIPMENT_TYPES.map((t) => (
+          {types.map((t) => (
             <option key={t} value={t}>
               {EQUIPMENT_TYPE_INFO[t].label}
             </option>
           ))}
         </SelectField>
-        <TextField
-          name="make"
-          label="Make"
-          placeholder="Blue Star"
-          defaultValue={v?.make}
-          {...common}
-        />
-        <TextField name="model" label="Model" defaultValue={v?.model} {...common} />
-        <TextField name="serialNo" label="Serial number" defaultValue={v?.serialNo} {...common} />
+        {area ? (
+          // A room has no make or model; keep whatever an older record holds.
+          <>
+            <input type="hidden" name="make" value={v?.make ?? ""} />
+            <input type="hidden" name="model" value={v?.model ?? ""} />
+            <input type="hidden" name="serialNo" value={v?.serialNo ?? ""} />
+          </>
+        ) : (
+          <>
+            <TextField
+              name="make"
+              label="Make"
+              placeholder="Blue Star"
+              defaultValue={v?.make}
+              {...common}
+            />
+            <TextField name="model" label="Model" defaultValue={v?.model} {...common} />
+            <TextField
+              name="serialNo"
+              label="Serial number"
+              defaultValue={v?.serialNo}
+              {...common}
+            />
+          </>
+        )}
       </Group>
 
       {filledFrom ? (
@@ -305,7 +373,14 @@ export function EquipmentForm({
         </p>
       ) : null}
 
-      <Group title="Size" description="Inside dimensions, for the sensor layout.">
+      <Group
+        title="Size"
+        description={
+          area
+            ? "The room's length, width and ceiling height, for the floor plan."
+            : "Inside dimensions, for the sensor layout."
+        }
+      >
         <TextField
           name="lengthM"
           label="Length"
@@ -484,7 +559,7 @@ export function EquipmentForm({
       {readOnly ? null : (
         <div className="flex flex-col gap-3 border-t border-border pt-6 sm:flex-row sm:items-center">
           <Button type="submit" disabled={pending || (result?.ok && isNew)}>
-            {pending ? "Saving…" : isNew ? "Add equipment" : "Save changes"}
+            {pending ? "Saving…" : isNew ? (area ? "Add room" : "Add equipment") : "Save changes"}
           </Button>
           <div className="flex-1">
             <FormMessage result={result} />

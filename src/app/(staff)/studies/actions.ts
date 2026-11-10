@@ -15,7 +15,9 @@ import {
   voidEvent,
   type PlaceResult,
 } from "@/domain/field/field-service";
+import { FieldError } from "@/domain/field/errors";
 import type { LayoutPoint } from "@/domain/field/layout";
+import { decideOverride, requestOverride } from "@/domain/field/override-service";
 import type { StudyStatus } from "@/domain/field/types";
 import { runAction, type ActionResult } from "@/lib/action-result";
 import { SESSION_ENDED, userForAction } from "@/lib/auth/dal";
@@ -156,6 +158,38 @@ export async function attachPhotoAction(
   if (!actor) return { ok: false, error: SESSION_ENDED };
   const result = await runAction(async () =>
     attachPhoto(db, actor, studyId, input, await getRequestInfo()),
+  );
+  if (result.ok) refresh(studyId);
+  return result;
+}
+
+/** Asks to override a pre/post-calibration result; a second person approves it. */
+export async function requestOverrideAction(
+  studyId: string,
+  input: { precalId: string; toResult: string; reason: string },
+): Promise<ActionResult> {
+  const actor = await userForAction();
+  if (!actor) return { ok: false, error: SESSION_ENDED };
+  const result = await runAction(async () => {
+    await requestOverride(db, actor, input.precalId, input, await getRequestInfo());
+  }, "Override asked for: a team leader or manager approves it.");
+  if (result.ok) refresh(studyId);
+  return result;
+}
+
+/** Approves (with the password) or rejects (with a note) an override. */
+export async function decideOverrideAction(
+  studyId: string,
+  input: { overrideId: string; approve: boolean; password: string; note: string },
+): Promise<ActionResult> {
+  const actor = await userForAction();
+  if (!actor) return { ok: false, error: SESSION_ENDED };
+  const result = await runAction(
+    async () => {
+      const r = await decideOverride(db, actor, input.overrideId, input, await getRequestInfo());
+      if (!r.ok) throw new FieldError(r.message);
+    },
+    input.approve ? "Override approved." : "Override rejected.",
   );
   if (result.ok) refresh(studyId);
   return result;

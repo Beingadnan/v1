@@ -50,6 +50,7 @@ import { evaluatePrecal } from "./precal";
 import { openDeviationTx } from "@/domain/analysis/deviation-open";
 import {
   EVENT_LABELS,
+  PLAN_FEATURE_KINDS,
   ROUTINE,
   markersFor,
   type CycleKey,
@@ -57,6 +58,7 @@ import {
   STUDY_STATUS_LABELS,
   type StudyStatus,
 } from "./types";
+import { effectiveResult } from "./override-service";
 
 const user = (actor: SessionUser) => ({ type: "user" as const, userId: actor.id });
 
@@ -127,6 +129,23 @@ const layoutSchema = z
   });
 export type LayoutInput = z.input<typeof layoutSchema>;
 
+const featuresSchema = z
+  .array(
+    z.object({
+      kind: z.enum(PLAN_FEATURE_KINDS),
+      label: z.string().trim().max(40).default(""),
+      x: z.coerce.number().min(0).max(1),
+      y: z.coerce.number().min(0).max(1),
+    }),
+  )
+  .max(50, "At most 50 marks on the plan.");
+
+/** The positions alone (as before), or the positions with the plan's marks. */
+const saveSchema = z.union([
+  layoutSchema.transform((points) => ({ points, features: null })),
+  z.object({ points: layoutSchema, features: featuresSchema }),
+]);
+
 /**
  * Saves a study's positions. Positions keep their logger when their label
  * stays; removing a position that holds a logger is refused.
@@ -139,7 +158,7 @@ export async function saveLayout(
   request?: RequestInfo,
 ): Promise<{ count: number }> {
   assertCan(actor, "field.perform");
-  const points = layoutSchema.parse(input);
+  const { points, features } = saveSchema.parse(input);
   return db.transaction(async (tx) => {
     const { study, job, equipment: e } = await loadStudy(tx, actor, studyId);
     assertJob(job, LAYOUT_OK, "Changing the layout");
@@ -178,15 +197,24 @@ export async function saveLayout(
           .values({ organisationId: actor.organisationId, studyId: study.id, ...values });
       }
     }
+    if (features) {
+      await tx.update(studies).set({ planFeatures: features }).where(eq(studies.id, study.id));
+    }
+    const marks = features?.length
+      ? `, ${features.length} mark${features.length === 1 ? "" : "s"} on the plan`
+      : "";
     await recordAudit(tx, {
       organisationId: actor.organisationId,
       actor: user(actor),
       action: "study.layout_saved",
       entityType: "study",
       entityId: study.id,
-      summary: `${actor.name} saved the layout of ${e.code} on job ${job.number}: ${points.length} positions`,
-      before: current.map(({ label, x, y, z, ambient }) => ({ label, x, y, z, ambient })),
-      after: points,
+      summary: `${actor.name} saved the layout of ${e.code} on job ${job.number}: ${points.length} positions${marks}`,
+      before: {
+        positions: current.map(({ label, x, y, z, ambient }) => ({ label, x, y, z, ambient })),
+        features: study.planFeatures,
+      },
+      after: { positions: points, features: features ?? study.planFeatures },
       request,
     });
     return { count: points.length };
@@ -244,11 +272,11 @@ export async function layoutTemplate(db: Database, actor: SessionUser, studyId: 
   return db.transaction(async (tx) => {
     const { study, equipment: e } = await loadStudy(tx, actor, studyId);
     const n = (v: string | null) => (v === null ? null : Number(v));
-    return templateLayout(study.loggerCount, {
-      lengthM: n(e.lengthM),
-      widthM: n(e.widthM),
-      heightM: n(e.heightM),
-    });
+    return templateLayout(
+      study.loggerCount,
+      { lengthM: n(e.lengthM), widthM: n(e.widthM), heightM: n(e.heightM) },
+      { room: e.type === "room" },
+    );
   });
 }
 
@@ -304,7 +332,8 @@ async function placementProblem(
   if (elsewhere)
     return `${inst.code} is already at ${elsewhere.label} (${elsewhere.code}). Remove it there first.`;
   const [last] = await tx
-    .select({ result: studyPrecal.result })
+    // The result in force: an approved override's, else the computed one.
+    .select({ result: effectiveResult })
     .from(studyPrecal)
     .where(
       and(
@@ -613,7 +642,7 @@ export async function recordEvent(
         if (!readiness.ready) {
           throw new FieldError(
             `Job ${job.number} isn't ready for field work: ${readiness.items
-              .filter((i) => i.state === "pending")
+              .filter((i) => i.state === "pending" && i.blocking)
               .map((i) => i.label)
               .join(", ")}.`,
           );

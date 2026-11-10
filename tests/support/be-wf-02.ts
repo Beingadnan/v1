@@ -200,10 +200,10 @@ export async function seedBeWf02(
     req,
   );
   const studyId = (await getJob(db, lead, job.id))!.studies[0]!.id;
-  for (const key of ["protocol", "site_access", "previous_report"]) {
+  for (const key of ["site_access", "previous_report"]) {
     await setReadiness(db, lead, job.id, { key, state: "ready", note: "" }, req);
   }
-  await autoBook(db, lead, job.id, req);
+  await autoBook(db, lead, job.id, req, { loggers: true });
   await saveLayout(db, engineer, studyId, await layoutTemplate(db, engineer, studyId), req);
   // Placed in the report's order: L-01 is 62281257 … L-09 is 62283563.
   for (const s of SERIALS) await placeLogger(db, engineer, studyId, { code: s }, req);

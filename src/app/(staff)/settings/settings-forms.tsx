@@ -157,7 +157,7 @@ export function NumberFormatsForm({
   return (
     <Section
       title="Number formats"
-      description="Job and certificate numbers are generated from these. Tokens: {YYYY} {YY} {MM} {SITE} {SITE_NAME} {KIND} {SEQ:n}. Numbers restart each year, and each month when the format has {MM}; each kind (PDL, RTD, TC) counts separately when it has {KIND}."
+      description="Job and certificate numbers are generated from these. Tokens: {YYYY} {YY} {MM} {SITE} {SITE_NAME} {KIND} {SEQ:n}. Numbers restart each year. Job numbers count through the year even when they show the month; certificate numbers restart each month when the format has {MM}, and each kind (PDL, RTD, TC) counts separately when it has {KIND}."
     >
       <form action={action} className="grid gap-4 sm:grid-cols-2">
         <div className="flex flex-col gap-1.5">

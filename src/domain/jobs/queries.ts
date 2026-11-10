@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, sql, type SQLWrapper } from "drizzle-orm";
 
 import type { Database } from "@/db/client-factory";
 import {
@@ -14,22 +14,39 @@ import {
   jobStatusHistory,
   jobTeam,
   jobs,
-  rateCards,
+  organisations,
   sites,
+  storedFiles,
   studies,
   users,
 } from "@/db/schema";
 import { assertCan, can } from "@/domain/auth/permissions";
 import { isClientRole, isRole } from "@/domain/auth/roles";
 import type { SessionUser } from "@/domain/auth/session-service";
+import { EQUIPMENT_TYPE_INFO, isEquipmentType } from "@/domain/clients/equipment-types";
 import { dueStatus, nextDueDate, todayInIndia } from "@/domain/clients/requalification";
-import { certificatesOf } from "@/domain/instruments/certificate-service";
+import { INSTRUMENT_TYPE_INFO, type InstrumentType } from "@/domain/instruments/types";
 import { certificateCovering } from "@/domain/instruments/validity";
 
-import { busyInstruments, readinessInputFor } from "./job-service";
+import { contractOptions } from "./contract-service";
+import { renderGatePassList } from "./gate-pass-pdf";
+import { bookedOn, busyInstruments, readinessInputFor } from "./job-service";
 import { jobValue } from "./pricing";
-import { computeReadiness, validThrough } from "./readiness";
-import { HOLDS_INSTRUMENTS, isJobStatus, JOB_STATUSES, type JobStatus } from "./types";
+import { computeReadiness, datesShortfall, validThrough } from "./readiness";
+import {
+  HOLDS_INSTRUMENTS,
+  isJobStatus,
+  JOB_STATUSES,
+  type JobStatus,
+  type OrderType,
+} from "./types";
+
+/**
+ * The client's order hasn't come: no PO/SRF number, or no ARC/AMC picked.
+ * Used by the jobs list, the home page and the reminders.
+ */
+export const orderPendingSql = sql`(case when ${jobs.orderType} in ('arc', 'amc')
+  then ${jobs.contractId} is null else btrim(${jobs.poNumber}) = '' end)`;
 
 export type JobFilter = {
   q?: string;
@@ -37,6 +54,10 @@ export type JobFilter = {
   /** "open" (default), "all", or "finished". */
   scope?: string;
   mine?: boolean;
+  /** Only jobs whose client's order hasn't come. */
+  orderPending?: boolean;
+  /** "newest" (default): the job made last first. "start": by planned start date. */
+  sort?: "newest" | "start";
 };
 
 export type JobListRow = {
@@ -52,6 +73,9 @@ export type JobListRow = {
   siteName: string;
   qaSiteCode: string | null;
   poNumber: string;
+  orderType: string;
+  /** The client's order hasn't come yet. */
+  orderPending: boolean;
   plannedStart: string;
   plannedEnd: string;
   studyCount: number;
@@ -87,6 +111,8 @@ export async function listJobs(
       siteName: clientSites.name,
       qaSiteCode: sites.code,
       poNumber: jobs.poNumber,
+      orderType: jobs.orderType,
+      orderPending: sql<boolean>`${orderPendingSql}`,
       poValue: jobs.poValue,
       plannedStart: jobs.plannedStart,
       plannedEnd: jobs.plannedEnd,
@@ -116,6 +142,9 @@ export async function listJobs(
         filter.mine
           ? sql`exists (select 1 from ${jobTeam} t where t.job_id = ${jobs.id} and t.user_id = ${actor.id})`
           : undefined,
+        filter.orderPending
+          ? and(orderPendingSql, sql`${jobs.status} not in ('closed', 'cancelled')`)
+          : undefined,
         q
           ? sql`(lower(${jobs.number}) like ${like} or lower(${jobs.poNumber}) like ${like}
               or lower(${jobs.title}) like ${like}
@@ -127,7 +156,14 @@ export async function listJobs(
           : undefined,
       ),
     )
-    .orderBy(asc(jobs.plannedStart), desc(jobs.number))
+    // Newest first by default (QA Tech, Nov 2026): the planned dates jumped around and the
+    // job numbers looked shuffled. Job numbers can't be sorted as text (the format changed
+    // from QT/J/2026/… to QT/11/2026/…), so the creation time decides.
+    .orderBy(
+      ...(filter.sort === "start"
+        ? [asc(jobs.plannedStart), asc(jobs.createdAt)]
+        : [desc(jobs.createdAt), desc(jobs.id)]),
+    )
     .limit(500);
   const money = can(actor, "jobs.money");
   return rows.map((r) => ({
@@ -148,7 +184,8 @@ export async function jobCounts(db: Database, actor: SessionUser) {
   return Object.fromEntries(JOB_STATUSES.map((s) => [s, rows.find((r) => r.status === s)?.n ?? 0]));
 }
 
-export async function getJob(db: Database, actor: SessionUser, jobId: string) {
+/** The job with its client and sites, checked against the organisation; null if not found. */
+export async function findJob(db: Database, actor: SessionUser, jobId: string) {
   assertCan(actor, "jobs.view");
   if (!/^[0-9a-f-]{36}$/i.test(jobId)) return null;
   const [row] = await db
@@ -156,6 +193,7 @@ export async function getJob(db: Database, actor: SessionUser, jobId: string) {
       job: jobs,
       companyName: clientCompanies.name,
       companyCode: clientCompanies.code,
+      terms: clientCompanies.paymentTermsDays,
       siteName: clientSites.name,
       siteCode: clientSites.code,
       qaSiteName: sites.name,
@@ -168,60 +206,121 @@ export async function getJob(db: Database, actor: SessionUser, jobId: string) {
     .leftJoin(sites, eq(sites.id, jobs.siteId))
     .leftJoin(users, eq(users.id, jobs.createdByUserId))
     .where(and(eq(jobs.id, jobId), eq(jobs.organisationId, actor.organisationId)));
-  if (!row) return null;
+  return row ?? null;
+}
+export type JobRow = NonNullable<Awaited<ReturnType<typeof findJob>>>;
+
+export async function getJob(db: Database, actor: SessionUser, jobId: string) {
+  const row = await findJob(db, actor, jobId);
+  return row ? jobDetail(db, actor, row) : null;
+}
+
+/**
+ * Everything the job page shows about a job found by findJob, in one round
+ * (ADR 0018). The page reads the job first, then this beside the money and
+ * the booking choices.
+ */
+export async function jobDetail(db: Database, actor: SessionUser, row: JobRow) {
+  assertCan(actor, "jobs.view");
   const { job } = row;
 
-  const studyRows = await db
-    .select({
-      study: studies,
-      code: equipment.code,
-      name: equipment.name,
-      type: equipment.type,
-      lastStudyOn: equipment.lastStudyOn,
-      department: clientDepartments.name,
-    })
-    .from(studies)
-    .innerJoin(equipment, eq(equipment.id, studies.equipmentId))
-    .leftJoin(clientDepartments, eq(clientDepartments.id, equipment.departmentId))
-    .where(eq(studies.jobId, job.id))
-    .orderBy(asc(studies.position));
+  // The job is checked against the organisation above; the rest goes out in one round:
+  // reads that need the booked instruments or the team take them as subqueries.
+  const holds = HOLDS_INSTRUMENTS.includes(job.status as JobStatus);
+  const [
+    studyRows,
+    team,
+    bookedRows,
+    readinessInput,
+    history,
+    [orderFile],
+    contracts,
+    busy,
+    teamClashes,
+  ] = await Promise.all([
+    db
+      .select({
+        study: studies,
+        code: equipment.code,
+        name: equipment.name,
+        type: equipment.type,
+        lastStudyOn: equipment.lastStudyOn,
+        department: clientDepartments.name,
+      })
+      .from(studies)
+      .innerJoin(equipment, eq(equipment.id, studies.equipmentId))
+      .leftJoin(clientDepartments, eq(clientDepartments.id, equipment.departmentId))
+      .where(eq(studies.jobId, job.id))
+      .orderBy(asc(studies.position)),
+    db
+      .select({
+        userId: jobTeam.userId,
+        role: jobTeam.role,
+        name: users.name,
+        email: users.email,
+      })
+      .from(jobTeam)
+      .innerJoin(users, eq(users.id, jobTeam.userId))
+      .where(eq(jobTeam.jobId, job.id))
+      .orderBy(asc(users.name)),
+    db
+      .select({
+        id: instruments.id,
+        code: instruments.code,
+        serialNo: instruments.serialNo,
+        type: instruments.type,
+        tier: instruments.tier,
+        status: instruments.status,
+        model: sql<string>`coalesce(${instrumentModels.make} || ' ' || ${instrumentModels.model}, trim(${instruments.make} || ' ' || ${instruments.model}))`,
+        bookedAt: jobInstruments.bookedAt,
+      })
+      .from(jobInstruments)
+      .innerJoin(instruments, eq(instruments.id, jobInstruments.instrumentId))
+      .leftJoin(instrumentModels, eq(instrumentModels.id, instruments.modelId))
+      .where(eq(jobInstruments.jobId, job.id))
+      .orderBy(asc(instruments.tier), asc(instruments.code)),
+    readinessInputFor(db, actor.organisationId, job),
+    db
+      .select({
+        id: jobStatusHistory.id,
+        fromStatus: jobStatusHistory.fromStatus,
+        toStatus: jobStatusHistory.toStatus,
+        reason: jobStatusHistory.reason,
+        at: jobStatusHistory.at,
+        by: users.name,
+      })
+      .from(jobStatusHistory)
+      .leftJoin(users, eq(users.id, jobStatusHistory.byUserId))
+      .where(eq(jobStatusHistory.jobId, job.id))
+      .orderBy(asc(jobStatusHistory.at)),
+    job.orderFileId
+      ? db
+          .select({ name: storedFiles.firstFileName })
+          .from(storedFiles)
+          .where(
+            and(
+              eq(storedFiles.id, job.orderFileId),
+              eq(storedFiles.organisationId, actor.organisationId),
+            ),
+          )
+      : Promise.resolve([]),
+    // The client's ARCs and AMCs, to pick on the job.
+    contractOptions(db, actor, job.companyId),
+    holds
+      ? busyInstruments(db, actor.organisationId, job, bookedOn(db, job.id))
+      : Promise.resolve(new Map<string, string[]>()),
+    peopleClashes(
+      db,
+      actor.organisationId,
+      job,
+      db.select({ id: jobTeam.userId }).from(jobTeam).where(eq(jobTeam.jobId, job.id)),
+    ),
+  ]);
 
-  const team = await db
-    .select({ userId: jobTeam.userId, role: jobTeam.role, name: users.name, email: users.email })
-    .from(jobTeam)
-    .innerJoin(users, eq(users.id, jobTeam.userId))
-    .where(eq(jobTeam.jobId, job.id))
-    .orderBy(asc(users.name));
-
-  const bookedRows = await db
-    .select({
-      id: instruments.id,
-      code: instruments.code,
-      serialNo: instruments.serialNo,
-      type: instruments.type,
-      tier: instruments.tier,
-      status: instruments.status,
-      model: sql<string>`coalesce(${instrumentModels.make} || ' ' || ${instrumentModels.model}, trim(${instruments.make} || ' ' || ${instruments.model}))`,
-      bookedAt: jobInstruments.bookedAt,
-    })
-    .from(jobInstruments)
-    .innerJoin(instruments, eq(instruments.id, jobInstruments.instrumentId))
-    .leftJoin(instrumentModels, eq(instrumentModels.id, instruments.modelId))
-    .where(eq(jobInstruments.jobId, job.id))
-    .orderBy(asc(instruments.tier), asc(instruments.code));
-  const certs = await certificatesOf(
-    db,
-    actor.organisationId,
-    bookedRows.map((b) => b.id),
+  // The readiness read already has each booked instrument's certificates.
+  const certs = new Map(
+    readinessInput.booked.map((b, i) => [readinessInput.bookedIds[i]!, b.certificates]),
   );
-  const busy = HOLDS_INSTRUMENTS.includes(job.status as JobStatus)
-    ? await busyInstruments(
-        db,
-        actor.organisationId,
-        job,
-        bookedRows.map((b) => b.id),
-      )
-    : new Map<string, string[]>();
   const booked = bookedRows.map((b) => {
     const list = certs.get(b.id) ?? [];
     const valid = validThrough({ ...b, certificates: list }, job.plannedStart, job.plannedEnd);
@@ -233,33 +332,12 @@ export async function getJob(db: Database, actor: SessionUser, jobId: string) {
     };
   });
 
-  const readiness = computeReadiness(await readinessInputFor(db, actor.organisationId, job));
-
-  const history = await db
-    .select({
-      id: jobStatusHistory.id,
-      fromStatus: jobStatusHistory.fromStatus,
-      toStatus: jobStatusHistory.toStatus,
-      reason: jobStatusHistory.reason,
-      at: jobStatusHistory.at,
-      by: users.name,
-    })
-    .from(jobStatusHistory)
-    .leftJoin(users, eq(users.id, jobStatusHistory.byUserId))
-    .where(eq(jobStatusHistory.jobId, job.id))
-    .orderBy(asc(jobStatusHistory.at));
-
-  const teamClashes = await peopleClashes(
-    db,
-    actor.organisationId,
-    job,
-    team.map((t) => t.userId),
-  );
+  const readiness = computeReadiness(readinessInput);
+  const datesWarning = datesShortfall(readinessInput);
 
   const money = can(actor, "jobs.money");
   const value = money
     ? jobValue({
-        studyPrices: studyRows.map((s) => (s.study.price === null ? null : Number(s.study.price))),
         quotedValue: job.quotedValue === null ? null : Number(job.quotedValue),
         poValue: job.poValue === null ? null : Number(job.poValue),
       })
@@ -267,6 +345,11 @@ export async function getJob(db: Database, actor: SessionUser, jobId: string) {
 
   return {
     job: money ? job : { ...job, poValue: null, quotedValue: null },
+    /**
+     * What the job page hands on to jobMoney and bookingChoices so they don't read it
+     * again (ADR 0018). Server only: never pass it to a client component.
+     */
+    loaded: { job, terms: row.terms, input: readinessInput },
     status: job.status as JobStatus,
     company: { id: job.companyId, name: row.companyName, code: row.companyCode },
     site: { id: job.clientSiteId, name: row.siteName, code: row.siteCode },
@@ -274,8 +357,6 @@ export async function getJob(db: Database, actor: SessionUser, jobId: string) {
     createdBy: row.createdBy,
     studies: studyRows.map((s) => ({
       ...s.study,
-      price: money ? s.study.price : null,
-      priceNote: money ? s.study.priceNote : "",
       equipment: {
         id: s.study.equipmentId,
         code: s.code,
@@ -289,6 +370,13 @@ export async function getJob(db: Database, actor: SessionUser, jobId: string) {
     teamClashes,
     booked,
     readiness,
+    datesWarning,
+    order: {
+      type: job.orderType as OrderType,
+      contract: contracts.find((c) => c.id === job.contractId) ?? null,
+      file: orderFile ? { name: orderFile.name } : null,
+    },
+    contracts,
     history,
     value,
     canManage: can(actor, "jobs.manage"),
@@ -302,9 +390,10 @@ export async function peopleClashes(
   db: Database,
   organisationId: string,
   job: { id: string; plannedStart: string; plannedEnd: string },
-  userIds: string[],
+  /** Ids, or a subquery of ids such as the job's own team (ADR 0018). */
+  userIds: string[] | SQLWrapper,
 ): Promise<{ userId: string; name: string; jobs: { id: string; number: string }[] }[]> {
-  if (userIds.length === 0) return [];
+  if (Array.isArray(userIds) && userIds.length === 0) return [];
   const rows = await db
     .select({ userId: jobTeam.userId, name: users.name, id: jobs.id, number: jobs.number })
     .from(jobTeam)
@@ -357,31 +446,42 @@ export type WizardClient = {
   name: string;
   code: string;
   sites: { id: string; name: string; code: string }[];
+  /** The client's ARCs and AMCs, to pick as the order. */
+  contracts: { id: string; kind: string; number: string; validFrom: string; validTo: string }[];
 };
 
 export async function clientOptions(db: Database, actor: SessionUser): Promise<WizardClient[]> {
   assertCan(actor, "jobs.view");
-  const rows = await db
-    .select({
-      id: clientCompanies.id,
-      name: clientCompanies.name,
-      code: clientCompanies.code,
-      siteId: clientSites.id,
-      siteName: clientSites.name,
-      siteCode: clientSites.code,
-    })
-    .from(clientCompanies)
-    .leftJoin(clientSites, eq(clientSites.companyId, clientCompanies.id))
-    .where(
-      and(
-        eq(clientCompanies.organisationId, actor.organisationId),
-        eq(clientCompanies.active, true),
-      ),
-    )
-    .orderBy(asc(clientCompanies.name), asc(clientSites.name));
+  const [rows, contracts] = await Promise.all([
+    db
+      .select({
+        id: clientCompanies.id,
+        name: clientCompanies.name,
+        code: clientCompanies.code,
+        siteId: clientSites.id,
+        siteName: clientSites.name,
+        siteCode: clientSites.code,
+      })
+      .from(clientCompanies)
+      .leftJoin(clientSites, eq(clientSites.companyId, clientCompanies.id))
+      .where(
+        and(
+          eq(clientCompanies.organisationId, actor.organisationId),
+          eq(clientCompanies.active, true),
+        ),
+      )
+      .orderBy(asc(clientCompanies.name), asc(clientSites.name)),
+    contractOptions(db, actor),
+  ]);
   const map = new Map<string, WizardClient>();
   for (const r of rows) {
-    const c = map.get(r.id) ?? { id: r.id, name: r.name, code: r.code, sites: [] };
+    const c = map.get(r.id) ?? {
+      id: r.id,
+      name: r.name,
+      code: r.code,
+      sites: [],
+      contracts: contracts.filter((k) => k.companyId === r.id),
+    };
     if (r.siteId) c.sites.push({ id: r.siteId, name: r.siteName!, code: r.siteCode! });
     map.set(r.id, c);
   }
@@ -399,6 +499,10 @@ export type SiteEquipment = {
   due: ReturnType<typeof dueStatus>;
   /** Already on another open job. */
   onJob: { id: string; number: string } | null;
+  /** Pre/post-calibration ticked by default: the client's SOP asks, or thermal validation. */
+  calibration: boolean;
+  /** Thermal validation (autoclave, oven): always has pre- and post-calibration. */
+  thermal: boolean;
 };
 
 /**
@@ -420,6 +524,7 @@ export async function siteEquipment(
       type: equipment.type,
       department: clientDepartments.name,
       lastStudyOn: equipment.lastStudyOn,
+      sop: clientCompanies.postCalRequired,
       months: sql<
         number | null
       >`coalesce(${equipment.requalificationMonths}, ${clientCompanies.requalificationMonths})`,
@@ -456,17 +561,47 @@ export async function siteEquipment(
       nextDue,
       due: dueStatus(nextDue, today),
       onJob: r.onJobId ? { id: r.onJobId, number: r.onJobNumber! } : null,
+      thermal:
+        isEquipmentType(r.type) && EQUIPMENT_TYPE_INFO[r.type].study === "thermal_validation",
+      calibration:
+        r.sop ||
+        (isEquipmentType(r.type) && EQUIPMENT_TYPE_INFO[r.type].study === "thermal_validation"),
     };
   });
 }
 
-// ---------------------------------------------------------------- rate card
-
-export async function listRateCard(db: Database, actor: SessionUser) {
-  assertCan(actor, "jobs.money");
-  return db
-    .select()
-    .from(rateCards)
-    .where(and(eq(rateCards.organisationId, actor.organisationId), eq(rateCards.active, true)))
-    .orderBy(asc(rateCards.workType), asc(rateCards.equipmentType), asc(rateCards.durationHours));
+/** The gate pass list PDF: every booked instrument, for the client's security. */
+export async function gatePassList(db: Database, actor: SessionUser, jobId: string) {
+  const detail = await getJob(db, actor, jobId);
+  if (!detail) return null;
+  const [org] = await db
+    .select({ name: organisations.name })
+    .from(organisations)
+    .where(eq(organisations.id, actor.organisationId));
+  const { job } = detail;
+  const pdf = await renderGatePassList({
+    organisation: org?.name ?? "QA Tech",
+    jobNumber: job.number,
+    gatePass: job.gatePassNumber,
+    client: detail.company.name,
+    site: detail.site.name,
+    from: job.plannedStart,
+    to: job.plannedEnd,
+    team: detail.team.map((t) => t.name),
+    instruments: detail.booked.map((b) => ({
+      code: b.code,
+      serialNo: b.serialNo,
+      model: b.model,
+      kind:
+        b.tier === "master"
+          ? "Master"
+          : (INSTRUMENT_TYPE_INFO[b.type as InstrumentType]?.label ?? b.type.replace(/_/g, " ")),
+      validUntil: b.certificate?.validUntil ?? null,
+    })),
+    printedOn: todayInIndia(),
+  });
+  return {
+    pdf,
+    fileName: `Gate pass list ${job.number.replace(/\//g, "-")}.pdf`,
+  };
 }

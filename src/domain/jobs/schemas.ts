@@ -1,12 +1,12 @@
 /**
- * Validation for jobs, studies, readiness and the rate card, on the server.
+ * Validation for jobs, studies and readiness, on the server.
  */
 import { z } from "zod";
 
-import { cyclesSchema } from "@/domain/clients/schemas";
+import { cyclesSchema, yesNo } from "@/domain/clients/schemas";
 import { isoDate, optionalIsoDate, type Loose } from "@/domain/instruments/schemas";
 
-import { RATE_BASES, READINESS_ITEMS, SEASONS, WORK_TYPES } from "./types";
+import { CONTRACT_TYPES, ORDER_TYPES, READINESS_ITEMS, SEASONS, WORK_TYPES } from "./types";
 
 const bounded = (max: number) => z.string().trim().max(max, `Use at most ${max} characters.`);
 const text = (max: number) => bounded(max).default("");
@@ -96,12 +96,19 @@ const dates = <T extends { plannedStart: string; plannedEnd: string }>(
   }
 };
 
+/** The client's order: a PO or SRF of its own, or an ARC/AMC on the client that covers the job. */
+const orderFields = {
+  orderType: z.enum(ORDER_TYPES, { message: "Pick PO, SRF, ARC or AMC." }).default("po"),
+  poNumber: text(60),
+  poDate: optionalIsoDate,
+  poValue: money("Order value"),
+  contractId: z.preprocess(blankToNull, uuid("Pick the contract.").nullable()).default(null),
+};
+
 const headerFields = {
   siteId: z.preprocess(blankToNull, uuid("Pick a QA Tech site.").nullable()),
   title: text(160),
-  poNumber: text(60),
-  poDate: optionalIsoDate,
-  poValue: money("PO value"),
+  ...orderFields,
   quotedValue: money("Quoted value"),
   plannedStart: isoDate,
   plannedEnd: isoDate,
@@ -114,6 +121,9 @@ export const studyOptionsSchema = z.object({
   loggerCount: optionalInt("Loggers", 0, 500).optional(),
   cycles: cyclesSchema.optional(),
   season: z.enum(SEASONS).optional(),
+  /** Yes/no per study; the client's SOP decides when left out. */
+  preCal: yesNo.optional(),
+  postCal: yesNo.optional(),
 });
 
 export const jobSchema = z
@@ -131,6 +141,35 @@ export const jobSchema = z
 export type JobInput = Loose<z.input<typeof jobSchema>>;
 
 export const jobHeaderSchema = z.object(headerFields).superRefine(dates);
+
+/** Recording the order when it comes, after the job was made; the copy is optional. */
+export const orderSchema = z.object({
+  ...orderFields,
+  fileId: z.preprocess(blankToNull, uuid("Upload the copy again.").nullable()).default(null),
+});
+export type OrderInput = Loose<z.input<typeof orderSchema>>;
+
+/** An ARC or AMC on a client. */
+export const contractSchema = z
+  .object({
+    kind: z.enum(CONTRACT_TYPES, { message: "Pick ARC or AMC." }),
+    number: bounded(60).min(1, "Enter the contract number."),
+    validFrom: isoDate,
+    validTo: isoDate,
+    value: money("Contract value"),
+    fileId: z.preprocess(blankToNull, uuid("Upload the copy again.").nullable()).default(null),
+    notes: text(500),
+  })
+  .superRefine((v, ctx) => {
+    if (v.validTo < v.validFrom) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["validTo"],
+        message: "The contract can't end before it starts.",
+      });
+    }
+  });
+export type ContractInput = Loose<z.input<typeof contractSchema>>;
 export type JobHeaderInput = Loose<z.input<typeof jobHeaderSchema>>;
 
 export const studyEditSchema = z.object({
@@ -144,6 +183,8 @@ export const studyEditSchema = z.object({
   season: z.enum(SEASONS).default(""),
   durationHours: optionalInt("Duration", 1, 2000),
   intervalMinutes: optionalInt("Interval", 1, 1440),
+  preCalRequired: yesNo,
+  postCalRequired: yesNo,
 });
 export type StudyEditInput = Loose<z.input<typeof studyEditSchema>>;
 
@@ -154,13 +195,3 @@ export const readinessSchema = z.object({
 });
 
 export const teamInputSchema = teamSchema;
-
-export const rateLineSchema = z.object({
-  workType: z.enum(WORK_TYPES, { message: "Pick the work." }),
-  equipmentType: text(40),
-  durationHours: optionalInt("Duration", 1, 2000),
-  basis: z.enum(RATE_BASES, { message: "Pick how it is charged." }),
-  price: money("Price").refine((v) => v !== null, "Enter the price."),
-  notes: text(300),
-});
-export type RateLineInput = Loose<z.input<typeof rateLineSchema>>;

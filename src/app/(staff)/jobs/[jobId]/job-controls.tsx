@@ -1,6 +1,6 @@
 "use client";
 
-import { ClipboardPaste, Pencil, Plus, Trash2, Wand2, X } from "lucide-react";
+import { Pencil, Plus, Trash2, Wand2, X } from "lucide-react";
 import Link from "next/link";
 import { startTransition, useActionState, useState, type FormEvent, type ReactNode } from "react";
 
@@ -16,7 +16,9 @@ import {
 } from "@/components/ui/form-kit";
 import { STUDY_CYCLE_LABELS, STUDY_CYCLES } from "@/domain/clients/study-defaults";
 import type { SiteEquipment } from "@/domain/jobs/queries";
-import { TEAM_ROLE_LABELS, TEAM_ROLES } from "@/domain/jobs/schemas";
+
+import { OrderFields, type ContractOption } from "../order-fields";
+import { TEAM_ROLE_LABELS, TEAM_ROLES } from "@/domain/jobs/types";
 import {
   SEASONS,
   TRANSITIONS,
@@ -31,11 +33,9 @@ import { cn } from "@/lib/utils";
 import {
   addStudiesAction,
   autoBookAction,
-  bookByCodesAction,
   changeStatusAction,
   releaseAction,
   removeStudyAction,
-  repriceAction,
   setReadinessAction,
   setTeamAction,
   updateJobAction,
@@ -179,10 +179,11 @@ function ReasonForm({
 export type JobFormValues = {
   siteId: string;
   title: string;
+  orderType: string;
+  contractId: string;
   poNumber: string;
   poDate: string;
   poValue: string;
-  quotedValue: string;
   plannedStart: string;
   plannedEnd: string;
   notes: string;
@@ -193,11 +194,13 @@ export function EditJobButton({
   values,
   qaSites,
   canSeeMoney,
+  contracts,
 }: {
   jobId: string;
   values: JobFormValues;
   qaSites: { id: string; code: string; name: string }[];
   canSeeMoney: boolean;
+  contracts: ContractOption[];
 }) {
   return (
     <FormDialog
@@ -215,6 +218,7 @@ export function EditJobButton({
           values={values}
           qaSites={qaSites}
           canSeeMoney={canSeeMoney}
+          contracts={contracts}
           close={close}
         />
       )}
@@ -227,12 +231,14 @@ function EditJobForm({
   values,
   qaSites,
   canSeeMoney,
+  contracts,
   close,
 }: {
   jobId: string;
   values: JobFormValues;
   qaSites: { id: string; code: string; name: string }[];
   canSeeMoney: boolean;
+  contracts: ContractOption[];
   close: () => void;
 }) {
   const { result, pending, onSubmit } = useFormAction(updateJobAction);
@@ -261,40 +267,15 @@ function EditJobForm({
           defaultValue={values.plannedEnd}
           result={result}
         />
-        <TextField
-          name="poNumber"
-          label="PO number"
-          defaultValue={values.poNumber}
-          result={result}
-          autoComplete="off"
-        />
-        <TextField
-          name="poDate"
-          label="PO date"
-          type="date"
-          defaultValue={values.poDate}
-          result={result}
-        />
-        {canSeeMoney ? (
-          <>
-            <TextField
-              name="poValue"
-              label="PO value (before GST)"
-              suffix="₹"
-              inputMode="decimal"
-              defaultValue={values.poValue}
-              result={result}
-            />
-            <TextField
-              name="quotedValue"
-              label="Custom quote"
-              suffix="₹"
-              inputMode="decimal"
-              defaultValue={values.quotedValue}
-              result={result}
-            />
-          </>
-        ) : null}
+        <div className="sm:col-span-2">
+          <OrderFields
+            contracts={contracts}
+            result={result}
+            canSeeMoney={canSeeMoney}
+            values={values}
+            start={values.plannedStart}
+          />
+        </div>
         <SelectField
           name="siteId"
           label="QA Tech site"
@@ -393,6 +374,8 @@ export type StudyValues = {
   season: string;
   durationHours: number | null;
   intervalMinutes: number | null;
+  preCalRequired: boolean;
+  postCalRequired: boolean;
 };
 
 export function EditStudyButton({ jobId, study }: { jobId: string; study: StudyValues }) {
@@ -481,6 +464,22 @@ function EditStudyForm({
           </option>
         ))}
       </SelectField>
+      <fieldset className="flex flex-col gap-2">
+        <legend className="mb-1 text-sm font-medium">Calibration of the loggers</legend>
+        <CheckboxField
+          name="preCalRequired"
+          label="Pre-calibration (before the study)"
+          defaultChecked={study.preCalRequired || study.workType === "thermal_validation"}
+        />
+        <CheckboxField
+          name="postCalRequired"
+          label="Post-calibration (after the study)"
+          defaultChecked={study.postCalRequired || study.workType === "thermal_validation"}
+        />
+        <p className="text-xs text-muted-foreground">
+          Thermal validation always has both, whatever is ticked here.
+        </p>
+      </fieldset>
       <FormMessage result={result} />
       <Button type="submit" disabled={pending}>
         {pending ? "Saving…" : "Save"}
@@ -757,70 +756,6 @@ export function AutoBookButton({ jobId, label }: { jobId: string; label: string 
   );
 }
 
-export function PasteBookButton({ jobId }: { jobId: string }) {
-  return (
-    <FormDialog
-      trigger={(open) => (
-        <Button variant="secondary" size="sm" onClick={open}>
-          <ClipboardPaste aria-hidden="true" />
-          Add by ID or serial
-        </Button>
-      )}
-    >
-      {() => <PasteBookForm jobId={jobId} />}
-    </FormDialog>
-  );
-}
-
-function PasteBookForm({ jobId }: { jobId: string }) {
-  const { result, pending, onSubmit } = useFormAction(bookByCodesAction);
-  return (
-    <form onSubmit={onSubmit} className="flex flex-col gap-4">
-      <DialogTitle>Add loggers by ID or serial</DialogTitle>
-      <DialogDescription>
-        Paste from Excel or type them, one per line or separated by commas. Loggers out of date for
-        the study or on another job are refused.
-      </DialogDescription>
-      <Hidden fields={{ jobId }} />
-      <TextField
-        name="codes"
-        label="IDs or serial numbers"
-        multiline
-        required
-        result={result}
-        autoFocus
-      />
-      {result?.ok ? (
-        <div
-          role="status"
-          className="flex flex-col gap-1 rounded-md bg-surface-muted px-3 py-2 text-sm"
-        >
-          {result.data.booked.length > 0 ? (
-            <p className="text-pass">Booked: {result.data.booked.join(", ")}</p>
-          ) : null}
-          {result.data.refused.map((r) => (
-            <p key={r.code} className="text-fail">
-              {r.code}: {r.reason}
-            </p>
-          ))}
-          {result.data.notFound.length > 0 ? (
-            <p className="text-attention">Not in the register: {result.data.notFound.join(", ")}</p>
-          ) : null}
-          {result.data.booked.length + result.data.refused.length + result.data.notFound.length ===
-          0 ? (
-            <p>Already on this job.</p>
-          ) : null}
-        </div>
-      ) : (
-        <FormMessage result={result} />
-      )}
-      <Button type="submit" disabled={pending}>
-        {pending ? "Booking…" : "Book"}
-      </Button>
-    </form>
-  );
-}
-
 export function ReleaseButton({
   jobId,
   instrumentId,
@@ -844,30 +779,6 @@ export function ReleaseButton({
       >
         <X aria-hidden="true" />
       </Button>
-    </form>
-  );
-}
-
-export function RepriceButton({ jobId }: { jobId: string }) {
-  const { result, pending, onSubmit } = useFormAction(repriceAction);
-  return (
-    <form onSubmit={onSubmit} className="flex flex-col items-start gap-1">
-      <Hidden fields={{ jobId }} />
-      <Button type="submit" variant="link" size="sm" disabled={pending}>
-        {pending ? "Pricing…" : "Price from rate card"}
-      </Button>
-      {result?.ok ? (
-        <p role="status" className="text-xs text-muted-foreground">
-          {result.data.changed === 0
-            ? "Prices already match the rate card."
-            : `${result.data.changed} price${result.data.changed === 1 ? "" : "s"} updated.`}
-          {result.data.unpriced > 0 ? ` ${result.data.unpriced} still without a rate.` : ""}
-        </p>
-      ) : result ? (
-        <p role="alert" className="text-xs text-fail">
-          {result.error}
-        </p>
-      ) : null}
     </form>
   );
 }

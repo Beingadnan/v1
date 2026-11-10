@@ -4,6 +4,7 @@ import { and, asc, eq, inArray } from "drizzle-orm";
 import { PDFDocument } from "pdf-lib";
 
 import type { Database, Transaction } from "@/db/client-factory";
+import { mappedNoun } from "@/domain/clients/equipment-types";
 import {
   certificateMasters,
   certificates,
@@ -42,6 +43,8 @@ import { WORK_TYPE_LABELS, type WorkType } from "@/domain/jobs/types";
 import type { BlobStore } from "@/lib/storage/blob-store";
 
 import { renderReport, type ReportData } from "./report-pdf";
+import { overridesOf } from "@/domain/field/override-service";
+
 import { conclusionText, observationText, type TemplateInput } from "./templates";
 
 type Exec = Database | Transaction;
@@ -102,6 +105,7 @@ export async function reportContext(db: Exec, actor: SessionUser, study: Study, 
       y: studyPositions.y,
       z: studyPositions.z,
       ambient: studyPositions.ambient,
+      note: studyPositions.note,
       instrumentId: studyPositions.instrumentId,
       inst: instruments,
       model: instrumentModels,
@@ -204,6 +208,8 @@ export async function reportContext(db: Exec, actor: SessionUser, study: Study, 
     )
     .where(and(eq(studyPrecal.studyId, study.id), eq(studyPrecal.phase, "post")))
     .orderBy(asc(studyPositions.label), asc(studyPrecal.at));
+  // Approved overrides of a post-calibration result: printed beside the computed one.
+  const overrides = (await overridesOf(db, study.id)).filter((o) => o.status === "approved");
 
   const template: TemplateInput = {
     equipmentName: row.equipment.name,
@@ -243,6 +249,7 @@ export async function reportContext(db: Exec, actor: SessionUser, study: Study, 
     devs,
     impacts,
     post,
+    overrides,
     start,
     end,
   };
@@ -295,6 +302,8 @@ export async function reportData(
       model: row.equipment.model,
       serialNo: row.equipment.serialNo,
       department: (await departmentName(db, row.equipment.departmentId)) ?? "",
+      noun: mappedNoun(row.equipment.type),
+      plan: row.equipment.type === "room",
       dims: {
         lengthM: n(row.equipment.lengthM),
         widthM: n(row.equipment.widthM),
@@ -325,7 +334,9 @@ export async function reportData(
       z: Number(p.z),
       ambient: p.ambient,
       serial: p.inst ? p.inst.serialNo || p.inst.code : "",
+      note: p.note,
     })),
+    planFeatures: study.planFeatures,
     loggers: ctx.loggers,
     masters: ctx.masters.map((m) => ({
       name: m.inst.equipmentName || m.inst.code,
@@ -352,7 +363,19 @@ export async function reportData(
       reading: x.p.reading.replace(/\.?0+$/, ""),
       deviation: x.p.deviation.replace(/\.?0+$/, "") || "0",
       tolerance: x.p.tolerance.replace(/\.?0+$/, ""),
-      result: x.p.result,
+      result: ctx.overrides.find((o) => o.precalId === x.p.id)?.toResult ?? x.p.result,
+      override: (() => {
+        const o = ctx.overrides.find((y) => y.precalId === x.p.id);
+        return o
+          ? {
+              computed: o.fromResult,
+              reason: o.reason,
+              requestedBy: o.requestedBy,
+              approvedBy: o.decidedBy ?? "",
+              on: o.decidedAt ? isoDay(o.decidedAt.getTime()).split("-").reverse().join(".") : "",
+            }
+          : null;
+      })(),
     })),
     deviations: ctx.devs.map(({ d, assessedBy }) => {
       const impact = ctx.impacts

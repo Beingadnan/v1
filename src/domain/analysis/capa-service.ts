@@ -233,64 +233,74 @@ export async function deviationRegister(
 ) {
   assertCan(actor, "jobs.view");
   const today = todayIst();
-  const rows = await db
-    .select({
-      d: deviations,
-      code: equipment.code,
-      studyId: studies.id,
-      jobNumber: jobs.number,
-      company: clientCompanies.name,
-    })
-    .from(deviations)
-    .innerJoin(studies, eq(studies.id, deviations.studyId))
-    .innerJoin(jobs, eq(jobs.id, studies.jobId))
-    .innerJoin(equipment, eq(equipment.id, studies.equipmentId))
-    .innerJoin(clientCompanies, eq(clientCompanies.id, jobs.companyId))
-    .where(
-      and(
-        eq(deviations.organisationId, actor.organisationId),
-        ne(jobs.status, "cancelled"),
-        filter.show === "all" ? undefined : sql`${deviations.closedAt} is null`,
-      ),
-    )
-    .orderBy(asc(deviations.openedAt))
-    .limit(500);
-  const ids = rows.map((r) => r.d.id);
-  const list: (Capa & { owner: string })[] = ids.length
-    ? (
-        await db
-          .select({ c: capas, owner: users.name })
-          .from(capas)
-          .innerJoin(users, eq(users.id, capas.ownerUserId))
-          .where(inArray(capas.deviationId, ids))
-          .orderBy(asc(capas.dueOn))
-      ).map((x) => ({ ...x.c, owner: x.owner }))
-    : [];
-  const openCapas = await db
-    .select({
-      c: capas,
-      owner: users.name,
-      number: deviations.number,
-      studyId: deviations.studyId,
-    })
-    .from(capas)
-    .innerJoin(users, eq(users.id, capas.ownerUserId))
-    .innerJoin(deviations, eq(deviations.id, capas.deviationId))
-    .where(and(eq(capas.organisationId, actor.organisationId), ne(capas.status, "verified")))
-    .orderBy(asc(capas.dueOn));
-  const staff = can(actor, "deviation.manage")
-    ? await db
-        .select({ id: users.id, name: users.name })
-        .from(users)
-        .where(
-          and(
-            eq(users.organisationId, actor.organisationId),
-            eq(users.status, "active"),
-            sql`${users.role} not like 'client_%'`,
-          ),
-        )
-        .orderBy(asc(users.name))
-    : [];
+  // The register's own filter, shared with its CAPAs' subquery so both go out together.
+  const inRegister = and(
+    eq(deviations.organisationId, actor.organisationId),
+    ne(jobs.status, "cancelled"),
+    filter.show === "all" ? undefined : sql`${deviations.closedAt} is null`,
+  );
+  const [rows, openCapas, staff, list] = await Promise.all([
+    db
+      .select({
+        d: deviations,
+        code: equipment.code,
+        studyId: studies.id,
+        jobNumber: jobs.number,
+        company: clientCompanies.name,
+      })
+      .from(deviations)
+      .innerJoin(studies, eq(studies.id, deviations.studyId))
+      .innerJoin(jobs, eq(jobs.id, studies.jobId))
+      .innerJoin(equipment, eq(equipment.id, studies.equipmentId))
+      .innerJoin(clientCompanies, eq(clientCompanies.id, jobs.companyId))
+      .where(inRegister)
+      .orderBy(asc(deviations.openedAt))
+      .limit(500),
+    db
+      .select({
+        c: capas,
+        owner: users.name,
+        number: deviations.number,
+        studyId: deviations.studyId,
+      })
+      .from(capas)
+      .innerJoin(users, eq(users.id, capas.ownerUserId))
+      .innerJoin(deviations, eq(deviations.id, capas.deviationId))
+      .where(and(eq(capas.organisationId, actor.organisationId), ne(capas.status, "verified")))
+      .orderBy(asc(capas.dueOn)),
+    can(actor, "deviation.manage")
+      ? db
+          .select({ id: users.id, name: users.name })
+          .from(users)
+          .where(
+            and(
+              eq(users.organisationId, actor.organisationId),
+              eq(users.status, "active"),
+              sql`${users.role} not like 'client_%'`,
+            ),
+          )
+          .orderBy(asc(users.name))
+      : Promise.resolve([]),
+    db
+      .select({ c: capas, owner: users.name })
+      .from(capas)
+      .innerJoin(users, eq(users.id, capas.ownerUserId))
+      .where(
+        inArray(
+          capas.deviationId,
+          db
+            .select({ id: deviations.id })
+            .from(deviations)
+            .innerJoin(studies, eq(studies.id, deviations.studyId))
+            .innerJoin(jobs, eq(jobs.id, studies.jobId))
+            .where(inRegister)
+            .orderBy(asc(deviations.openedAt))
+            .limit(500),
+        ),
+      )
+      .orderBy(asc(capas.dueOn))
+      .then((r): (Capa & { owner: string })[] => r.map((x) => ({ ...x.c, owner: x.owner }))),
+  ]);
   return {
     today,
     deviations: rows.map(({ d, ...r }) => ({

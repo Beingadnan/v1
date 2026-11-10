@@ -9,6 +9,7 @@ import { newId } from "@/lib/uuid";
 import { cn } from "@/lib/utils";
 
 import { useOutbox, type Outcome } from "../outbox";
+import { ResultWithOverride, type OverrideView } from "./override-controls";
 
 type Row = {
   id: string;
@@ -18,6 +19,8 @@ type Row = {
   deviation: string;
   tolerance: string;
   result: string;
+  /** The readings' own result, before any override. */
+  computed: string;
   quantity: string;
 };
 
@@ -39,6 +42,10 @@ export function PrecalPanel({
   readOnly,
   phase = "pre",
   waiting = [],
+  overrides = [],
+  me = "",
+  canAsk = false,
+  canDecide = false,
 }: {
   studyId: string;
   masters: { id: string; code: string }[];
@@ -48,6 +55,11 @@ export function PrecalPanel({
   phase?: "pre" | "post";
   /** Post-cal: loggers used on the study not yet checked (tap to fill in). */
   waiting?: { code: string; label: string }[];
+  /** Overrides of a result, asked for and decided (QA Tech, Nov 2026). */
+  overrides?: OverrideView[];
+  me?: string;
+  canAsk?: boolean;
+  canDecide?: boolean;
 }) {
   const post = phase === "post";
   const router = useRouter();
@@ -128,7 +140,7 @@ export function PrecalPanel({
             ? "Check each logger used against a master now that the study is over (FT-02). The analysis can't be approved until every logger is done. A logger that fails opens a deviation by itself."
             : "Optional for this study. A logger that fails opens a deviation by itself."
           : needed
-            ? "This study needs each logger checked against a master before use (thermal validation, or the client asks for post-calibration)."
+            ? "Check each logger against a master before it is placed (FT-01). A logger that fails can't be placed, unless a team leader or manager approves an override."
             : "Optional for this study. A logger that fails here can't be placed."}
       </p>
       {post && waiting.length > 0 ? (
@@ -243,7 +255,14 @@ export function PrecalPanel({
         <p className="text-xs text-attention">{queued.length} waiting to send.</p>
       ) : null}
       {rows.length > 0 ? (
-        <table className="w-full text-sm">
+        <table className="w-full table-fixed text-sm">
+          <colgroup>
+            <col className="w-[22%]" />
+            <col className="w-[13%]" />
+            <col className="w-[13%]" />
+            <col className="w-[16%]" />
+            <col />
+          </colgroup>
           <thead>
             <tr className="text-left text-xs text-muted-foreground">
               <th className="py-1">Logger</th>
@@ -263,12 +282,17 @@ export function PrecalPanel({
                   {trim(r.deviation)}{" "}
                   <span className="text-xs text-muted-foreground">±{trim(r.tolerance)}</span>
                 </td>
-                <td
-                  className={
-                    r.result === "pass" ? "font-medium text-pass" : "font-medium text-fail"
-                  }
-                >
-                  {r.result === "pass" ? "Pass" : "Fail"}
+                <td className="py-1.5">
+                  <ResultWithOverride
+                    studyId={studyId}
+                    precalId={r.id}
+                    result={r.result}
+                    computed={r.computed}
+                    overrides={overrides}
+                    me={me}
+                    canAsk={canAsk}
+                    canDecide={canDecide}
+                  />
                 </td>
               </tr>
             ))}

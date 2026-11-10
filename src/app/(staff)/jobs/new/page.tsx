@@ -24,10 +24,14 @@ export default async function NewJobPage({ searchParams }: PageProps<"/jobs/new"
   const actor = await requirePermission("jobs.manage");
   const params = await searchParams;
   const one = (v: string | string[] | undefined) => (typeof v === "string" ? v : "");
-  const [clients, staff, qaSites] = await Promise.all([
+  // The site named in the link: its equipment is read alongside (it checks the organisation
+  // itself) and used only if the site turns out to belong to the client.
+  const askedSite = one(params.site);
+  const [clients, staff, qaSites, askedEquipment] = await Promise.all([
     clientOptions(db, actor),
     staffOptions(db, actor),
     qaSiteOptions(db, actor),
+    askedSite ? siteEquipment(db, actor, askedSite) : Promise.resolve(null),
   ]);
   // Arriving from the due list or a client page: client, site and equipment filled in.
   let companyId = one(params.company);
@@ -36,7 +40,11 @@ export default async function NewJobPage({ searchParams }: PageProps<"/jobs/new"
   if (!company) companyId = "";
   if (!company?.sites.some((s) => s.id === siteId))
     siteId = company?.sites.length === 1 ? company.sites[0]!.id : "";
-  const equipment = siteId ? await siteEquipment(db, actor, siteId) : [];
+  const equipment = !siteId
+    ? []
+    : siteId === askedSite && askedEquipment
+      ? askedEquipment
+      : await siteEquipment(db, actor, siteId);
   const preselected = one(params.equipment).split(",").filter(Boolean);
 
   return (

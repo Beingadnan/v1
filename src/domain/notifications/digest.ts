@@ -10,14 +10,17 @@ import { billingOverview } from "@/domain/billing/queries";
 import type { EmailSender } from "@/lib/mail/mailer";
 
 import { sendDigests, sendPending } from "./notify";
+import { sendReminders } from "./reminders";
 
 const inr = (v: number) => `₹${Math.round(v).toLocaleString("en-IN")}`;
 
 /**
- * The daily run: alert emails still waiting, then one digest per person.
- * Accounts and managers also get the overdue invoices and invoices due.
+ * The daily run: the reminders (order pending, invoice pending, contract
+ * ending), alert emails still waiting, then one digest per person. Accounts
+ * and managers also get the overdue invoices and invoices due.
  */
 export async function dailyDigest(db: Database, sender: EmailSender, appUrl: string) {
+  const reminders = await sendReminders(db);
   const pending = await sendPending(db, sender, appUrl, 500);
   const digests = await sendDigests(db, sender, appUrl, async (u) => {
     const [row] = await db.select().from(users).where(eq(users.id, u.id));
@@ -40,5 +43,5 @@ export async function dailyDigest(db: Database, sender: EmailSender, appUrl: str
     }
     return out;
   });
-  return { pending, digests, emailConfigured: sender.configured };
+  return { reminders, pending, digests, emailConfigured: sender.configured };
 }

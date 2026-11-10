@@ -492,6 +492,23 @@ describe("number allocation", () => {
     expect(values[24]).toBe("QT/J/2026/0025");
   });
 
+  it("counts job numbers through the year while showing the month", async () => {
+    const at = (d: string) =>
+      db.transaction((tx) =>
+        allocateNumber(tx, {
+          organisationId: orgId,
+          kind: "job",
+          format: "QT/{MM}/{YYYY}/{SEQ:4}",
+          date: new Date(d),
+        }),
+      );
+    // 25 numbers were taken in October 2026 above, in the same yearly counter.
+    expect((await at("2026-11-05T10:00:00+05:30")).number).toBe("QT/11/2026/0026");
+    expect((await at("2026-12-01T10:00:00+05:30")).number).toBe("QT/12/2026/0027");
+    expect((await at("2027-01-02T10:00:00+05:30")).number).toBe("QT/01/2027/0001");
+    // Certificates still restart every month (tested below).
+  });
+
   it("keeps a separate sequence per site and gives a rolled-back number back", async () => {
     const date = new Date("2026-10-28T10:00:00+05:30");
     const format = "CERT-{SITE}-{YYYY}-{SEQ:4}";

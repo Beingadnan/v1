@@ -19,6 +19,7 @@ import { EVENT_KINDS, PRECAL_RESULTS } from "@/domain/field/types";
 
 import { instruments } from "./instruments";
 import { studies } from "./jobs";
+import { signatures } from "./signatures";
 import { storedFiles } from "./stored-files";
 import { users } from "./users";
 
@@ -151,6 +152,62 @@ export const studyPrecal = pgTable(
     check("study_precal_result_check", sql`${t.result} in (${list(PRECAL_RESULTS)})`),
     check("study_precal_quantity_check", sql`${t.quantity} in ('temperature', 'humidity')`),
     check("study_precal_phase_check", sql`${t.phase} in ('pre', 'post')`),
+  ],
+);
+
+/**
+ * A pre- or post-calibration result overridden (QA Tech, Nov 2026): the
+ * reading and its computed pass/fail stay as recorded; the override gives
+ * the result to use, why, who asked and who approved it with an electronic
+ * signature (a second person). The report prints both.
+ */
+export const precalOverrides = pgTable(
+  "precal_overrides",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organisationId: uuid("organisation_id").notNull(),
+    studyId: uuid("study_id").notNull(),
+    precalId: uuid("precal_id")
+      .notNull()
+      .references(() => studyPrecal.id, { onDelete: "restrict" }),
+    fromResult: text("from_result").notNull(),
+    toResult: text("to_result").notNull(),
+    reason: text("reason").notNull(),
+    status: text("status").notNull().default("requested"),
+    requestedByUserId: uuid("requested_by_user_id")
+      .notNull()
+      .references((): AnyPgColumn => users.id, { onDelete: "restrict" }),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+    decidedByUserId: uuid("decided_by_user_id").references((): AnyPgColumn => users.id, {
+      onDelete: "restrict",
+    }),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    signatureId: uuid("signature_id").references(() => signatures.id, { onDelete: "restrict" }),
+    decisionNote: text("decision_note").notNull().default(""),
+  },
+  (t) => [
+    index("precal_overrides_study_idx").on(t.studyId),
+    // One override in force or waiting per reading.
+    uniqueIndex("precal_overrides_live_key")
+      .on(t.precalId)
+      .where(sql`${t.status} in ('requested', 'approved')`),
+    foreignKey({
+      name: "precal_overrides_study_fk",
+      columns: [t.studyId, t.organisationId],
+      foreignColumns: [studies.id, studies.organisationId],
+    }).onDelete("cascade"),
+    check(
+      "precal_overrides_status_check",
+      sql`${t.status} in ('requested', 'approved', 'rejected')`,
+    ),
+    check(
+      "precal_overrides_results_check",
+      sql`${t.fromResult} in (${list(PRECAL_RESULTS)}) and ${t.toResult} in (${list(PRECAL_RESULTS)}) and ${t.fromResult} <> ${t.toResult}`,
+    ),
+    check(
+      "precal_overrides_decision_check",
+      sql`(${t.status} = 'requested') = (${t.decidedAt} is null) and (${t.status} <> 'approved' or ${t.signatureId} is not null)`,
+    ),
   ],
 );
 

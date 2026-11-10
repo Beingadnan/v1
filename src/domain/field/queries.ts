@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 
 import type { Database } from "@/db/client-factory";
 import {
@@ -34,6 +34,8 @@ import type { BlobStore } from "@/lib/storage/blob-store";
 import { cycleProgress } from "./field-service";
 import { renderFt12 } from "./ft12-pdf";
 import { ROUTINE, type CycleKey, type StudyStatus } from "./types";
+import { calibrationOf } from "@/domain/jobs/studies";
+import { effectiveResult, overridesOf } from "./override-service";
 
 const FIELD_JOBS: JobStatus[] = ["ready", "field_work", "data_issue"];
 const AFTER_FIELD: JobStatus[] = ["data_received", "analysis"];
@@ -159,105 +161,151 @@ export async function getFieldStudy(db: Database, actor: SessionUser, studyId: s
   if (!row) return null;
   const { study, job } = row;
 
-  const positions = await db
-    .select({
-      id: studyPositions.id,
-      label: studyPositions.label,
-      sort: studyPositions.sort,
-      x: studyPositions.x,
-      y: studyPositions.y,
-      z: studyPositions.z,
-      note: studyPositions.note,
-      ambient: studyPositions.ambient,
-      instrumentId: studyPositions.instrumentId,
-      placedAt: studyPositions.placedAt,
-      code: instruments.code,
-      serialNo: instruments.serialNo,
-      by: users.name,
-    })
-    .from(studyPositions)
-    .leftJoin(instruments, eq(instruments.id, studyPositions.instrumentId))
-    .leftJoin(users, eq(users.id, studyPositions.placedByUserId))
-    .where(eq(studyPositions.studyId, study.id))
-    .orderBy(asc(studyPositions.sort));
-  const certs = await certificatesOf(
-    db,
-    actor.organisationId,
-    positions.flatMap((p) => (p.instrumentId ? [p.instrumentId] : [])),
-  );
-
-  const events = await db
-    .select({
-      id: studyEvents.id,
-      cycle: studyEvents.cycle,
-      kind: studyEvents.kind,
-      at: studyEvents.at,
-      note: studyEvents.note,
-      voided: studyEvents.voided,
-      by: users.name,
-    })
-    .from(studyEvents)
-    .leftJoin(users, eq(users.id, studyEvents.byUserId))
-    .where(eq(studyEvents.studyId, study.id))
-    .orderBy(asc(studyEvents.at));
-  const cycles: CycleKey[] = study.cycles.length > 0 ? (study.cycles as StudyCycle[]) : [ROUTINE];
-
-  const precal = await db
-    .select({
-      id: studyPrecal.id,
-      code: instruments.code,
-      instrumentId: studyPrecal.instrumentId,
-      reference: studyPrecal.reference,
-      reading: studyPrecal.reading,
-      deviation: studyPrecal.deviation,
-      tolerance: studyPrecal.tolerance,
-      result: studyPrecal.result,
-      quantity: studyPrecal.quantity,
-      phase: studyPrecal.phase,
-      at: studyPrecal.at,
-    })
-    .from(studyPrecal)
-    .innerJoin(instruments, eq(instruments.id, studyPrecal.instrumentId))
-    .where(eq(studyPrecal.studyId, study.id))
-    .orderBy(asc(studyPrecal.at));
-
-  const photos = await db
-    .select({
-      id: studyPhotos.id,
-      fileId: studyPhotos.fileId,
-      positionLabel: studyPhotos.positionLabel,
-      caption: studyPhotos.caption,
-      at: studyPhotos.at,
-      by: users.name,
-      name: storedFiles.firstFileName,
-    })
-    .from(studyPhotos)
-    .innerJoin(storedFiles, eq(storedFiles.id, studyPhotos.fileId))
-    .leftJoin(users, eq(users.id, studyPhotos.byUserId))
-    .where(eq(studyPhotos.studyId, study.id))
-    .orderBy(asc(studyPhotos.at));
-
-  // Loggers booked for the job but not yet placed anywhere on it: a tap list.
-  const booked = await db
-    .select({
-      id: instruments.id,
-      code: instruments.code,
-      serialNo: instruments.serialNo,
-      tier: instruments.tier,
-    })
-    .from(jobInstruments)
-    .innerJoin(instruments, eq(instruments.id, jobInstruments.instrumentId))
-    .where(eq(jobInstruments.jobId, job.id))
-    .orderBy(asc(instruments.code));
-  const placedOnJob = new Set(
-    (
-      await db
+  // The study's id is checked against the organisation above; the rest goes out at once.
+  const [positions, events, precal, photos, booked, placedRows, previousLayout, overrides, certs] =
+    await Promise.all([
+      db
+        .select({
+          id: studyPositions.id,
+          label: studyPositions.label,
+          sort: studyPositions.sort,
+          x: studyPositions.x,
+          y: studyPositions.y,
+          z: studyPositions.z,
+          note: studyPositions.note,
+          ambient: studyPositions.ambient,
+          instrumentId: studyPositions.instrumentId,
+          placedAt: studyPositions.placedAt,
+          code: instruments.code,
+          serialNo: instruments.serialNo,
+          by: users.name,
+        })
+        .from(studyPositions)
+        .leftJoin(instruments, eq(instruments.id, studyPositions.instrumentId))
+        .leftJoin(users, eq(users.id, studyPositions.placedByUserId))
+        .where(eq(studyPositions.studyId, study.id))
+        .orderBy(asc(studyPositions.sort)),
+      db
+        .select({
+          id: studyEvents.id,
+          cycle: studyEvents.cycle,
+          kind: studyEvents.kind,
+          at: studyEvents.at,
+          note: studyEvents.note,
+          voided: studyEvents.voided,
+          by: users.name,
+        })
+        .from(studyEvents)
+        .leftJoin(users, eq(users.id, studyEvents.byUserId))
+        .where(eq(studyEvents.studyId, study.id))
+        .orderBy(asc(studyEvents.at)),
+      db
+        .select({
+          id: studyPrecal.id,
+          code: instruments.code,
+          instrumentId: studyPrecal.instrumentId,
+          reference: studyPrecal.reference,
+          reading: studyPrecal.reading,
+          deviation: studyPrecal.deviation,
+          tolerance: studyPrecal.tolerance,
+          // In force (an approved override's), and as the readings gave it.
+          result: effectiveResult,
+          computed: studyPrecal.result,
+          quantity: studyPrecal.quantity,
+          phase: studyPrecal.phase,
+          at: studyPrecal.at,
+        })
+        .from(studyPrecal)
+        .innerJoin(instruments, eq(instruments.id, studyPrecal.instrumentId))
+        .where(eq(studyPrecal.studyId, study.id))
+        .orderBy(asc(studyPrecal.at)),
+      db
+        .select({
+          id: studyPhotos.id,
+          fileId: studyPhotos.fileId,
+          positionLabel: studyPhotos.positionLabel,
+          caption: studyPhotos.caption,
+          at: studyPhotos.at,
+          by: users.name,
+          name: storedFiles.firstFileName,
+        })
+        .from(studyPhotos)
+        .innerJoin(storedFiles, eq(storedFiles.id, studyPhotos.fileId))
+        .leftJoin(users, eq(users.id, studyPhotos.byUserId))
+        .where(eq(studyPhotos.studyId, study.id))
+        .orderBy(asc(studyPhotos.at)),
+      db
+        .select({
+          id: instruments.id,
+          code: instruments.code,
+          serialNo: instruments.serialNo,
+          tier: instruments.tier,
+        })
+        .from(jobInstruments)
+        .innerJoin(instruments, eq(instruments.id, jobInstruments.instrumentId))
+        .where(eq(jobInstruments.jobId, job.id))
+        .orderBy(asc(instruments.code)),
+      db
         .select({ id: studyPositions.instrumentId })
         .from(studyPositions)
         .innerJoin(studies, eq(studies.id, studyPositions.studyId))
-        .where(and(eq(studies.jobId, job.id), sql`${studyPositions.instrumentId} is not null`))
-    ).map((r) => r.id),
-  );
+        .where(and(eq(studies.jobId, job.id), sql`${studyPositions.instrumentId} is not null`)),
+      // The last other study of this equipment that has positions: its layout can be
+      // copied. One read: the positions of that study, found by a subquery.
+      db
+        .select({
+          reportNumber: studies.reportNumber,
+          features: studies.planFeatures,
+          label: studyPositions.label,
+          x: studyPositions.x,
+          y: studyPositions.y,
+          z: studyPositions.z,
+          note: studyPositions.note,
+          ambient: studyPositions.ambient,
+        })
+        .from(studyPositions)
+        .innerJoin(studies, eq(studies.id, studyPositions.studyId))
+        .where(
+          eq(
+            studyPositions.studyId,
+            sql`(select s.id from ${studies} s
+                 where s.organisation_id = ${actor.organisationId}
+                   and s.equipment_id = ${study.equipmentId}
+                   and s.id <> ${study.id}
+                   and exists (select 1 from ${studyPositions} p where p.study_id = s.id)
+                 order by s.created_at desc limit 1)`,
+          ),
+        )
+        .orderBy(asc(studyPositions.sort))
+        .then((points) =>
+          points.length === 0
+            ? null
+            : {
+                reportNumber: points[0]!.reportNumber,
+                features: points[0]!.features,
+                points: points.map((p) => ({
+                  label: p.label,
+                  note: p.note,
+                  ambient: p.ambient,
+                  x: Number(p.x),
+                  y: Number(p.y),
+                  z: Number(p.z),
+                })),
+              },
+        ),
+      overridesOf(db, study.id),
+      // The placed loggers' certificates, by subquery, in the same round.
+      certificatesOf(
+        db,
+        actor.organisationId,
+        db
+          .select({ id: studyPositions.instrumentId })
+          .from(studyPositions)
+          .where(and(eq(studyPositions.studyId, study.id), isNotNull(studyPositions.instrumentId))),
+      ),
+    ]);
+  const cycles: CycleKey[] = study.cycles.length > 0 ? (study.cycles as StudyCycle[]) : [ROUTINE];
+  const placedOnJob = new Set(placedRows.map((r) => r.id));
 
   const n = (v: string | null) => (v === null ? null : Number(v));
   return {
@@ -298,7 +346,10 @@ export async function getFieldStudy(db: Database, actor: SessionUser, studyId: s
     photos,
     spare: booked.filter((b) => b.tier !== "master" && !placedOnJob.has(b.id)),
     masters: booked.filter((b) => b.tier === "master"),
-    precalNeeded: study.workType === "thermal_validation" || study.postCalRequired,
+    previousLayout,
+    overrides,
+    precalNeeded: calibrationOf(study).pre,
+    postcalNeeded: calibrationOf(study).post,
   };
 }
 export type FieldStudy = NonNullable<Awaited<ReturnType<typeof getFieldStudy>>>;

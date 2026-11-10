@@ -3,6 +3,7 @@ import "server-only";
 import { and, asc, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 
 import type { DbExecutor } from "@/db/client-factory";
+import { reads } from "@/db/reads";
 import {
   certificateItems,
   certificateMasters,
@@ -53,37 +54,46 @@ export async function listInstruments(
 ): Promise<InstrumentRow[]> {
   assertCan(actor, "instruments.view");
   const q = filter.q?.trim();
-  const rows = await db
-    .select({ instrument: instruments, siteName: sites.name })
-    .from(instruments)
-    .leftJoin(sites, eq(sites.id, instruments.homeSiteId))
-    .where(
-      and(
-        eq(instruments.organisationId, actor.organisationId),
-        q
-          ? or(
-              ilike(instruments.code, `%${q}%`),
-              ilike(instruments.serialNo, `%${q}%`),
-              ilike(instruments.make, `%${q}%`),
-              ilike(instruments.model, `%${q}%`),
-              ilike(instruments.equipmentName, `%${q}%`),
-            )
-          : undefined,
-        filter.tier ? eq(instruments.tier, filter.tier) : undefined,
-        filter.type ? eq(instruments.type, filter.type) : undefined,
-        filter.siteId && isUuid(filter.siteId)
-          ? eq(instruments.homeSiteId, filter.siteId)
-          : undefined,
-        filter.status ? eq(instruments.status, filter.status) : undefined,
-      ),
-    )
-    .orderBy(desc(instruments.tier), asc(instruments.code))
-    .limit(2000);
-  const certs = await certificatesOf(
-    db,
-    actor.organisationId,
-    rows.map((r) => r.instrument.id),
+  const where = and(
+    eq(instruments.organisationId, actor.organisationId),
+    q
+      ? or(
+          ilike(instruments.code, `%${q}%`),
+          ilike(instruments.serialNo, `%${q}%`),
+          ilike(instruments.make, `%${q}%`),
+          ilike(instruments.model, `%${q}%`),
+          ilike(instruments.equipmentName, `%${q}%`),
+        )
+      : undefined,
+    filter.tier ? eq(instruments.tier, filter.tier) : undefined,
+    filter.type ? eq(instruments.type, filter.type) : undefined,
+    filter.siteId && isUuid(filter.siteId) ? eq(instruments.homeSiteId, filter.siteId) : undefined,
+    filter.status ? eq(instruments.status, filter.status) : undefined,
   );
+  const order = [desc(instruments.tier), asc(instruments.code)] as const;
+  // The instruments and their certificates in one round: the certificates take the same
+  // filter as a subquery instead of waiting for the ids (ADR 0018).
+  const [rows, certs] = await reads(db, [
+    () =>
+      db
+        .select({ instrument: instruments, siteName: sites.name })
+        .from(instruments)
+        .leftJoin(sites, eq(sites.id, instruments.homeSiteId))
+        .where(where)
+        .orderBy(...order)
+        .limit(2000),
+    () =>
+      certificatesOf(
+        db,
+        actor.organisationId,
+        db
+          .select({ id: instruments.id })
+          .from(instruments)
+          .where(where)
+          .orderBy(...order)
+          .limit(2000),
+      ),
+  ]);
   const today = todayInIndia();
   const result = rows.map(({ instrument, siteName }) => {
     const latest = latestCertificate(certs.get(instrument.id) ?? []);
@@ -103,7 +113,12 @@ export async function listInstruments(
 
 /** Counts behind the expiry banner: active instruments due in 30/15/7 days, expired, never calibrated. */
 export async function expirySummary(db: DbExecutor, actor: SessionUser) {
-  const rows = await listInstruments(db, actor, { status: "active" });
+  return summariseExpiry(await listInstruments(db, actor, { status: "active" }));
+}
+
+/** The expiry banner's counts from an unfiltered list, so a page that has one needn't read it twice. */
+export function summariseExpiry(all: InstrumentRow[]) {
+  const rows = all.filter((r) => r.status === "active");
   const counts: Record<ValidityState, number> = {
     never: 0,
     expired: 0,
@@ -148,41 +163,44 @@ export async function listModels(db: DbExecutor, actor: SessionUser) {
 export async function getInstrument(db: DbExecutor, actor: SessionUser, id: string) {
   assertCan(actor, "instruments.view");
   if (!isUuid(id)) return null;
-  const [row] = await db
-    .select({ instrument: instruments, siteName: sites.name })
-    .from(instruments)
-    .leftJoin(sites, eq(sites.id, instruments.homeSiteId))
-    .where(and(eq(instruments.id, id), eq(instruments.organisationId, actor.organisationId)));
+  // Each read is limited to the organisation, so all three can go out at once.
+  const [[row], history, usedAsMaster] = await Promise.all([
+    db
+      .select({ instrument: instruments, siteName: sites.name })
+      .from(instruments)
+      .leftJoin(sites, eq(sites.id, instruments.homeSiteId))
+      .where(and(eq(instruments.id, id), eq(instruments.organisationId, actor.organisationId))),
+    db
+      .select({ certificate: certificates, result: certificateItems.result })
+      .from(certificateItems)
+      .innerJoin(certificates, eq(certificates.id, certificateItems.certificateId))
+      .where(
+        and(
+          eq(certificateItems.organisationId, actor.organisationId),
+          eq(certificateItems.instrumentId, id),
+        ),
+      )
+      .orderBy(desc(certificates.calibratedOn), desc(certificates.createdAt)),
+    // Where this instrument served as a master.
+    db
+      .select({
+        id: certificates.id,
+        number: certificates.number,
+        calibratedOn: certificates.calibratedOn,
+        status: certificates.status,
+      })
+      .from(certificateMasters)
+      .innerJoin(certificates, eq(certificates.id, certificateMasters.certificateId))
+      .where(
+        and(
+          eq(certificateMasters.organisationId, actor.organisationId),
+          eq(certificateMasters.instrumentId, id),
+        ),
+      )
+      .orderBy(desc(certificates.calibratedOn))
+      .limit(200),
+  ]);
   if (!row) return null;
-  const history = await db
-    .select({ certificate: certificates, result: certificateItems.result })
-    .from(certificateItems)
-    .innerJoin(certificates, eq(certificates.id, certificateItems.certificateId))
-    .where(
-      and(
-        eq(certificateItems.organisationId, actor.organisationId),
-        eq(certificateItems.instrumentId, id),
-      ),
-    )
-    .orderBy(desc(certificates.calibratedOn), desc(certificates.createdAt));
-  // Where this instrument served as a master.
-  const usedAsMaster = await db
-    .select({
-      id: certificates.id,
-      number: certificates.number,
-      calibratedOn: certificates.calibratedOn,
-      status: certificates.status,
-    })
-    .from(certificateMasters)
-    .innerJoin(certificates, eq(certificates.id, certificateMasters.certificateId))
-    .where(
-      and(
-        eq(certificateMasters.organisationId, actor.organisationId),
-        eq(certificateMasters.instrumentId, id),
-      ),
-    )
-    .orderBy(desc(certificates.calibratedOn))
-    .limit(200);
   const today = todayInIndia();
   const latest = latestCertificate(history.map((h) => h.certificate));
   return {
@@ -245,16 +263,38 @@ async function traceNode(
   depth: number,
   seen: Set<string>,
 ): Promise<TraceNode | null> {
-  const [instrument] = await db
-    .select()
-    .from(instruments)
-    .where(and(eq(instruments.id, instrumentId), eq(instruments.organisationId, organisationId)));
+  // One round per link of the chain: the instrument, all its certificates and the masters
+  // recorded on them, the last two by a subquery of its certificate ids (ADR 0018).
+  const itsCertificates = db
+    .select({ id: certificateItems.certificateId })
+    .from(certificateItems)
+    .where(
+      and(
+        eq(certificateItems.instrumentId, instrumentId),
+        eq(certificateItems.organisationId, organisationId),
+      ),
+    );
+  const [[instrument], all, masterRows] = await reads(db, [
+    () =>
+      db
+        .select()
+        .from(instruments)
+        .where(
+          and(eq(instruments.id, instrumentId), eq(instruments.organisationId, organisationId)),
+        ),
+    () => db.select().from(certificates).where(inArray(certificates.id, itsCertificates)),
+    () =>
+      db
+        .select()
+        .from(certificateMasters)
+        .where(inArray(certificateMasters.certificateId, itsCertificates))
+        .orderBy(asc(certificateMasters.position)),
+  ]);
   if (!instrument) return null;
-  const all = (await certificatesOf(db, organisationId, [instrumentId])).get(instrumentId) ?? [];
   const covering = certificateCovering(all, date);
   // A calibration records which master certificate was used; trust that link first.
   const pinned = pinnedCertificateId ? all.find((c) => c.id === pinnedCertificateId) : undefined;
-  const chosen = pinned ?? covering;
+  const cert = pinned ?? covering;
   const node: TraceNode = {
     instrument,
     certificate: null,
@@ -262,8 +302,6 @@ async function traceNode(
     validOnDate: false,
     masters: [],
   };
-  if (!chosen) return node;
-  const [cert] = await db.select().from(certificates).where(eq(certificates.id, chosen.id));
   if (!cert) return node;
   node.certificate = cert;
   node.validOnDate =
@@ -272,23 +310,24 @@ async function traceNode(
     (cert.validUntil === null || cert.validUntil >= date);
   if (depth >= MAX_DEPTH || seen.has(cert.id)) return node;
   seen.add(cert.id);
-  const masters = await db
-    .select()
-    .from(certificateMasters)
-    .where(eq(certificateMasters.certificateId, cert.id))
-    .orderBy(asc(certificateMasters.position));
-  for (const m of masters) {
-    const child = await traceNode(
-      db,
-      organisationId,
-      m.instrumentId,
-      cert.calibratedOn,
-      m.masterCertificateId,
-      depth + 1,
-      seen,
-    );
-    if (child) node.masters.push(child);
-  }
+  const masters = masterRows.filter((m) => m.certificateId === cert.id);
+  // The masters' own chains side by side, not one after another.
+  const children = await reads(
+    db,
+    masters.map(
+      (m) => () =>
+        traceNode(
+          db,
+          organisationId,
+          m.instrumentId,
+          cert.calibratedOn,
+          m.masterCertificateId,
+          depth + 1,
+          seen,
+        ),
+    ),
+  );
+  for (const child of children) if (child) node.masters.push(child);
   return node;
 }
 

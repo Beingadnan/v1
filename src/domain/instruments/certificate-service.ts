@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, type SQLWrapper } from "drizzle-orm";
 import { z } from "zod";
 
 import type { Database, DbExecutor, Transaction } from "@/db/client-factory";
@@ -35,10 +35,15 @@ const CERTIFICATE_UNIQUE = {
 export async function certificatesOf(
   executor: DbExecutor,
   organisationId: string,
-  instrumentIds: string[],
+  /**
+   * The instruments, as ids or as a subquery of ids. A subquery ("the
+   * instruments booked on this job") lets the read go out with the one that
+   * finds them instead of after it (ADR 0018).
+   */
+  instrumentIds: string[] | SQLWrapper,
 ): Promise<Map<string, (CertificateDates & { kind: string; labName: string })[]>> {
   const result = new Map<string, (CertificateDates & { kind: string; labName: string })[]>();
-  if (instrumentIds.length === 0) return result;
+  if (Array.isArray(instrumentIds) && instrumentIds.length === 0) return result;
   const rows = await executor
     .select({
       instrumentId: certificateItems.instrumentId,

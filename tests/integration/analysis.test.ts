@@ -25,6 +25,7 @@ import {
   withdrawExcursionReview,
 } from "@/domain/analysis/analysis-service";
 import { getStudyAnalysis } from "@/domain/analysis/queries";
+import { hashPassword } from "@/domain/auth/password";
 import { ForbiddenError } from "@/domain/auth/permissions";
 import { toSessionUser, type SessionUser } from "@/domain/auth/session-service";
 import { createCompany } from "@/domain/clients/company-service";
@@ -38,6 +39,7 @@ import {
   recordPrecal,
   saveLayout,
 } from "@/domain/field/field-service";
+import { decideOverride, overridesOf, requestOverride } from "@/domain/field/override-service";
 import { createExternalCertificate } from "@/domain/instruments/certificate-service";
 import {
   bulkAddInstruments,
@@ -282,10 +284,10 @@ beforeAll(async () => {
   );
   jobId = job.id;
   studyId = (await getJob(db, leader, jobId))!.studies[0]!.id;
-  for (const key of ["protocol", "site_access", "previous_report"]) {
+  for (const key of ["site_access", "previous_report"]) {
     await setReadiness(db, leader, jobId, { key, state: "ready", note: "" }, req);
   }
-  await autoBook(db, leader, jobId, req);
+  await autoBook(db, leader, jobId, req, { loggers: true });
   await saveLayout(db, engineer, studyId, await layoutTemplate(db, engineer, studyId), req);
   for (const s of serials) await placeLogger(db, engineer, studyId, { code: s }, req);
   end = new Date(Math.floor((now.getTime() - 2 * 3600_000) / (10 * MIN)) * 10 * MIN);
@@ -543,6 +545,50 @@ describe("phase 7: analysis, post-calibration and deviations", () => {
     );
     const [s] = await db.select().from(studies).where(eq(studies.id, studyId));
     expect(s!.analysisRunId).toBeNull();
+  });
+
+  it("rejects an override with a note; a second ask, approved, turns the post-cal to pass", async () => {
+    const pw = "Lead-Signs-2";
+    await db
+      .update(users)
+      .set({ passwordHash: await hashPassword(pw, { N: 1024, r: 8, p: 1 }) })
+      .where(eq(users.id, leader.id));
+    const failed = (await view()).postCal.find((p) => p.code === codes[6]!)!;
+    expect(failed.result).toBe("fail");
+    const readingId = failed.readings.find((r) => r.result === "fail")!.id;
+    const first = await requestOverride(
+      db,
+      engineer,
+      readingId,
+      { toResult: "pass", reason: "Logger was still settling when read" },
+      req,
+    );
+    await expect(
+      decideOverride(db, leader, first.id, { approve: false, password: "", note: "" }, req),
+    ).rejects.toThrow("Say why it is rejected.");
+    expect(
+      await decideOverride(
+        db,
+        leader,
+        first.id,
+        { approve: false, password: "", note: "Re-read it after 30 minutes instead" },
+        req,
+      ),
+    ).toEqual({ ok: true });
+    expect((await view()).postCal.find((p) => p.code === codes[6]!)!.result).toBe("fail");
+
+    const second = await requestOverride(
+      db,
+      engineer,
+      readingId,
+      { toResult: "pass", reason: "Re-read after 30 minutes: -25.2 against -25.0" },
+      req,
+    );
+    expect(
+      await decideOverride(db, leader, second.id, { approve: true, password: pw, note: "" }, req),
+    ).toEqual({ ok: true });
+    expect((await view()).postCal.find((p) => p.code === codes[6]!)!.result).toBe("pass");
+    expect((await overridesOf(db, studyId)).map((o) => o.status)).toEqual(["rejected", "approved"]);
   });
 
   it("audits every step", async () => {

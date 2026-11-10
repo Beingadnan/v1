@@ -11,6 +11,7 @@ import {
 } from "@/domain/auth/account-service";
 import { runAction, type ActionResult } from "@/lib/action-result";
 import { requireUser } from "@/lib/auth/dal";
+import { forgetSessions } from "@/lib/auth/session-cache";
 import { env } from "@/lib/env";
 import { getRequestInfo } from "@/lib/request-info";
 
@@ -77,7 +78,10 @@ export async function changeRoleAction(_prev: unknown, formData: FormData): Prom
       ),
     "Role changed. They have been signed out and will see the new role next time.",
   );
-  if (result.ok) revalidatePath("/users");
+  if (result.ok) {
+    forgetSessions();
+    revalidatePath("/users");
+  }
   return result;
 }
 
@@ -94,6 +98,9 @@ export async function setActiveAction(_prev: unknown, formData: FormData): Promi
       ),
     active ? "User reactivated." : "User deactivated and signed out everywhere.",
   );
-  if (result.ok) revalidatePath("/users");
+  if (result.ok) {
+    forgetSessions();
+    revalidatePath("/users");
+  }
   return result;
 }

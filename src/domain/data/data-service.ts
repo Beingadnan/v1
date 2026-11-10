@@ -1,5 +1,7 @@
 import "server-only";
 
+import { reads } from "@/db/reads";
+
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 
 import type { Database, Transaction } from "@/db/client-factory";
@@ -78,39 +80,46 @@ export async function dataContext(
   organisationId: string,
   study: Study,
 ) {
-  const positions = await tx
-    .select({
-      id: studyPositions.id,
-      label: studyPositions.label,
-      ambient: studyPositions.ambient,
-      code: instruments.code,
-      serialNo: instruments.serialNo,
-    })
-    .from(studyPositions)
-    .leftJoin(instruments, eq(instruments.id, studyPositions.instrumentId))
-    .where(
-      and(eq(studyPositions.studyId, study.id), eq(studyPositions.organisationId, organisationId)),
-    )
-    .orderBy(asc(studyPositions.sort));
-  const files = await tx
-    .select()
+  // Independent reads go out together: on a distant database each round trip costs ~250 ms.
+  // A transaction's single connection still runs them one after another, which is fine.
+  // The channels come in the same round, by a subquery of the study's current files.
+  const current = tx
+    .select({ id: studyDataFiles.id })
     .from(studyDataFiles)
-    .where(and(eq(studyDataFiles.studyId, study.id), isNull(studyDataFiles.replacedAt)))
-    .orderBy(asc(studyDataFiles.uploadedAt));
-  const channels =
-    files.length === 0
-      ? []
-      : await tx
-          .select()
-          .from(studyDataChannels)
-          .where(
-            inArray(
-              studyDataChannels.dataFileId,
-              files.map((f) => f.id),
-            ),
-          )
-          .orderBy(asc(studyDataChannels.column));
-  const events = await tx.select().from(studyEvents).where(eq(studyEvents.studyId, study.id));
+    .where(and(eq(studyDataFiles.studyId, study.id), isNull(studyDataFiles.replacedAt)));
+  const [positions, files, events, channels] = await reads(tx, [
+    () =>
+      tx
+        .select({
+          id: studyPositions.id,
+          label: studyPositions.label,
+          ambient: studyPositions.ambient,
+          code: instruments.code,
+          serialNo: instruments.serialNo,
+        })
+        .from(studyPositions)
+        .leftJoin(instruments, eq(instruments.id, studyPositions.instrumentId))
+        .where(
+          and(
+            eq(studyPositions.studyId, study.id),
+            eq(studyPositions.organisationId, organisationId),
+          ),
+        )
+        .orderBy(asc(studyPositions.sort)),
+    () =>
+      tx
+        .select()
+        .from(studyDataFiles)
+        .where(and(eq(studyDataFiles.studyId, study.id), isNull(studyDataFiles.replacedAt)))
+        .orderBy(asc(studyDataFiles.uploadedAt)),
+    () => tx.select().from(studyEvents).where(eq(studyEvents.studyId, study.id)),
+    () =>
+      tx
+        .select()
+        .from(studyDataChannels)
+        .where(inArray(studyDataChannels.dataFileId, current))
+        .orderBy(asc(studyDataChannels.column)),
+  ]);
   const thermal = study.workType === "thermal_validation";
   const cycles = cycleProgress(cyclesOf(study), events, thermal);
 

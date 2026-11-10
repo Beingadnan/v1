@@ -3,6 +3,7 @@ import "server-only";
 import { and, desc, eq, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 
+import { reads } from "@/db/reads";
 import type { Database, Transaction } from "@/db/client-factory";
 import { invoices, jobWcrs, payments, studies, studyReports, type Job } from "@/db/schema";
 import { assertCan } from "@/domain/auth/permissions";
@@ -396,18 +397,28 @@ export async function reversePayment(
 /** What still stands between the job and closing, in words. */
 export async function closeBlockers(db: Database | Transaction, job: Job): Promise<string[]> {
   const out: string[] = [];
-  if (!(await wcrSigned(db, job.id))) out.push("The WCR isn't signed.");
-  const rows = await db
-    .select({
-      code: studies.reportNumber,
-      id: studies.id,
-      rev: studyReports.rev,
-      status: studyReports.status,
-    })
-    .from(studies)
-    .leftJoin(studyReports, eq(studyReports.studyId, studies.id))
-    .where(eq(studies.jobId, job.id))
-    .orderBy(desc(studyReports.rev));
+  // Three independent reads: together on the pool, in turn inside a transaction.
+  const [signed, rows, live] = await reads(db, [
+    () => wcrSigned(db, job.id),
+    () =>
+      db
+        .select({
+          code: studies.reportNumber,
+          id: studies.id,
+          rev: studyReports.rev,
+          status: studyReports.status,
+        })
+        .from(studies)
+        .leftJoin(studyReports, eq(studyReports.studyId, studies.id))
+        .where(eq(studies.jobId, job.id))
+        .orderBy(desc(studyReports.rev)),
+    () =>
+      db
+        .select({ number: invoices.number, status: invoices.status })
+        .from(invoices)
+        .where(and(eq(invoices.jobId, job.id), ne(invoices.status, "cancelled"))),
+  ]);
+  if (!signed) out.push("The WCR isn't signed.");
   const seen = new Set<string>();
   for (const r of rows) {
     if (seen.has(r.id)) continue;
@@ -418,10 +429,6 @@ export async function closeBlockers(db: Database | Transaction, job: Job): Promi
       );
     }
   }
-  const live = await db
-    .select({ number: invoices.number, status: invoices.status })
-    .from(invoices)
-    .where(and(eq(invoices.jobId, job.id), ne(invoices.status, "cancelled")));
   if (live.length === 0) out.push("No invoice is recorded.");
   for (const i of live.filter((x) => x.status !== "cleared")) {
     out.push(`Invoice ${i.number} isn't fully paid.`);

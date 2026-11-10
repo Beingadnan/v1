@@ -62,40 +62,40 @@ export async function getStudyData(db: Database, actor: SessionUser, studyId: st
     .where(and(eq(studies.id, studyId), eq(studies.organisationId, actor.organisationId)));
   if (!row) return null;
   const { study } = row;
-  const ctx = await dataContext(db, actor.organisationId, study);
-
-  const allFiles = await db
-    .select({
-      file: studyDataFiles,
-      by: users.name,
-      sha256: storedFiles.sha256,
-      size: storedFiles.sizeBytes,
-    })
-    .from(studyDataFiles)
-    .innerJoin(users, eq(users.id, studyDataFiles.uploadedByUserId))
-    .innerJoin(storedFiles, eq(storedFiles.id, studyDataFiles.fileId))
-    .where(eq(studyDataFiles.studyId, study.id))
-    .orderBy(desc(studyDataFiles.uploadedAt));
-  const acceptances = await db
-    .select({ a: studyDataAcceptances, by: users.name })
-    .from(studyDataAcceptances)
-    .innerJoin(users, eq(users.id, studyDataAcceptances.acceptedByUserId))
-    .where(eq(studyDataAcceptances.studyId, study.id))
-    .orderBy(desc(studyDataAcceptances.acceptedAt));
-  const requests = await db
-    .select({ r: studyDataRequests, by: users.name })
-    .from(studyDataRequests)
-    .innerJoin(users, eq(users.id, studyDataRequests.requestedByUserId))
-    .where(eq(studyDataRequests.studyId, study.id))
-    .orderBy(desc(studyDataRequests.requestedAt));
-  const receivedBy = study.dataReceivedByUserId
-    ? ((
-        await db
+  const [ctx, allFiles, acceptances, requests, receivedBy] = await Promise.all([
+    dataContext(db, actor.organisationId, study),
+    db
+      .select({
+        file: studyDataFiles,
+        by: users.name,
+        sha256: storedFiles.sha256,
+        size: storedFiles.sizeBytes,
+      })
+      .from(studyDataFiles)
+      .innerJoin(users, eq(users.id, studyDataFiles.uploadedByUserId))
+      .innerJoin(storedFiles, eq(storedFiles.id, studyDataFiles.fileId))
+      .where(eq(studyDataFiles.studyId, study.id))
+      .orderBy(desc(studyDataFiles.uploadedAt)),
+    db
+      .select({ a: studyDataAcceptances, by: users.name })
+      .from(studyDataAcceptances)
+      .innerJoin(users, eq(users.id, studyDataAcceptances.acceptedByUserId))
+      .where(eq(studyDataAcceptances.studyId, study.id))
+      .orderBy(desc(studyDataAcceptances.acceptedAt)),
+    db
+      .select({ r: studyDataRequests, by: users.name })
+      .from(studyDataRequests)
+      .innerJoin(users, eq(users.id, studyDataRequests.requestedByUserId))
+      .where(eq(studyDataRequests.studyId, study.id))
+      .orderBy(desc(studyDataRequests.requestedAt)),
+    study.dataReceivedByUserId
+      ? db
           .select({ name: users.name })
           .from(users)
           .where(inArray(users.id, [study.dataReceivedByUserId]))
-      )[0]?.name ?? null)
-    : null;
+          .then((r) => r[0]?.name ?? null)
+      : Promise.resolve(null),
+  ]);
 
   const liveAcceptance = new Map(
     acceptances.filter((x) => !x.a.withdrawnAt).map((x) => [x.a.fingerprint, x]),

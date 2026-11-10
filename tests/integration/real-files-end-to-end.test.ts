@@ -416,10 +416,10 @@ describe.skipIf(!haveFiles)("QTech end to end on QA Tech's real files", () => {
       req,
     );
     jobId = job.id;
-    const booked = await autoBook(db, p.lead, jobId, req);
+    const booked = await autoBook(db, p.lead, jobId, req, { loggers: true });
     expect(booked.masters).toEqual(["QATM/CAL/TL-65", "QATM/CAL/TL-38"]);
     expect(booked.short).toEqual([]);
-    for (const key of ["protocol", "site_access", "previous_report"]) {
+    for (const key of ["site_access", "previous_report"]) {
       await setReadiness(db, p.lead, jobId, { key, state: "ready", note: "TEST" }, req);
     }
     const j = (await getJob(db, p.lead, jobId))!;

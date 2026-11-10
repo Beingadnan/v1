@@ -1,12 +1,18 @@
 import { describe, expect, it } from "vitest";
 
+import { equipmentTypeFromText, isArea } from "@/domain/clients/equipment-types";
+import { roomWalls, suggestLoggerCount } from "@/domain/clients/study-defaults";
+
 import {
   BOX_EDGES,
   describe as where,
+  describeRoom,
   label,
   mm,
   nextEmpty,
+  orbitProjector,
   parseRoomSize,
+  planProjector,
   projector,
   templateLayout,
 } from "./layout";
@@ -53,6 +59,105 @@ describe("templateLayout", () => {
     }
     expect(templateLayout(0)).toEqual([]);
     expect(templateLayout(5)[0]!.note).toBe("Front left corner");
+  });
+});
+
+describe("rooms mapped as areas (QA Tech, Nov 2026)", () => {
+  it("knows rooms and stores are areas, from the words people use", () => {
+    expect(isArea("room")).toBe(true);
+    expect(isArea("warehouse")).toBe(true);
+    expect(isArea("cold_room")).toBe(false);
+    expect(isArea("autoclave")).toBe(false);
+    expect(equipmentTypeFromText("Dispensing area")).toBe("room");
+    expect(equipmentTypeFromText("Sampling booth")).toBe("room");
+  });
+
+  it("suggests a logger every ~5 m along each wall and one in the centre", () => {
+    // WH013, Dispensing-2: about 6 × 4 m, five loggers plus the ambient.
+    expect(roomWalls(6, 4)).toEqual([1, 1, 1, 1]);
+    expect(suggestLoggerCount({ lengthM: 6, widthM: 4, heightM: 3 }, "room")).toMatchObject({
+      count: 5,
+    });
+    expect(roomWalls(16, 9)).toEqual([3, 2, 3, 2]);
+    expect(suggestLoggerCount({ lengthM: 16, widthM: 9, heightM: null }, "room")?.count).toBe(11);
+    expect(suggestLoggerCount({ lengthM: 6, widthM: null, heightM: 3 }, "room")).toBeNull();
+  });
+
+  it("lays the loggers at working height on walls 1 to 4, then the centre", () => {
+    const pts = templateLayout(5, { lengthM: 6, widthM: 4, heightM: 2.5 }, { room: true });
+    expect(pts.map((p) => p.note)).toEqual([
+      "Working height on wall-1",
+      "Working height on wall-2",
+      "Working height on wall-3",
+      "Working height on wall-4",
+      "Working height, centre of the room",
+    ]);
+    expect(pts.every((p) => p.z === 0.4)).toBe(true);
+    expect(pts[0]).toMatchObject({ x: 0.5, y: 0.1 });
+    expect(pts[1]).toMatchObject({ x: 0.9, y: 0.5 });
+    // Another count is shared by wall length, longer walls first.
+    const seven = templateLayout(7, { lengthM: 12, widthM: 4, heightM: 3 }, { room: true });
+    expect(seven).toHaveLength(7);
+    expect(seven.filter((p) => p.note.endsWith("wall-1"))).toHaveLength(2);
+    expect(seven.filter((p) => p.note.endsWith("wall-3"))).toHaveLength(2);
+    expect(seven.at(-1)!.note).toBe("Working height, centre of the room");
+    expect(templateLayout(3, { lengthM: 6, widthM: 4, heightM: 3 }, { room: true })).toHaveLength(
+      3,
+    );
+  });
+
+  it("describes a moved point by its wall and height", () => {
+    expect(describeRoom({ x: 0.5, y: 0.05, z: 0.4 }, 2.5)).toBe("Working height on wall-1");
+    expect(describeRoom({ x: 0.05, y: 0.05, z: 0.4 }, 2.5)).toBe(
+      "Working height on corner of wall-1 & wall-4",
+    );
+    expect(describeRoom({ x: 0.5, y: 0.5, z: 0.95 }, 3)).toBe(
+      "Near the ceiling, centre of the room",
+    );
+    expect(describeRoom({ x: 0.95, y: 0.5, z: 0.6 }, 3)).toBe("At 1.8 m on wall-2");
+  });
+});
+
+describe("orbitProjector", () => {
+  const dims = { lengthM: 4, widthM: 2, heightM: 2 };
+  const frame = { width: 400, height: 400, margin: 20 };
+  it("looks at the front from the side, and down from the top", () => {
+    const front = orbitProjector(dims, { yaw: 0, pitch: 0 }, frame);
+    // Front and back corners line up; the top is higher on screen.
+    expect(front({ x: 0, y: 0, z: 0 }).x).toBeCloseTo(front({ x: 0, y: 1, z: 0 }).x);
+    expect(front({ x: 0, y: 0, z: 1 }).y).toBeLessThan(front({ x: 0, y: 0, z: 0 }).y);
+    expect(front({ x: 0, y: 1, z: 0 }).depth).toBeGreaterThan(front({ x: 0, y: 0, z: 0 }).depth);
+    const top = orbitProjector(dims, { yaw: 0, pitch: 90 }, frame);
+    // From the top, floor and ceiling of a corner coincide; the back is up the screen.
+    expect(top({ x: 1, y: 0, z: 0 }).y).toBeCloseTo(top({ x: 1, y: 0, z: 1 }).y);
+    expect(top({ x: 0, y: 1, z: 0 }).y).toBeLessThan(top({ x: 0, y: 0, z: 0 }).y);
+  });
+  it("keeps every corner inside the frame from any side", () => {
+    for (const yaw of [0, 35, 90, 200]) {
+      for (const pitch of [0, 30, 90]) {
+        const at = orbitProjector(dims, { yaw, pitch }, frame);
+        for (const [a] of BOX_EDGES) {
+          const q = at(a);
+          expect(q.x).toBeGreaterThanOrEqual(0);
+          expect(q.x).toBeLessThanOrEqual(400);
+          expect(q.y).toBeGreaterThanOrEqual(0);
+          expect(q.y).toBeLessThanOrEqual(400);
+        }
+      }
+    }
+  });
+});
+
+describe("planProjector", () => {
+  it("draws the room true to its proportions, wall-1 at the bottom", () => {
+    const { rect, at } = planProjector(
+      { lengthM: 12, widthM: 4, heightM: 3 },
+      { width: 480, height: 320, margin: 40 },
+    );
+    expect(rect.w / rect.h).toBeCloseTo(3);
+    expect(rect.x).toBeGreaterThanOrEqual(40);
+    expect(at({ x: 0, y: 0 })).toEqual({ x: rect.x, y: rect.y + rect.h });
+    expect(at({ x: 1, y: 1 })).toEqual({ x: rect.x + rect.w, y: rect.y });
   });
 });
 

@@ -17,6 +17,7 @@ import { can } from "@/domain/auth/permissions";
 import type { SessionUser } from "@/domain/auth/session-service";
 import { billingOverview } from "@/domain/billing/queries";
 import { myStudies } from "@/domain/field/queries";
+import { orderPendingSql } from "@/domain/jobs/queries";
 import { expirySummary } from "@/domain/instruments/queries";
 import { BOARD_COLUMNS, boardStatus, type JobStatus } from "@/domain/jobs/types";
 import { unreadCount } from "@/domain/notifications/notify";
@@ -40,6 +41,8 @@ const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000);
 export const DATA_OVERDUE_DAYS = 2;
 /** Unsigned: a report with the client this long. */
 export const UNSIGNED_DAYS = 7;
+/** A client's order still missing this long after the job was made is late. */
+export const ORDER_PENDING_DAYS = 14;
 /** Requalifications due within this many days are worth a quote now. */
 export const REQUAL_DAYS = 60;
 
@@ -52,11 +55,134 @@ export async function homeFor(db: Database, actor: SessionUser) {
   const org = actor.organisationId;
   const tiles: Tile[] = [];
   const add = (t: Tile) => tiles.push(t);
-  const unread = await unreadCount(db, actor);
+  const manager = can(actor, "jobs.manage");
+  const deviationsToo = can(actor, "deviation.manage");
+  const nextDue = sql<string>`(${equipment.lastStudyOn} + make_interval(months => coalesce(${equipment.requalificationMonths}, ${clientCompanies.requalificationMonths})) - interval '1 day')::date`;
+  const skip = Promise.resolve(null);
+  // Every tile's read goes out at once: on a distant database each round trip costs ~250 ms,
+  // so one after another they took seconds. The tiles are then added in their usual order.
+  const [
+    unread,
+    mineRows,
+    latest,
+    lateRows,
+    billing,
+    expiry,
+    openDeviations,
+    capaRows,
+    requalRows,
+    boardRows,
+    orderRows,
+  ] = await Promise.all([
+    unreadCount(db, actor),
+    can(actor, "data.import") ? myStudies(db, actor) : skip,
+    can(actor, "jobs.view")
+      ? db
+          .select({
+            status: studyReports.status,
+            releasedAt: studyReports.releasedAt,
+            createdBy: studyReports.createdByUserId,
+            frozenBy: studyReports.frozenByUserId,
+          })
+          .from(studyReports)
+          .innerJoin(studies, eq(studies.id, studyReports.studyId))
+          .innerJoin(jobs, eq(jobs.id, studies.jobId))
+          .where(
+            and(
+              eq(studyReports.organisationId, org),
+              ne(studyReports.status, "superseded"),
+              ne(jobs.status, "cancelled"),
+            ),
+          )
+      : Promise.resolve([]),
+    manager
+      ? db
+          .select({ id: studies.id })
+          .from(studies)
+          .innerJoin(jobs, eq(jobs.id, studies.jobId))
+          .where(
+            and(
+              eq(studies.organisationId, org),
+              ne(studies.dataStatus, "received"),
+              inArray(jobs.status, ["field_work", "data_issue"]),
+              sql`exists (select 1 from ${studyEvents} e where e.study_id = ${studies.id} and e.kind = 'end' and not e.voided and e.at < ${daysAgo(DATA_OVERDUE_DAYS)})`,
+            ),
+          )
+      : skip,
+    can(actor, "jobs.money") ? billingOverview(db, actor) : skip,
+    can(actor, "instruments.view") && (manager || can(actor, "instruments.manage"))
+      ? expirySummary(db, actor)
+      : skip,
+    deviationsToo
+      ? db
+          .select({ assessed: deviations.assessment })
+          .from(deviations)
+          .innerJoin(studies, eq(studies.id, deviations.studyId))
+          .innerJoin(jobs, eq(jobs.id, studies.jobId))
+          .where(
+            and(
+              eq(deviations.organisationId, org),
+              isNull(deviations.closedAt),
+              ne(jobs.status, "cancelled"),
+            ),
+          )
+      : skip,
+    deviationsToo
+      ? db
+          .select({ n: sql<number>`count(*)::int` })
+          .from(capas)
+          .where(
+            and(
+              eq(capas.organisationId, org),
+              eq(capas.status, "open"),
+              lt(capas.dueOn, todayIst()),
+            ),
+          )
+      : skip,
+    manager && can(actor, "clients.view")
+      ? db
+          .select({
+            due: sql<number>`count(*) filter (where ${nextDue} >= current_date)::int`,
+            overdue: sql<number>`count(*) filter (where ${nextDue} < current_date)::int`,
+          })
+          .from(equipment)
+          .innerJoin(clientCompanies, eq(clientCompanies.id, equipment.companyId))
+          .where(
+            and(
+              eq(equipment.organisationId, org),
+              eq(equipment.active, true),
+              sql`${equipment.lastStudyOn} is not null`,
+              sql`${nextDue} <= current_date + ${REQUAL_DAYS}::int`,
+            ),
+          )
+      : skip,
+    can(actor, "jobs.view")
+      ? db
+          .select({ status: jobs.status, heldFrom: jobs.heldFrom })
+          .from(jobs)
+          .where(
+            and(eq(jobs.organisationId, org), sql`${jobs.status} not in ('closed', 'cancelled')`),
+          )
+      : skip,
+    // Jobs whose client's order (PO, SRF, ARC or AMC) hasn't come.
+    manager || can(actor, "billing.record")
+      ? db
+          .select({ number: jobs.number, createdAt: jobs.createdAt })
+          .from(jobs)
+          .where(
+            and(
+              eq(jobs.organisationId, org),
+              orderPendingSql,
+              sql`${jobs.status} not in ('closed', 'cancelled')`,
+            ),
+          )
+          .orderBy(jobs.createdAt)
+      : skip,
+  ]);
 
   // ---- field and data
   if (can(actor, "data.import")) {
-    const mine = await myStudies(db, actor);
+    const mine = mineRows!;
     const today = mine.filter((s) => s.today && s.status !== "completed");
     const data = mine.filter(
       (s) => s.request !== null || (s.status === "completed" && s.dataStatus !== "received"),
@@ -98,25 +224,6 @@ export async function homeFor(db: Database, actor: SessionUser) {
   }
 
   // ---- reports (latest revision of each study, cancelled jobs left out)
-  const latest = can(actor, "jobs.view")
-    ? await db
-        .select({
-          status: studyReports.status,
-          releasedAt: studyReports.releasedAt,
-          createdBy: studyReports.createdByUserId,
-          frozenBy: studyReports.frozenByUserId,
-        })
-        .from(studyReports)
-        .innerJoin(studies, eq(studies.id, studyReports.studyId))
-        .innerJoin(jobs, eq(jobs.id, studies.jobId))
-        .where(
-          and(
-            eq(studyReports.organisationId, org),
-            ne(studyReports.status, "superseded"),
-            ne(jobs.status, "cancelled"),
-          ),
-        )
-    : [];
   const count = (statuses: string[]) => latest.filter((r) => statuses.includes(r.status)).length;
   if (can(actor, "reports.prepare")) {
     const drafts = latest.filter((r) => r.status === "draft" || r.status === "returned").length;
@@ -147,20 +254,8 @@ export async function homeFor(db: Database, actor: SessionUser) {
   }
 
   // ---- the manager's review
-  const manager = can(actor, "jobs.manage");
   if (manager) {
-    const late = await db
-      .select({ id: studies.id })
-      .from(studies)
-      .innerJoin(jobs, eq(jobs.id, studies.jobId))
-      .where(
-        and(
-          eq(studies.organisationId, org),
-          ne(studies.dataStatus, "received"),
-          inArray(jobs.status, ["field_work", "data_issue"]),
-          sql`exists (select 1 from ${studyEvents} e where e.study_id = ${studies.id} and e.kind = 'end' and not e.voided and e.at < ${daysAgo(DATA_OVERDUE_DAYS)})`,
-        ),
-      );
+    const late = lateRows!;
     add({
       key: "data_overdue",
       label: "Data overdue",
@@ -185,8 +280,21 @@ export async function homeFor(db: Database, actor: SessionUser) {
     });
   }
 
+  if (orderRows) {
+    const oldest = orderRows[0];
+    const days = oldest ? Math.floor((Date.now() - oldest.createdAt.getTime()) / 86_400_000) : 0;
+    add({
+      key: "order_pending",
+      label: "Client's order pending",
+      count: orderRows.length,
+      hint: oldest ? `Oldest ${oldest.number}, ${days} days` : undefined,
+      href: "/jobs?order=pending",
+      tone: orderRows.length ? (days > ORDER_PENDING_DAYS ? "fail" : "attention") : "neutral",
+    });
+  }
+
   if (can(actor, "jobs.money")) {
-    const o = await billingOverview(db, actor);
+    const o = billing!;
     add({
       key: "invoice_due",
       label: "Invoice due",
@@ -210,7 +318,7 @@ export async function homeFor(db: Database, actor: SessionUser) {
   }
 
   if (can(actor, "instruments.view") && (manager || can(actor, "instruments.manage"))) {
-    const e = await expirySummary(db, actor);
+    const e = expiry!;
     const soon = e.counts.due_7 + e.counts.due_15 + e.counts.due_30;
     add({
       key: "instruments",
@@ -223,18 +331,7 @@ export async function homeFor(db: Database, actor: SessionUser) {
   }
 
   if (can(actor, "deviation.manage")) {
-    const open = await db
-      .select({ assessed: deviations.assessment })
-      .from(deviations)
-      .innerJoin(studies, eq(studies.id, deviations.studyId))
-      .innerJoin(jobs, eq(jobs.id, studies.jobId))
-      .where(
-        and(
-          eq(deviations.organisationId, org),
-          isNull(deviations.closedAt),
-          ne(jobs.status, "cancelled"),
-        ),
-      );
+    const open = openDeviations!;
     const waiting = open.filter((d) => d.assessed !== "").length;
     add({
       key: "deviations",
@@ -244,12 +341,7 @@ export async function homeFor(db: Database, actor: SessionUser) {
       href: "/deviations",
       tone: open.length ? "attention" : "neutral",
     });
-    const [late] = await db
-      .select({ n: sql<number>`count(*)::int` })
-      .from(capas)
-      .where(
-        and(eq(capas.organisationId, org), eq(capas.status, "open"), lt(capas.dueOn, todayIst())),
-      );
+    const [late] = capaRows!;
     add({
       key: "capa",
       label: "CAPAs overdue",
@@ -260,22 +352,7 @@ export async function homeFor(db: Database, actor: SessionUser) {
   }
 
   if (manager && can(actor, "clients.view")) {
-    const nextDue = sql<string>`(${equipment.lastStudyOn} + make_interval(months => coalesce(${equipment.requalificationMonths}, ${clientCompanies.requalificationMonths})) - interval '1 day')::date`;
-    const [r] = await db
-      .select({
-        due: sql<number>`count(*) filter (where ${nextDue} >= current_date)::int`,
-        overdue: sql<number>`count(*) filter (where ${nextDue} < current_date)::int`,
-      })
-      .from(equipment)
-      .innerJoin(clientCompanies, eq(clientCompanies.id, equipment.companyId))
-      .where(
-        and(
-          eq(equipment.organisationId, org),
-          eq(equipment.active, true),
-          sql`${equipment.lastStudyOn} is not null`,
-          sql`${nextDue} <= current_date + ${REQUAL_DAYS}::int`,
-        ),
-      );
+    const [r] = requalRows!;
     add({
       key: "requal",
       label: `Requalifications due in ${REQUAL_DAYS} days`,
@@ -287,22 +364,14 @@ export async function homeFor(db: Database, actor: SessionUser) {
   }
 
   // ---- the board
-  const board = can(actor, "jobs.view")
-    ? await (async () => {
-        const rows = await db
-          .select({ status: jobs.status, heldFrom: jobs.heldFrom })
-          .from(jobs)
-          .where(
-            and(eq(jobs.organisationId, org), sql`${jobs.status} not in ('closed', 'cancelled')`),
-          );
-        return BOARD_COLUMNS.map((c) => ({
-          key: c.key,
-          label: c.label,
-          count: rows.filter((r) =>
-            c.statuses.includes(boardStatus(r.status as JobStatus, r.heldFrom)),
-          ).length,
-        }));
-      })()
+  const board = boardRows
+    ? BOARD_COLUMNS.map((c) => ({
+        key: c.key,
+        label: c.label,
+        count: boardRows.filter((r) =>
+          c.statuses.includes(boardStatus(r.status as JobStatus, r.heldFrom)),
+        ).length,
+      }))
     : [];
 
   return { tiles, board, unread };

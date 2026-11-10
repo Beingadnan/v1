@@ -115,11 +115,51 @@ export const RATE_BASIS_LABELS: Record<RateBasis, string> = {
   per_m3: "per m³",
 };
 
-/** Readiness items QA Tech checks before field work. */
-export const READINESS_ITEMS = [
+/**
+ * What the client's order for a job is (QA Tech, Nov 2026): a purchase order or
+ * the client's service request form for this job, or an annual contract that
+ * covers it: an ARC (annual rate contract) or AMC (annual maintenance contract).
+ */
+export const ORDER_TYPES = ["po", "srf", "arc", "amc"] as const;
+export type OrderType = (typeof ORDER_TYPES)[number];
+export const ORDER_TYPE_LABELS: Record<OrderType, string> = {
+  po: "Purchase order (PO)",
+  srf: "Service request form (SRF)",
+  arc: "Annual rate contract (ARC)",
+  amc: "Annual maintenance contract (AMC)",
+};
+/** Short names: "PO 4500012345", "ARC QA/ARC/26". */
+export const ORDER_TYPE_SHORT: Record<OrderType, string> = {
+  po: "PO",
+  srf: "SRF",
+  arc: "ARC",
+  amc: "AMC",
+};
+/** Order types held on the client as a contract for the year, not per job. */
+export const CONTRACT_TYPES = ["arc", "amc"] as const;
+export type ContractType = (typeof CONTRACT_TYPES)[number];
+export const isContractType = (t: string): t is ContractType =>
+  (CONTRACT_TYPES as readonly string[]).includes(t);
+
+/**
+ * Every readiness key the database accepts. "dates_fit" and "protocol" were
+ * dropped from the checklist after the November 2026 demo; rows already stored
+ * for them stay, and are no longer shown.
+ */
+export const READINESS_KEYS = [
   "purchase_order",
   "dates_fit",
   "protocol",
+  "site_access",
+  "loggers_booked",
+  "loggers_valid",
+  "masters_valid",
+  "previous_report",
+] as const;
+
+/** Readiness items QA Tech checks before field work. */
+export const READINESS_ITEMS = [
+  "purchase_order",
   "site_access",
   "loggers_booked",
   "loggers_valid",
@@ -134,24 +174,14 @@ export const READINESS_INFO: Record<
   { label: string; calculated: boolean; hint: string }
 > = {
   purchase_order: {
-    label: "Purchase order",
+    label: "Client's order (PO, SRF, ARC or AMC)",
     calculated: true,
-    hint: "Ready when the PO number is on the job.",
-  },
-  dates_fit: {
-    label: "Long enough on site",
-    calculated: true,
-    hint: "From the first day to the last there is time for the longest study.",
-  },
-  protocol: {
-    label: "Approved protocol",
-    calculated: false,
-    hint: "The client's or QA Tech's mapping protocol, approved before the study (WHO TRS 961 Suppl. 8 §2.2).",
+    hint: "Ready when the order number, or the contract covering the job, is on it. It can come later: field work doesn't wait for it.",
   },
   site_access: {
-    label: "Site access / gate pass",
-    calculated: false,
-    hint: "Gate pass, permits or safety induction arranged with the client.",
+    label: "Client's gate pass",
+    calculated: true,
+    hint: "The client's entry gate pass number for QA Tech's instruments, or marked not needed. Booking follows it.",
   },
   loggers_booked: {
     label: "Logger set booked",
@@ -166,12 +196,12 @@ export const READINESS_INFO: Record<
   masters_valid: {
     label: "Masters valid (pre/post-cal)",
     calculated: true,
-    hint: "Needed for thermal validation, or when the client's SOP asks for post-calibration.",
+    hint: "Needed for thermal validation, or when a study has pre- or post-calibration.",
   },
   previous_report: {
     label: "Previous report on hand",
     calculated: false,
-    hint: "For a requalification: the last report, to compare against.",
+    hint: "For a requalification: the last report, to compare against. Found by itself when it is in QTech.",
   },
 };
 

@@ -96,14 +96,15 @@ export default async function InstrumentPage({
   const actor = await requirePermission("instruments.view");
   const { instrumentId } = await params;
   const { on } = await searchParams;
-  const instrument = await getInstrument(db, actor, instrumentId);
-  if (!instrument) notFound();
   const date = typeof on === "string" && /^\d{4}-\d{2}-\d{2}$/.test(on) ? on : todayInIndia();
   const canManage = can(actor, "instruments.manage");
-  const [chain, options] = await Promise.all([
-    traceChain(db, actor, instrument.id, date),
+  // The chain checks the organisation itself, so it is read alongside the instrument.
+  const [instrument, chain, options] = await Promise.all([
+    getInstrument(db, actor, instrumentId),
+    traceChain(db, actor, instrumentId, date),
     canManage ? formOptions(actor) : Promise.resolve(null),
   ]);
+  if (!instrument) notFound();
 
   const facts: [string, string][] = [
     ["Type", INSTRUMENT_TYPE_INFO[instrument.type as InstrumentType]?.label ?? instrument.type],

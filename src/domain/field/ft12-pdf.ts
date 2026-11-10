@@ -2,9 +2,11 @@ import "server-only";
 
 import PDFDocument from "pdfkit";
 
+import { mappedNoun } from "@/domain/clients/equipment-types";
 import { WORK_TYPE_LABELS, type WorkType } from "@/domain/jobs/types";
 
 import { BOX_EDGES, mm, projector, spreadLabels, type Point } from "./layout";
+import { drawPlan } from "./plan-pdf";
 import type { FieldStudy } from "./queries";
 import { EVENT_LABELS, type EventKind } from "./types";
 
@@ -179,14 +181,18 @@ export async function renderFt12(s: FieldStudy, ctx: Ft12Context): Promise<Buffe
     ["Job No.", k, { bold: true, fill: SHADE }],
     [s.job.number, 90],
   ]);
-  pair(["Equipment", s.equipment.name], ["Equipment ID", s.equipment.code]);
+  const noun = mappedNoun(s.equipment.type);
+  pair([noun, s.equipment.name], [`${noun} ID`, s.equipment.code]);
   pair(["Department", s.equipment.department ?? ""], ["Location", s.equipment.location]);
   pair(
     ["Study", WORK_TYPE_LABELS[s.study.workType as WorkType] ?? s.study.workType],
     ["Planned", `${dmy(s.job.plannedStart)} to ${dmy(s.job.plannedEnd)}`],
   );
   pair(
-    ["Inside size", `L ${mm(d.lengthM)} x W ${mm(d.widthM)} x H ${mm(d.heightM)}`],
+    [
+      noun === "Equipment" ? "Inside size" : `${noun} size`,
+      `L ${mm(d.lengthM)} x W ${mm(d.widthM)} x H ${mm(d.heightM)}`,
+    ],
     [
       "Loggers",
       `${s.positions.filter((p) => p.instrumentId).length} of ${s.positions.length} placed`,
@@ -204,45 +210,59 @@ export async function renderFt12(s: FieldStudy, ctx: Ft12Context): Promise<Buffe
   const inside = s.positions.filter((p) => !p.ambient);
   const ambient = s.positions.filter((p) => p.ambient);
   const legendW = ambient.length ? 110 : 0;
-  const project = projector(d, { width: box.w - legendW, height: box.h, margin: 34 });
-  const at = (p: Point) => {
-    const q = project(p);
-    return { x: box.x + q.x, y: box.y + q.y };
-  };
-  doc.lineWidth(0.9).strokeColor("#222222");
-  for (const [a, b] of BOX_EDGES) {
-    // Hidden edges (at the back, bottom left) dashed, as drawn by hand.
-    const hidden = (a.x === 0 && a.y === 1 && a.z === 0) || (b.x === 0 && b.y === 1 && b.z === 0);
-    const pa = at(a);
-    const pb = at(b);
-    if (hidden) doc.dash(3, { space: 2 });
-    doc.moveTo(pa.x, pa.y).lineTo(pb.x, pb.y).stroke();
-    doc.undash();
-  }
-  // Sizes, written as on the report: L along the front, W along the depth, H up the side.
-  doc.font("Helvetica").fontSize(7.5).fillColor("#000000");
-  const lMid = at({ x: 0.5, y: 0, z: 0 });
-  doc.text(`L-${mm(d.lengthM)}`, lMid.x - 40, lMid.y + 6, { width: 80, align: "center" });
-  const wMid = at({ x: 1, y: 0.5, z: 0 });
-  doc.text(`W-${mm(d.widthM)}`, wMid.x + 6, wMid.y, { width: 80 });
-  const hMid = at({ x: 1, y: 1, z: 0.5 });
-  doc.text(`H-${mm(d.heightM)}`, hMid.x + 6, hMid.y - 4, { width: 80 });
-  const labels = spreadLabels(
-    inside.map((p) => ({ ...at(p), label: p.label })),
-    { w: 30, h: 13 },
-  );
-  for (const q of labels) {
-    doc
-      .lineWidth(0.6)
-      .strokeColor("#222222")
-      .fillColor("#ffffff")
-      .ellipse(q.x, q.y, 14, 6)
-      .fillAndStroke();
-    doc
-      .font("Helvetica-Bold")
-      .fontSize(6)
-      .fillColor("#000000")
-      .text(ascii(q.label), q.x - 14, q.y - 2.4, { width: 28, align: "center", lineBreak: false });
+  if (s.equipment.type === "room") {
+    drawPlan(
+      doc,
+      { x: box.x, y: box.y, w: box.w - legendW, h: box.h },
+      d,
+      inside.map((p) => ({ label: p.label, x: p.x, y: p.y })),
+      s.study.planFeatures,
+    );
+  } else {
+    const project = projector(d, { width: box.w - legendW, height: box.h, margin: 34 });
+    const at = (p: Point) => {
+      const q = project(p);
+      return { x: box.x + q.x, y: box.y + q.y };
+    };
+    doc.lineWidth(0.9).strokeColor("#222222");
+    for (const [a, b] of BOX_EDGES) {
+      // Hidden edges (at the back, bottom left) dashed, as drawn by hand.
+      const hidden = (a.x === 0 && a.y === 1 && a.z === 0) || (b.x === 0 && b.y === 1 && b.z === 0);
+      const pa = at(a);
+      const pb = at(b);
+      if (hidden) doc.dash(3, { space: 2 });
+      doc.moveTo(pa.x, pa.y).lineTo(pb.x, pb.y).stroke();
+      doc.undash();
+    }
+    // Sizes, written as on the report: L along the front, W along the depth, H up the side.
+    doc.font("Helvetica").fontSize(7.5).fillColor("#000000");
+    const lMid = at({ x: 0.5, y: 0, z: 0 });
+    doc.text(`L-${mm(d.lengthM)}`, lMid.x - 40, lMid.y + 6, { width: 80, align: "center" });
+    const wMid = at({ x: 1, y: 0.5, z: 0 });
+    doc.text(`W-${mm(d.widthM)}`, wMid.x + 6, wMid.y, { width: 80 });
+    const hMid = at({ x: 1, y: 1, z: 0.5 });
+    doc.text(`H-${mm(d.heightM)}`, hMid.x + 6, hMid.y - 4, { width: 80 });
+    const labels = spreadLabels(
+      inside.map((p) => ({ ...at(p), label: p.label })),
+      { w: 30, h: 13 },
+    );
+    for (const q of labels) {
+      doc
+        .lineWidth(0.6)
+        .strokeColor("#222222")
+        .fillColor("#ffffff")
+        .ellipse(q.x, q.y, 14, 6)
+        .fillAndStroke();
+      doc
+        .font("Helvetica-Bold")
+        .fontSize(6)
+        .fillColor("#000000")
+        .text(ascii(q.label), q.x - 14, q.y - 2.4, {
+          width: 28,
+          align: "center",
+          lineBreak: false,
+        });
+    }
   }
   if (ambient.length) {
     const lx = box.x + box.w - legendW + 8;

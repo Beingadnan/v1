@@ -17,7 +17,13 @@ import {
 import { db } from "@/db/client";
 import { can } from "@/domain/auth/permissions";
 import { listJobs, type JobListRow } from "@/domain/jobs/queries";
-import { BOARD_COLUMNS, boardStatus, JOB_STATUS_LABELS } from "@/domain/jobs/types";
+import {
+  BOARD_COLUMNS,
+  boardStatus,
+  JOB_STATUS_LABELS,
+  ORDER_TYPE_SHORT,
+  type OrderType,
+} from "@/domain/jobs/types";
 import { requirePermission } from "@/lib/auth/dal";
 import { cn } from "@/lib/utils";
 
@@ -37,10 +43,16 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
   const q = typeof params.q === "string" ? params.q.trim().slice(0, 100) : "";
   const scope = SCOPES.some((s) => s.key === params.scope) ? (params.scope as string) : "open";
   const mine = params.mine === "1";
+  const orderPending = params.order === "pending";
+  const sort = params.sort === "start" ? "start" : "newest";
   // Field roles mostly want their own jobs as a list; planners want the board.
   const view =
-    params.view === "list" || params.view === "board" ? params.view : q ? "list" : "board";
-  const rows = await listJobs(db, actor, { q, scope, mine });
+    params.view === "list" || params.view === "board"
+      ? params.view
+      : q || orderPending
+        ? "list"
+        : "board";
+  const rows = await listJobs(db, actor, { q, scope, mine, orderPending, sort });
   const canManage = can(actor, "jobs.manage");
   const money = can(actor, "jobs.money");
 
@@ -50,6 +62,8 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
       q: q || undefined,
       scope: scope === "open" ? undefined : scope,
       mine: mine ? "1" : undefined,
+      order: orderPending ? "pending" : undefined,
+      sort: sort === "start" ? "start" : undefined,
       view,
       ...over,
     };
@@ -65,11 +79,6 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
         description="Every job from enquiry to payment. Find one by job number, PO, client, equipment ID or report number."
         action={
           <div className="flex flex-wrap gap-2">
-            {money ? (
-              <Button variant="secondary" asChild>
-                <Link href="/jobs/rates">Rate card</Link>
-              </Button>
-            ) : null}
             {canManage ? (
               <Button asChild>
                 <Link href="/jobs/new">
@@ -111,6 +120,40 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
           >
             My jobs
           </Link>
+          <Link
+            href={link({ order: orderPending ? undefined : "pending" })}
+            aria-current={orderPending ? "page" : undefined}
+            className={cn(
+              "rounded-full border px-3 py-1 text-sm",
+              orderPending
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border hover:border-primary",
+            )}
+          >
+            Order pending
+          </Link>
+        </nav>
+        <nav aria-label="Order" className="flex gap-1 text-sm">
+          {(
+            [
+              ["newest", "Newest first"],
+              ["start", "By start date"],
+            ] as const
+          ).map(([key, label]) => (
+            <Link
+              key={key}
+              href={link({ sort: key === "start" ? "start" : undefined })}
+              aria-current={sort === key ? "page" : undefined}
+              className={cn(
+                "rounded-md px-2 py-1",
+                sort === key
+                  ? "bg-surface-muted font-medium"
+                  : "text-muted-foreground hover:text-primary",
+              )}
+            >
+              {label}
+            </Link>
+          ))}
         </nav>
         <nav aria-label="View" className="flex gap-1 text-sm">
           {(["board", "list"] as const).map((v) => (
@@ -132,6 +175,8 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
         <form role="search" className="flex w-full max-w-md gap-2 sm:w-auto sm:flex-1">
           {scope !== "open" ? <input type="hidden" name="scope" value={scope} /> : null}
           {mine ? <input type="hidden" name="mine" value="1" /> : null}
+          {orderPending ? <input type="hidden" name="order" value="pending" /> : null}
+          {sort === "start" ? <input type="hidden" name="sort" value="start" /> : null}
           <label htmlFor="q" className="sr-only">
             Search jobs
           </label>
@@ -276,7 +321,15 @@ function JobTable({ rows, money }: { rows: JobListRow[]; money: boolean }) {
               >
                 {r.number}
               </Link>
-              {r.poNumber ? <p className="text-xs text-muted-foreground">PO {r.poNumber}</p> : null}
+              {r.orderPending && r.status !== "cancelled" ? (
+                <p className="text-xs text-attention">
+                  {ORDER_TYPE_SHORT[r.orderType as OrderType]} pending
+                </p>
+              ) : r.poNumber ? (
+                <p className="text-xs text-muted-foreground">
+                  {ORDER_TYPE_SHORT[r.orderType as OrderType]} {r.poNumber}
+                </p>
+              ) : null}
             </TableCell>
             <TableCell>
               {r.companyName}

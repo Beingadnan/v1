@@ -16,8 +16,12 @@ const envSchema = z.object({
     .refine((v) => v.startsWith("postgres://") || v.startsWith("postgresql://"), {
       message: "DATABASE_URL must be a postgres:// connection string",
     }),
-  /** Max open connections per app instance. Keep low for Neon's pooled endpoint. */
-  DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(50).default(10),
+  /**
+   * Max open connections per app instance. A page sends its reads together, up to about
+   * 30 at once (a study tab with its study); fewer connections make the rest wait a round
+   * trip (ADR 0018). Neon's pooled endpoint (-pooler) accepts thousands of clients.
+   */
+  DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(50).default(30),
   /** Local file storage root (development / single-server). Cloud storage driver comes later. */
   STORAGE_LOCAL_DIR: z.string().min(1).default("./.data/storage"),
   /** Hard upload limit in megabytes; logger exports are small, certificate scans can be larger. */

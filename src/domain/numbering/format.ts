@@ -6,16 +6,18 @@
  *          {KIND} certificate series (PDL, RTD, TC…) ·
  *          {SEQ:n} sequence zero-padded to n digits (n = 1..8)
  *
- * Sequences restart every year, and every month when the format has {MM}.
+ * Sequences restart every year. Certificates also restart every month when the
+ * format has {MM}; job numbers show the month but count through the year
+ * (QT/11/2026/0041, then QT/12/2026/0042), as QA Tech asked in November 2026.
  * With {SITE}/{SITE_NAME} each site counts separately; with {KIND} each kind does.
  *
- * Examples: "QT/J/{YYYY}/{SEQ:4}" → "QT/J/2026/0142"
+ * Examples: "QT/{MM}/{YYYY}/{SEQ:4}" → "QT/11/2026/0142"
  *           "QATECH/{SITE_NAME}/{MM}/{YY}/{KIND}-{SEQ:2}" → "QATECH/BHIWANDI/03/26/PDL-17"
  */
 const TOKEN = /\{(YYYY|YY|MM|SITE_NAME|SITE|KIND|SEQ:(\d))\}/g;
 const ALLOWED_LITERAL = /^[A-Za-z0-9/_\-. ]*$/;
 
-export const DEFAULT_JOB_NUMBER_FORMAT = "QT/J/{YYYY}/{SEQ:4}";
+export const DEFAULT_JOB_NUMBER_FORMAT = "QT/{MM}/{YYYY}/{SEQ:4}";
 /** As on QA Tech's certificates, e.g. QATECH/BHIWANDI/03/26/PDL-17. */
 export const DEFAULT_CERTIFICATE_NUMBER_FORMAT = "QATECH/{SITE_NAME}/{MM}/{YY}/{KIND}-{SEQ:2}";
 
@@ -99,10 +101,17 @@ export function formatNumber(format: string, values: NumberValues): string {
   });
 }
 
-/** Which counter a number comes from: one per period (month or year) and kind. */
-export function seriesScope(format: string, values: { month: number; kind?: string }) {
+/**
+ * Which counter a number comes from: one per period (month or year) and kind.
+ * `monthly: false` keeps one counter for the year even when the month shows.
+ */
+export function seriesScope(
+  format: string,
+  values: { month: number; kind?: string },
+  monthly = true,
+) {
   return {
-    period: format.includes("{MM}") ? values.month : 0,
+    period: monthly && format.includes("{MM}") ? values.month : 0,
     series: format.includes("{KIND}") ? (values.kind ?? "") : "",
   };
 }

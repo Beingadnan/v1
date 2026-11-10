@@ -1,7 +1,15 @@
-import { AlertTriangle, CheckCircle2, ChevronLeft, Circle, MinusCircle } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronLeft,
+  Circle,
+  MinusCircle,
+  Printer,
+} from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatusBadge } from "@/components/ui/status-badge";
 import {
@@ -17,11 +25,21 @@ import { STUDY_CYCLE_LABELS, type StudyCycle } from "@/domain/clients/study-defa
 import { STUDY_STATUS_LABELS, type StudyStatus } from "@/domain/field/types";
 import { jobMoney } from "@/domain/billing/queries";
 import { formatInr } from "@/domain/jobs/pricing";
-import { getJob, qaSiteOptions, siteEquipment, staffOptions } from "@/domain/jobs/queries";
+import { calibrationOf } from "@/domain/jobs/studies";
+import { bookingChoices } from "@/domain/jobs/job-service";
+import {
+  findJob,
+  jobDetail,
+  qaSiteOptions,
+  siteEquipment,
+  staffOptions,
+} from "@/domain/jobs/queries";
+import { can } from "@/domain/auth/permissions";
 import { TEAM_ROLE_LABELS, type TeamRole } from "@/domain/jobs/schemas";
 import {
   HOLDS_INSTRUMENTS,
   JOB_STATUS_LABELS,
+  ORDER_TYPE_SHORT,
   PLANNING,
   TRANSITIONS,
   WORK_TYPE_LABELS,
@@ -40,15 +58,15 @@ import {
   AutoBookButton,
   EditJobButton,
   EditStudyButton,
-  PasteBookButton,
   ReadinessSwitch,
   ReleaseButton,
   RemoveStudyButton,
-  RepriceButton,
   StatusButtons,
   TeamButton,
 } from "./job-controls";
 import { MoneyPanel } from "./money-panel";
+import { BookingPicker, GatePassForm } from "./booking-controls";
+import { RecordOrderButton } from "./order-controls";
 
 /** Job statuses at which the WCR, invoices and closing are shown (phase 10). */
 const LATE: JobStatus[] = [
@@ -79,22 +97,65 @@ const DATA_LABEL: Record<string, string> = {
 export default async function JobPage({ params }: PageProps<"/jobs/[jobId]">) {
   const actor = await requirePermission("jobs.view");
   const { jobId } = await params;
-  const detail = await getJob(db, actor, jobId);
-  if (!detail) notFound();
+  // The pickers don't depend on the job: read them while the job loads.
+  const pickers = can(actor, "jobs.manage")
+    ? Promise.all([staffOptions(db, actor), qaSiteOptions(db, actor)])
+    : null;
+  const row = await findJob(db, actor, jobId);
+  if (!row) notFound();
+  // Everything else in one round, decided from the job itself (ADR 0018): the details,
+  // the equipment to add while planning, the money once the work is done, and the
+  // loggers to book once the client's gate pass is in.
+  const was = row.job.status as JobStatus;
+  const manage = can(actor, "jobs.manage");
+  const stillPlanning =
+    PLANNING.includes(was) ||
+    (was === "on_hold" && PLANNING.includes(row.job.heldFrom as JobStatus));
+  const gateOnJob = row.job.gatePassNumber.trim() !== "" || row.job.gatePassNotNeeded;
+  const [detail, picked, equipment, money, early] = await Promise.all([
+    jobDetail(db, actor, row),
+    pickers ?? Promise.resolve(null),
+    manage && stillPlanning
+      ? siteEquipment(db, actor, row.job.clientSiteId)
+      : Promise.resolve([] as Awaited<ReturnType<typeof siteEquipment>>),
+    LATE.includes(was)
+      ? jobMoney(db, actor, row.job.id, { job: row.job, terms: row.terms })
+      : Promise.resolve(null),
+    manage && HOLDS_INSTRUMENTS.includes(was) && gateOnJob
+      ? bookingChoices(db, actor, row.job.id, { job: row.job })
+      : Promise.resolve(null),
+  ]);
   const { job, status, readiness, canManage } = detail;
   const planning =
     PLANNING.includes(status) ||
     (status === "on_hold" && PLANNING.includes(job.heldFrom as JobStatus));
   const finished = status === "closed" || status === "cancelled";
+  // The client's order: a PO/SRF number, or the ARC/AMC it is done under (QA Tech, Nov 2026).
+  const orderItem = readiness.items.find((i) => i.key === "purchase_order");
+  const orderPending = orderItem?.state === "pending";
+  const short = ORDER_TYPE_SHORT[detail.order.type];
+  const orderText = detail.order.contract
+    ? `${short} ${detail.order.contract.number}${job.poNumber ? ` · release order ${job.poNumber}` : ""}`
+    : job.poNumber
+      ? `${short} ${job.poNumber}${job.poDate ? ` of ${dmy(job.poDate)}` : ""}`
+      : `${short} pending`;
+  const canRecordOrder = !finished && (canManage || can(actor, "billing.record"));
   const canBook = canManage && HOLDS_INSTRUMENTS.includes(status);
-  const [staff, qaSites, equipment] = canManage
-    ? await Promise.all([
-        staffOptions(db, actor),
-        qaSiteOptions(db, actor),
-        planning ? siteEquipment(db, actor, job.clientSiteId) : Promise.resolve([]),
-      ])
-    : [[], [], []];
-  const money = LATE.includes(status) ? await jobMoney(db, actor, job.id) : null;
+  // The booking follows the client's gate pass (QA Tech, Nov 2026).
+  const gateItem = readiness.items.find((i) => i.key === "site_access");
+  const gateDone = gateItem?.state !== "pending";
+  const mastersNeeded = readiness.items.find((i) => i.key === "masters_valid")?.state !== "na";
+  // A gate pass ticked by hand before the gate pass step only shows in the readiness:
+  // then the booking choices come one round later.
+  const choices =
+    canBook && gateDone
+      ? (early ??
+        (await bookingChoices(db, actor, job.id, {
+          job: detail.loaded.job,
+          input: detail.loaded.input,
+        })))
+      : null;
+  const [staff, qaSites] = canManage && picked ? picked : [[], []];
   const onJob = new Set(detail.studies.map((s) => s.equipmentId));
   const addable = equipment.filter((e) => !onJob.has(e.id));
   const allowed = (Object.keys(TRANSITIONS) as Transition[]).filter((t) =>
@@ -134,13 +195,15 @@ export default async function JobPage({ params }: PageProps<"/jobs/[jobId]">) {
                 jobId={job.id}
                 qaSites={qaSites}
                 canSeeMoney={detail.canSeeMoney}
+                contracts={detail.contracts}
                 values={{
                   siteId: job.siteId ?? "",
                   title: job.title,
+                  orderType: job.orderType,
+                  contractId: job.contractId ?? "",
                   poNumber: job.poNumber,
                   poDate: job.poDate ?? "",
                   poValue: job.poValue ?? "",
-                  quotedValue: job.quotedValue ?? "",
                   plannedStart: job.plannedStart,
                   plannedEnd: job.plannedEnd,
                   notes: job.notes,
@@ -157,16 +220,51 @@ export default async function JobPage({ params }: PageProps<"/jobs/[jobId]">) {
           {status === "cancelled" && job.cancelledReason ? (
             <span className="text-sm text-fail">Cancelled: {job.cancelledReason}</span>
           ) : null}
-          {job.poNumber ? (
-            <span className="text-sm text-muted-foreground">
-              PO {job.poNumber}
-              {job.poDate ? ` of ${dmy(job.poDate)}` : ""}
-            </span>
+          <span
+            className={cn("text-sm", orderPending ? "text-attention" : "text-muted-foreground")}
+          >
+            {orderText}
+            {detail.order.file ? (
+              <>
+                {" · "}
+                <a
+                  href={`/jobs/${job.id}/order`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline"
+                >
+                  copy
+                </a>
+              </>
+            ) : null}
+          </span>
+          {canRecordOrder ? (
+            <RecordOrderButton
+              jobId={job.id}
+              contracts={detail.contracts}
+              canSeeMoney={detail.canSeeMoney}
+              start={job.plannedStart}
+              file={detail.order.file}
+              pending={orderPending}
+              values={{
+                orderType: job.orderType,
+                contractId: job.contractId ?? "",
+                poNumber: job.poNumber,
+                poDate: job.poDate ?? "",
+                poValue: job.poValue ?? "",
+              }}
+            />
           ) : null}
           {detail.qaSite ? (
             <span className="text-sm text-muted-foreground">From {detail.qaSite.name}</span>
           ) : null}
         </div>
+        {planning && detail.datesWarning ? (
+          <p className="flex gap-1.5 text-sm text-attention">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+            {detail.datesWarning}
+          </p>
+        ) : null}
       </div>
 
       {canManage && allowed.length > 0 ? <StatusButtons jobId={job.id} allowed={allowed} /> : null}
@@ -299,34 +397,21 @@ export default async function JobPage({ params }: PageProps<"/jobs/[jobId]">) {
                 Value
               </h2>
               <dl className="grid grid-cols-2 gap-x-3 gap-y-1">
-                <dt className="text-muted-foreground">
-                  {detail.value.source === "quote" ? "Custom quote" : "Rate card"}
-                </dt>
+                <dt className="text-muted-foreground">{short} value</dt>
                 <dd className="text-right">
-                  {detail.value.expected === null ? "Not priced" : formatInr(detail.value.expected)}
+                  {job.poValue ? (
+                    rupees(job.poValue)
+                  ) : (
+                    <span className="text-attention">Pending</span>
+                  )}
                 </dd>
-                <dt className="text-muted-foreground">PO value</dt>
-                <dd className="text-right">{job.poValue ? rupees(job.poValue) : "Not entered"}</dd>
+                {detail.value.source === "quote" ? (
+                  <>
+                    <dt className="text-muted-foreground">Quoted earlier</dt>
+                    <dd className="text-right">{formatInr(detail.value.expected!)}</dd>
+                  </>
+                ) : null}
               </dl>
-              {detail.value.poDifference !== null && detail.value.poDifference !== 0 ? (
-                <p className="flex gap-1.5 text-attention">
-                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                  The PO is {formatInr(Math.abs(detail.value.poDifference))}{" "}
-                  {detail.value.poDifference < 0 ? "below" : "above"} the expected value.
-                </p>
-              ) : null}
-              {detail.value.unpriced > 0 && detail.value.source === "rate_card" ? (
-                <p className="text-xs text-muted-foreground">
-                  {detail.value.unpriced === 1
-                    ? "1 study has"
-                    : `${detail.value.unpriced} studies have`}{" "}
-                  no rate.{" "}
-                  <Link href="/jobs/rates" className="underline">
-                    Rate card
-                  </Link>
-                </p>
-              ) : null}
-              {canManage && planning ? <RepriceButton jobId={job.id} /> : null}
             </section>
           ) : null}
         </div>
@@ -354,7 +439,6 @@ export default async function JobPage({ params }: PageProps<"/jobs/[jobId]">) {
               <TableHead>Work</TableHead>
               <TableHead className="hidden md:table-cell">Report number</TableHead>
               <TableHead className="text-right">Loggers</TableHead>
-              {detail.canSeeMoney ? <TableHead className="text-right">Price</TableHead> : null}
               {canManage && planning ? (
                 <TableHead>
                   <span className="sr-only">Actions</span>
@@ -423,7 +507,8 @@ export default async function JobPage({ params }: PageProps<"/jobs/[jobId]">) {
                       s.durationHours ? `${s.durationHours} h` : null,
                       s.intervalMinutes ? `every ${s.intervalMinutes} min` : null,
                       s.season ? s.season : null,
-                      s.postCalRequired ? "post-cal" : null,
+                      calibrationOf(s).pre ? "pre-cal" : null,
+                      calibrationOf(s).post ? "post-cal" : null,
                     ]
                       .filter(Boolean)
                       .join(" · ")}
@@ -433,12 +518,6 @@ export default async function JobPage({ params }: PageProps<"/jobs/[jobId]">) {
                   {s.reportNumber}
                 </TableCell>
                 <TableCell className="text-right">{s.loggerCount}</TableCell>
-                {detail.canSeeMoney ? (
-                  <TableCell className="text-right">
-                    {s.price ? rupees(s.price) : "—"}
-                    <p className="text-xs text-muted-foreground">{s.priceNote}</p>
-                  </TableCell>
-                ) : null}
                 {canManage && planning ? (
                   <TableCell className="text-right whitespace-nowrap">
                     <EditStudyButton
@@ -452,6 +531,8 @@ export default async function JobPage({ params }: PageProps<"/jobs/[jobId]">) {
                         season: s.season,
                         durationHours: s.durationHours,
                         intervalMinutes: s.intervalMinutes,
+                        preCalRequired: s.preCalRequired,
+                        postCalRequired: s.postCalRequired,
                       }}
                     />
                     <RemoveStudyButton jobId={job.id} studyId={s.id} code={s.equipment.code} />
@@ -478,22 +559,50 @@ export default async function JobPage({ params }: PageProps<"/jobs/[jobId]">) {
                 : ""}
             </p>
           </div>
-          {canBook ? (
-            <div className="flex flex-wrap items-start gap-2">
+          <div className="flex flex-wrap items-start gap-2">
+            {gateDone && (job.gatePassNumber || detail.booked.length > 0) ? (
+              <Button variant="secondary" size="sm" asChild>
+                <a href={`/jobs/${job.id}/gate-pass`} target="_blank" rel="noreferrer">
+                  <Printer aria-hidden="true" />
+                  Gate pass list
+                </a>
+              </Button>
+            ) : null}
+            {canBook && gateDone && mastersNeeded ? (
               <AutoBookButton
                 jobId={job.id}
-                label={loggers.length === 0 ? "Book loggers" : "Top up"}
+                label={masters.length ? "Book masters again" : "Book masters"}
               />
-              <PasteBookButton jobId={job.id} />
-            </div>
-          ) : null}
+            ) : null}
+          </div>
         </div>
+        {canBook ? (
+          gateDone ? (
+            <>
+              <div className="text-sm text-muted-foreground">
+                Gate pass: {gateItem?.detail}{" "}
+                <details className="inline">
+                  <summary className="inline cursor-pointer text-primary underline">change</summary>
+                  <GatePassForm
+                    jobId={job.id}
+                    number={job.gatePassNumber}
+                    hasScan={!!job.gatePassFileId}
+                  />
+                </details>
+              </div>
+              {choices ? <BookingPicker jobId={job.id} choices={choices} /> : null}
+            </>
+          ) : (
+            <GatePassForm
+              jobId={job.id}
+              number={job.gatePassNumber}
+              hasScan={!!job.gatePassFileId}
+            />
+          )
+        ) : null}
         {detail.booked.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            None booked yet.{" "}
-            {canBook
-              ? "“Book loggers” picks valid, free loggers from your site, one model where possible, with spares."
-              : ""}
+            None booked yet. {canBook && !gateDone ? "Enter the client's gate pass first." : ""}
           </p>
         ) : (
           <Table>

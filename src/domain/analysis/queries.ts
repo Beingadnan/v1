@@ -23,6 +23,8 @@ import type { JobStatus } from "@/domain/jobs/types";
 
 import { approvalBlockers } from "./analysis-service";
 import { excursionKey, type DeviationDecision, type DeviationSource } from "./types";
+import { calibrationOf } from "@/domain/jobs/studies";
+import { effectiveResult } from "@/domain/field/override-service";
 
 /** Everything the Analysis tab shows for a study. */
 export async function getStudyAnalysis(db: Database, actor: SessionUser, studyId: string) {
@@ -42,39 +44,87 @@ export async function getStudyAnalysis(db: Database, actor: SessionUser, studyId
   if (!row) return null;
   const { study } = row;
 
-  const { run, stale, out: blockers } = await approvalBlockers(db, actor.organisationId, study);
-  const runs = await db
-    .select({
-      id: studyAnalysisRuns.id,
-      runNo: studyAnalysisRuns.runNo,
-      kind: studyAnalysisRuns.kind,
-      deviationId: studyAnalysisRuns.deviationId,
-      engineVersion: studyAnalysisRuns.engineVersion,
-      inputHash: studyAnalysisRuns.inputHash,
-      createdAt: studyAnalysisRuns.createdAt,
-      by: users.name,
-    })
-    .from(studyAnalysisRuns)
-    .innerJoin(users, eq(users.id, studyAnalysisRuns.byUserId))
-    .where(eq(studyAnalysisRuns.studyId, study.id))
-    .orderBy(desc(studyAnalysisRuns.runNo));
+  // Started first, awaited after the rest: it reads the most.
+  const blockersRead = approvalBlockers(db, actor.organisationId, study);
+  const [runs, reviews, devRows, peopleRows, positions, post, masters] = await Promise.all([
+    db
+      .select({
+        id: studyAnalysisRuns.id,
+        runNo: studyAnalysisRuns.runNo,
+        kind: studyAnalysisRuns.kind,
+        deviationId: studyAnalysisRuns.deviationId,
+        engineVersion: studyAnalysisRuns.engineVersion,
+        inputHash: studyAnalysisRuns.inputHash,
+        createdAt: studyAnalysisRuns.createdAt,
+        by: users.name,
+      })
+      .from(studyAnalysisRuns)
+      .innerJoin(users, eq(users.id, studyAnalysisRuns.byUserId))
+      .where(eq(studyAnalysisRuns.studyId, study.id))
+      .orderBy(desc(studyAnalysisRuns.runNo)),
+    db
+      .select({ r: studyExcursionReviews, by: users.name })
+      .from(studyExcursionReviews)
+      .innerJoin(users, eq(users.id, studyExcursionReviews.byUserId))
+      .where(eq(studyExcursionReviews.studyId, study.id))
+      .orderBy(asc(studyExcursionReviews.at)),
+    db
+      .select({ d: deviations, file: storedFiles.firstFileName })
+      .from(deviations)
+      .leftJoin(storedFiles, eq(storedFiles.id, deviations.decisionFileId))
+      .where(eq(deviations.studyId, study.id))
+      .orderBy(asc(deviations.openedAt)),
+    db
+      .select({ id: users.id, name: users.name })
+      .from(users)
+      .where(eq(users.organisationId, actor.organisationId)),
+    db
+      .select({
+        id: studyPositions.id,
+        label: studyPositions.label,
+        ambient: studyPositions.ambient,
+        instrumentId: studyPositions.instrumentId,
+        code: instruments.code,
+        serialNo: instruments.serialNo,
+      })
+      .from(studyPositions)
+      .leftJoin(instruments, eq(instruments.id, studyPositions.instrumentId))
+      .where(eq(studyPositions.studyId, study.id))
+      .orderBy(asc(studyPositions.sort)),
+    // Post-calibration per placed logger: the latest reading per quantity.
+    db
+      .select({
+        id: studyPrecal.id,
+        instrumentId: studyPrecal.instrumentId,
+        quantity: studyPrecal.quantity,
+        reference: studyPrecal.reference,
+        reading: studyPrecal.reading,
+        deviation: studyPrecal.deviation,
+        tolerance: studyPrecal.tolerance,
+        // An approved override's result, else the computed one.
+        result: effectiveResult,
+        at: studyPrecal.at,
+        by: users.name,
+      })
+      .from(studyPrecal)
+      .leftJoin(users, eq(users.id, studyPrecal.byUserId))
+      .where(and(eq(studyPrecal.studyId, study.id), eq(studyPrecal.phase, "post")))
+      .orderBy(asc(studyPrecal.at)),
+    db
+      .select({ id: instruments.id, code: instruments.code, serialNo: instruments.serialNo })
+      .from(instruments)
+      .where(
+        and(eq(instruments.organisationId, actor.organisationId), eq(instruments.tier, "master")),
+      )
+      .orderBy(asc(instruments.code)),
+  ]);
+  const { run, stale, out: blockers } = await blockersRead;
+  const people = new Map(peopleRows.map((u) => [u.id, u.name]));
 
-  const reviews = await db
-    .select({ r: studyExcursionReviews, by: users.name })
-    .from(studyExcursionReviews)
-    .innerJoin(users, eq(users.id, studyExcursionReviews.byUserId))
-    .where(eq(studyExcursionReviews.studyId, study.id))
-    .orderBy(asc(studyExcursionReviews.at));
   const liveReview = new Map(
     reviews.filter((x) => !x.r.withdrawnAt).map((x) => [x.r.fingerprint, x]),
   );
 
-  const devRows = await db
-    .select({ d: deviations, file: storedFiles.firstFileName })
-    .from(deviations)
-    .leftJoin(storedFiles, eq(storedFiles.id, deviations.decisionFileId))
-    .where(eq(deviations.studyId, study.id))
-    .orderBy(asc(deviations.openedAt));
   const impactRuns =
     devRows.length === 0
       ? []
@@ -91,27 +141,6 @@ export async function getStudyAnalysis(db: Database, actor: SessionUser, studyId
             ),
           )
           .orderBy(desc(studyAnalysisRuns.runNo));
-  const people = new Map(
-    (
-      await db
-        .select({ id: users.id, name: users.name })
-        .from(users)
-        .where(eq(users.organisationId, actor.organisationId))
-    ).map((u) => [u.id, u.name]),
-  );
-  const positions = await db
-    .select({
-      id: studyPositions.id,
-      label: studyPositions.label,
-      ambient: studyPositions.ambient,
-      instrumentId: studyPositions.instrumentId,
-      code: instruments.code,
-      serialNo: instruments.serialNo,
-    })
-    .from(studyPositions)
-    .leftJoin(instruments, eq(instruments.id, studyPositions.instrumentId))
-    .where(eq(studyPositions.studyId, study.id))
-    .orderBy(asc(studyPositions.sort));
   const label = new Map(positions.map((p) => [p.id, p.label]));
 
   const deviationList = devRows.map(({ d, file }) => {
@@ -152,31 +181,6 @@ export async function getStudyAnalysis(db: Database, actor: SessionUser, studyId
     };
   });
 
-  // Post-calibration per placed logger: the latest reading per quantity.
-  const post = await db
-    .select({
-      id: studyPrecal.id,
-      instrumentId: studyPrecal.instrumentId,
-      quantity: studyPrecal.quantity,
-      reference: studyPrecal.reference,
-      reading: studyPrecal.reading,
-      deviation: studyPrecal.deviation,
-      tolerance: studyPrecal.tolerance,
-      result: studyPrecal.result,
-      at: studyPrecal.at,
-      by: users.name,
-    })
-    .from(studyPrecal)
-    .leftJoin(users, eq(users.id, studyPrecal.byUserId))
-    .where(and(eq(studyPrecal.studyId, study.id), eq(studyPrecal.phase, "post")))
-    .orderBy(asc(studyPrecal.at));
-  const masters = await db
-    .select({ id: instruments.id, code: instruments.code, serialNo: instruments.serialNo })
-    .from(instruments)
-    .where(
-      and(eq(instruments.organisationId, actor.organisationId), eq(instruments.tier, "master")),
-    )
-    .orderBy(asc(instruments.code));
   const postCal = positions
     .filter((p) => p.instrumentId)
     .map((p) => {
@@ -228,7 +232,7 @@ export async function getStudyAnalysis(db: Database, actor: SessionUser, studyId
       jobStatus: row.jobStatus as JobStatus,
       dataStatus: study.dataStatus,
       thermal: study.workType === "thermal_validation",
-      postCalRequired: study.postCalRequired || study.workType === "thermal_validation",
+      postCalRequired: calibrationOf(study).post,
       limits: {
         tempMin: study.tempMinC,
         tempMax: study.tempMaxC,

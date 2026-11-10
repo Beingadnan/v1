@@ -141,6 +141,55 @@
       "when": 1793629831212,
       "tag": "0019_readiness_dates_fit",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1793850315705,
+      "tag": "0020_job_number_month",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1793850708002,
+      "tag": "0021_study_pre_cal",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1793888681107,
+      "tag": "0022_order_types_contracts",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1794316366717,
+      "tag": "0023_gate_pass",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1794316699205,
+      "tag": "0024_precal_overrides",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1794317795818,
+      "tag": "0025_room_type",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1794318300990,
+      "tag": "0026_plan_features",
+      "breakpoints": true
     }
   ]
 }

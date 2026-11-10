@@ -4,6 +4,8 @@ import PDFDocument from "pdfkit";
 
 import type { CycleResult, EngineResult, Stats } from "@/domain/analysis/engine";
 import { BOX_EDGES, mm, projector, spreadLabels, type Point } from "@/domain/field/layout";
+import { drawPlan } from "@/domain/field/plan-pdf";
+import type { PlanFeature } from "@/domain/field/types";
 
 import { FT09_FORM, type ReportLayout, type ReportSection, type SignBox } from "./types";
 
@@ -39,6 +41,10 @@ export type ReportData = {
     serialNo: string;
     department: string;
     dims: { lengthM: number | null; widthM: number | null; heightM: number | null };
+    /** "Room" (QA Tech's WH013) or "Area" for a store; "Equipment" when left out. */
+    noun?: "Room" | "Area" | "Equipment";
+    /** A room: drawn as a floor plan with a table of locations, not as a box. */
+    plan?: boolean;
   };
   study: {
     typeLabel: string;
@@ -64,7 +70,11 @@ export type ReportData = {
     z: number;
     ambient: boolean;
     serial: string;
+    /** Where it sits, as written on site ("Working height on wall-1 near pass box"). */
+    note?: string;
   }[];
+  /** Doors, pass boxes, LAFs… marked on a room's plan. */
+  planFeatures?: PlanFeature[];
   loggers: {
     label: string;
     serial: string;
@@ -95,6 +105,14 @@ export type ReportData = {
     deviation: string;
     tolerance: string;
     result: string;
+    /** An approved override: the result above is the one in force. */
+    override?: {
+      computed: string;
+      reason: string;
+      requestedBy: string;
+      approvedBy: string;
+      on: string;
+    } | null;
   }[];
   deviations: {
     number: string;
@@ -182,6 +200,11 @@ class Builder {
   marks = new Map<string, number>();
   /** The signature block's cells, for stamping signatures on the frozen PDF (phase 9). */
   signBoxes: ReportLayout["signBoxes"] = null;
+
+  /** "Room", "Area" or "Equipment". */
+  get noun() {
+    return this.d.equipment.noun ?? "Equipment";
+  }
 
   constructor(private d: ReportData) {
     this.doc = new PDFDocument({
@@ -393,7 +416,7 @@ class Builder {
     });
     const top = this.y;
     doc.rect(x - 3, top - 3, w + 6, 54).fill("#7f7f7f");
-    this.cell(x, top, 80, 22, "Equipment ID :", { bold: true, size: 8, fill: SHADE });
+    this.cell(x, top, 80, 22, `${this.noun} ID :`, { bold: true, size: 8, fill: SHADE });
     this.cell(x + 80, top, w - 80, 22, d.equipment.code, {
       bold: true,
       size: 10,
@@ -435,7 +458,7 @@ class Builder {
     const { d } = this;
     this.page("body", "details");
     this.headerBox();
-    this.title("Equipment & Mapping Details");
+    this.title(`${this.noun} & Mapping Details`);
     const w = this.content;
     const k = w * 0.2;
     const v = w * 0.3;
@@ -449,12 +472,12 @@ class Builder {
       l.rhMax !== null || l.rhMin !== null ? ` / ${plain(l.rhMin)} to ${plain(l.rhMax)} %RH` : "";
     const pairs: [string, string, string, string][] = [
       [
-        "Equipment Name",
+        `${this.noun} Name`,
         d.equipment.name,
         "Set Point",
         s.setPoint === null ? "-" : `${plain(s.setPoint)} °C`,
       ],
-      ["Equipment ID", d.equipment.code, "Acceptance Range", acceptance + rhRange],
+      [`${this.noun} ID`, d.equipment.code, "Acceptance Range", acceptance + rhRange],
       ["Location", d.equipment.location || "-", "Mapping End Date", ist(s.end).date],
       ["Make", d.equipment.make || "NA", "Next Due Date", dmy(s.nextDue) || "-"],
       [
@@ -555,57 +578,83 @@ class Builder {
     const hot = new Set(d.result.cycles.map((c) => c.hot?.positionId).filter(Boolean));
     const cold = new Set(d.result.cycles.map((c) => c.cold?.positionId).filter(Boolean));
     const legendW = 90;
-    const box = { x: M, y: this.y + 4, w: this.content, h: this.bottom - this.y - 24 };
+    // A room: the floor plan, then the table of locations (QA Tech's WH013 page 3).
+    const area = d.equipment.plan === true;
+    const inPlan = d.positions.filter((p) => !p.ambient);
+    const tableH = area ? 16 + Math.min(d.positions.length, 24) * 14 : 0;
+    const box = {
+      x: M,
+      y: this.y + 4,
+      w: this.content,
+      h: Math.max(220, this.bottom - this.y - 24 - (area ? tableH + 10 : 0)),
+    };
     const dims = d.equipment.dims;
-    const project = projector(dims, { width: box.w - legendW, height: box.h, margin: 46 });
-    const at = (p: Point) => {
-      const q = project(p);
-      return { x: box.x + q.x, y: box.y + q.y };
-    };
-    doc.lineWidth(1.1).strokeColor("#111111");
-    for (const [a, b] of BOX_EDGES) {
-      const hidden = (a.x === 0 && a.y === 1 && a.z === 0) || (b.x === 0 && b.y === 1 && b.z === 0);
-      const pa = at(a);
-      const pb = at(b);
-      if (hidden) doc.dash(3, { space: 2 });
-      doc.moveTo(pa.x, pa.y).lineTo(pb.x, pb.y).stroke();
-      doc.undash();
-    }
-    doc.font("Helvetica").fontSize(7.5).fillColor("#000000");
-    const sizeTag = (p: Point, text: string, dx: number, dy: number) => {
-      const q = at(p);
-      doc
-        .lineWidth(0.5)
-        .strokeColor(BORDER)
-        .rect(q.x + dx, q.y + dy, 56, 12)
-        .stroke();
-      doc.text(ascii(text), q.x + dx, q.y + dy + 2.5, { width: 56, align: "center" });
-    };
-    sizeTag({ x: 0.5, y: 1, z: 1 }, `L-${mm(dims.lengthM)}`, -28, -20);
-    sizeTag({ x: 1, y: 1, z: 0.5 }, `H ${mm(dims.heightM)}`, 10, -6);
-    sizeTag({ x: 0, y: 0.5, z: 1 }, `W-${mm(dims.widthM)}`, -62, -6);
-    const inside = d.positions.filter((p) => !p.ambient);
-    const labels = spreadLabels(
-      inside.map((p) => ({ ...at(p), label: p.label, id: p.id })),
-      { w: 30, h: 13 },
-    );
-    for (const q of labels) {
-      const fill = hot.has(q.id) ? HOT : cold.has(q.id) ? COLD : "#ffffff";
-      doc
-        .lineWidth(0.6)
-        .strokeColor("#222222")
-        .fillColor(fill)
-        .ellipse(q.x, q.y, 15, 6.5)
-        .fillAndStroke();
-      doc
-        .font("Helvetica-Bold")
-        .fontSize(6)
-        .fillColor(hot.has(q.id) ? "#ffffff" : "#000000")
-        .text(ascii(q.label), q.x - 15, q.y - 2.4, {
-          width: 30,
-          align: "center",
-          lineBreak: false,
-        });
+    if (area) {
+      drawPlan(
+        doc,
+        { x: box.x, y: box.y, w: box.w - legendW, h: box.h },
+        dims,
+        inPlan.map((p) => ({
+          label: p.label,
+          x: p.x,
+          y: p.y,
+          fill: hot.has(p.id) ? HOT : cold.has(p.id) ? COLD : "#ffffff",
+          text: hot.has(p.id) ? "#ffffff" : "#000000",
+        })),
+        d.planFeatures ?? [],
+      );
+    } else {
+      const project = projector(dims, { width: box.w - legendW, height: box.h, margin: 46 });
+      const at = (p: Point) => {
+        const q = project(p);
+        return { x: box.x + q.x, y: box.y + q.y };
+      };
+      doc.lineWidth(1.1).strokeColor("#111111");
+      for (const [a, b] of BOX_EDGES) {
+        const hidden =
+          (a.x === 0 && a.y === 1 && a.z === 0) || (b.x === 0 && b.y === 1 && b.z === 0);
+        const pa = at(a);
+        const pb = at(b);
+        if (hidden) doc.dash(3, { space: 2 });
+        doc.moveTo(pa.x, pa.y).lineTo(pb.x, pb.y).stroke();
+        doc.undash();
+      }
+      doc.font("Helvetica").fontSize(7.5).fillColor("#000000");
+      const sizeTag = (p: Point, text: string, dx: number, dy: number) => {
+        const q = at(p);
+        doc
+          .lineWidth(0.5)
+          .strokeColor(BORDER)
+          .rect(q.x + dx, q.y + dy, 56, 12)
+          .stroke();
+        doc.text(ascii(text), q.x + dx, q.y + dy + 2.5, { width: 56, align: "center" });
+      };
+      sizeTag({ x: 0.5, y: 1, z: 1 }, `L-${mm(dims.lengthM)}`, -28, -20);
+      sizeTag({ x: 1, y: 1, z: 0.5 }, `H ${mm(dims.heightM)}`, 10, -6);
+      sizeTag({ x: 0, y: 0.5, z: 1 }, `W-${mm(dims.widthM)}`, -62, -6);
+      const inside = d.positions.filter((p) => !p.ambient);
+      const labels = spreadLabels(
+        inside.map((p) => ({ ...at(p), label: p.label, id: p.id })),
+        { w: 30, h: 13 },
+      );
+      for (const q of labels) {
+        const fill = hot.has(q.id) ? HOT : cold.has(q.id) ? COLD : "#ffffff";
+        doc
+          .lineWidth(0.6)
+          .strokeColor("#222222")
+          .fillColor(fill)
+          .ellipse(q.x, q.y, 15, 6.5)
+          .fillAndStroke();
+        doc
+          .font("Helvetica-Bold")
+          .fontSize(6)
+          .fillColor(hot.has(q.id) ? "#ffffff" : "#000000")
+          .text(ascii(q.label), q.x - 15, q.y - 2.4, {
+            width: 30,
+            align: "center",
+            lineBreak: false,
+          });
+      }
     }
     const lx = box.x + box.w - legendW + 30;
     const ly = box.y + box.h - 150;
@@ -637,6 +686,20 @@ class Builder {
       });
     }
     this.y = box.y + box.h + 8;
+    if (area) {
+      const w = this.content;
+      this.row(16, [
+        ["Location No.", 90, { bold: true, align: "center", fill: SHADE }],
+        ["Location", w - 90, { bold: true, align: "center", fill: SHADE }],
+      ]);
+      for (const p of d.positions) {
+        this.ensure(14, "body");
+        this.row(14, [
+          [p.label, 90, { align: "center" }],
+          [p.note || (p.ambient ? "Outside the room (ambient)" : "-"), w - 90, {}],
+        ]);
+      }
+    }
   }
 
   graph(c: CycleResult, cycleCount: number) {
@@ -644,7 +707,9 @@ class Builder {
     this.page("body", "graph");
     this.headerBox();
     this.title(
-      cycleCount > 1 ? `Equipment & Mapping Details: ${c.label}` : "Equipment & Mapping Details",
+      cycleCount > 1
+        ? `${this.noun} & Mapping Details: ${c.label}`
+        : `${this.noun} & Mapping Details`,
     );
     const w = this.content;
     const s = d.study;
@@ -658,7 +723,7 @@ class Builder {
         : "-";
     for (const [a, b, c2, d2] of [
       [
-        "Equipment Name",
+        `${this.noun} Name`,
         d.equipment.name,
         "Set Point",
         s.setPoint === null ? "-" : `${plain(s.setPoint)} °C`,
@@ -1129,8 +1194,25 @@ class Builder {
         [p.reading, cols[4]![1], { align: "center" }],
         [p.deviation, cols[5]![1], { align: "center" }],
         [`±${p.tolerance}`, cols[6]![1], { align: "center" }],
-        [p.result === "pass" ? "Pass" : "Fail", cols[7]![1], { bold: true, align: "center" }],
+        [
+          `${p.result === "pass" ? "Pass" : "Fail"}${p.override ? " *" : ""}`,
+          cols[7]![1],
+          { bold: true, align: "center" },
+        ],
       ]);
+    }
+    // Overridden results: the readings' verdict, why it was changed and who approved it.
+    const overridden = d.postCal.filter((p) => p.override);
+    for (const p of overridden) {
+      const o = p.override!;
+      const text = ascii(
+        `* ${p.label || p.serial}: ${o.computed === "pass" ? "Pass" : "Fail"} by the readings, taken as ${p.result === "pass" ? "Pass" : "Fail"}. ${o.reason} Asked by ${o.requestedBy}; approved by ${o.approvedBy} on ${o.on}.`,
+      );
+      this.doc.font("Helvetica").fontSize(7.5);
+      const h = this.doc.heightOfString(text, { width: this.content }) + 4;
+      this.ensure(h, "postcal");
+      this.doc.fillColor("#000000").text(text, M, this.y + 2, { width: this.content });
+      this.y += h;
     }
   }
 
@@ -1274,7 +1356,7 @@ export async function renderReport(d: ReportData): Promise<RenderedReport> {
     const rawPages = b ? b.kinds.filter((k) => k === "raw").length : 0;
     const rows: [string, string][] = [
       ["Index", at("index")],
-      ["Equipment & Mapping Details", at("details")],
+      [`${d.equipment.noun ?? "Equipment"} & Mapping Details`, at("details")],
       ["Diagram Indicating Sensor Positions", at("diagram")],
       [
         "Graphical Representation of Temperature V/S Time & Summary Report",

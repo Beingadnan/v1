@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, desc, eq, inArray, isNotNull, ne } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql, isNotNull, ne } from "drizzle-orm";
 
 import type { Database } from "@/db/client-factory";
 import {
@@ -49,27 +49,59 @@ export async function getStudyReport(db: Database, actor: SessionUser, studyId: 
     .where(and(eq(studies.id, studyId), eq(studies.organisationId, actor.organisationId)));
   if (!row) return null;
   const { study } = row;
-  const revisions = await db
-    .select({ r: studyReports, by: users.name })
+  // The study is checked against the organisation above; the rest goes out at once.
+  const revisionIds = db
+    .select({ id: studyReports.id })
     .from(studyReports)
-    .leftJoin(users, eq(users.id, studyReports.createdByUserId))
-    .where(eq(studyReports.studyId, study.id))
-    .orderBy(desc(studyReports.rev));
-  const frozenBy = new Map(
-    (
-      await db
-        .select({ id: users.id, name: users.name })
-        .from(users)
-        .where(eq(users.organisationId, actor.organisationId))
-    ).map((u) => [u.id, u.name]),
-  );
+    .where(eq(studyReports.studyId, study.id));
+  const approved = Boolean(study.analysisApprovedAt && study.analysisRunId);
+  const [revisions, staff, blockers, sigs, paper, comments, people] = await Promise.all([
+    db
+      .select({ r: studyReports, by: users.name })
+      .from(studyReports)
+      .leftJoin(users, eq(users.id, studyReports.createdByUserId))
+      .where(eq(studyReports.studyId, study.id))
+      .orderBy(desc(studyReports.rev)),
+    db
+      .select({ id: users.id, name: users.name })
+      .from(users)
+      .where(eq(users.organisationId, actor.organisationId)),
+    approved ? approvalBlockers(db, actor.organisationId, study) : Promise.resolve(null),
+    db
+      .select()
+      .from(signatures)
+      .where(
+        and(
+          eq(signatures.entityType, "report"),
+          // signatures.entity_id is text (it points at any kind of record).
+          inArray(
+            signatures.entityId,
+            db
+              .select({ id: sql<string>`${studyReports.id}::text` })
+              .from(studyReports)
+              .where(eq(studyReports.studyId, study.id)),
+          ),
+        ),
+      )
+      .orderBy(asc(signatures.signedAt)),
+    db.select().from(reportPaperSignoffs).where(inArray(reportPaperSignoffs.reportId, revisionIds)),
+    db
+      .select({ c: reportComments, by: users.name, rev: studyReports.rev })
+      .from(reportComments)
+      .innerJoin(users, eq(users.id, reportComments.byUserId))
+      .innerJoin(studyReports, eq(studyReports.id, reportComments.reportId))
+      .where(eq(reportComments.studyId, study.id))
+      .orderBy(asc(reportComments.createdAt)),
+    clientRecipients(db, row.companyId),
+  ]);
+  const frozenBy = new Map(staff.map((u) => [u.id, u.name]));
 
   // Why a report can't be made yet, in words.
   let blocked: string | null = null;
-  if (!study.analysisApprovedAt || !study.analysisRunId) {
+  if (!blockers) {
     blocked = "The analysis isn't approved yet (Analysis tab).";
   } else {
-    const { run, out } = await approvalBlockers(db, actor.organisationId, study);
+    const { run, out } = blockers;
     if (!run || run.id !== study.analysisRunId)
       blocked = "A newer analysis was run after the approval.";
     else if (out.length) blocked = out.join(" ");
@@ -85,26 +117,6 @@ export async function getStudyReport(db: Database, actor: SessionUser, studyId: 
       conclusion: conclusionText(ctx.template),
     };
   }
-
-  const ids = revisions.map((x) => x.r.id);
-  const sigs = ids.length
-    ? await db
-        .select()
-        .from(signatures)
-        .where(and(eq(signatures.entityType, "report"), inArray(signatures.entityId, ids)))
-        .orderBy(asc(signatures.signedAt))
-    : [];
-  const paper = ids.length
-    ? await db.select().from(reportPaperSignoffs).where(inArray(reportPaperSignoffs.reportId, ids))
-    : [];
-  const comments = await db
-    .select({ c: reportComments, by: users.name, rev: studyReports.rev })
-    .from(reportComments)
-    .innerJoin(users, eq(users.id, reportComments.byUserId))
-    .innerJoin(studyReports, eq(studyReports.id, reportComments.reportId))
-    .where(eq(reportComments.studyId, study.id))
-    .orderBy(asc(reportComments.createdAt));
-  const people = await clientRecipients(db, row.companyId);
 
   return {
     me: actor.id,
@@ -198,50 +210,55 @@ export type StudyReport = NonNullable<Awaited<ReturnType<typeof getStudyReport>>
 /** The Reports page: every study with a report, and studies whose analysis is approved but not yet reported. */
 export async function listReports(db: Database, actor: SessionUser) {
   assertCan(actor, "jobs.view");
-  const rows = await db
-    .select({
-      studyId: studies.id,
-      reportNumber: studies.reportNumber,
-      code: equipment.code,
-      name: equipment.name,
-      company: clientCompanies.name,
-      jobNumber: jobs.number,
-      jobStatus: jobs.status,
-      approvedAt: studies.analysisApprovedAt,
-    })
-    .from(studies)
-    .innerJoin(jobs, eq(jobs.id, studies.jobId))
-    .innerJoin(equipment, eq(equipment.id, studies.equipmentId))
-    .innerJoin(clientCompanies, eq(clientCompanies.id, jobs.companyId))
-    .where(
-      and(eq(studies.organisationId, actor.organisationId), isNotNull(studies.analysisApprovedAt)),
-    )
-    .orderBy(desc(studies.analysisApprovedAt))
-    .limit(300);
-  const withReports = await db
-    .select({
-      r: studyReports,
-      code: equipment.code,
-      name: equipment.name,
-      company: clientCompanies.name,
-      jobNumber: jobs.number,
-      reportNumber: studies.reportNumber,
-    })
-    .from(studyReports)
-    .innerJoin(studies, eq(studies.id, studyReports.studyId))
-    .innerJoin(jobs, eq(jobs.id, studies.jobId))
-    .innerJoin(equipment, eq(equipment.id, studies.equipmentId))
-    .innerJoin(clientCompanies, eq(clientCompanies.id, jobs.companyId))
-    .where(
-      and(
-        eq(studyReports.organisationId, actor.organisationId),
-        ne(studyReports.status, "superseded"),
-        // A cancelled job's reports are void: they stay on the study, not in this list.
-        ne(jobs.status, "cancelled"),
-      ),
-    )
-    .orderBy(desc(studyReports.createdAt))
-    .limit(300);
+  const [rows, withReports] = await Promise.all([
+    db
+      .select({
+        studyId: studies.id,
+        reportNumber: studies.reportNumber,
+        code: equipment.code,
+        name: equipment.name,
+        company: clientCompanies.name,
+        jobNumber: jobs.number,
+        jobStatus: jobs.status,
+        approvedAt: studies.analysisApprovedAt,
+      })
+      .from(studies)
+      .innerJoin(jobs, eq(jobs.id, studies.jobId))
+      .innerJoin(equipment, eq(equipment.id, studies.equipmentId))
+      .innerJoin(clientCompanies, eq(clientCompanies.id, jobs.companyId))
+      .where(
+        and(
+          eq(studies.organisationId, actor.organisationId),
+          isNotNull(studies.analysisApprovedAt),
+        ),
+      )
+      .orderBy(desc(studies.analysisApprovedAt))
+      .limit(300),
+    db
+      .select({
+        r: studyReports,
+        code: equipment.code,
+        name: equipment.name,
+        company: clientCompanies.name,
+        jobNumber: jobs.number,
+        reportNumber: studies.reportNumber,
+      })
+      .from(studyReports)
+      .innerJoin(studies, eq(studies.id, studyReports.studyId))
+      .innerJoin(jobs, eq(jobs.id, studies.jobId))
+      .innerJoin(equipment, eq(equipment.id, studies.equipmentId))
+      .innerJoin(clientCompanies, eq(clientCompanies.id, jobs.companyId))
+      .where(
+        and(
+          eq(studyReports.organisationId, actor.organisationId),
+          ne(studyReports.status, "superseded"),
+          // A cancelled job's reports are void: they stay on the study, not in this list.
+          ne(jobs.status, "cancelled"),
+        ),
+      )
+      .orderBy(desc(studyReports.createdAt))
+      .limit(300),
+  ]);
   const reported = new Set(withReports.map((x) => x.r.studyId));
   return {
     toStart: rows

@@ -16,7 +16,11 @@ export function createPool(connectionString: string, max: number): Pool {
   const pool = new Pool({
     connectionString,
     max,
-    idleTimeoutMillis: 30_000,
+    // Opening a connection to a distant database (TLS and the password exchange) takes
+    // several round trips, over a second from India to a US region. Keep idle connections
+    // for 5 minutes, so a person clicking around reuses them instead of reconnecting.
+    idleTimeoutMillis: 300_000,
+    keepAlive: true,
     connectionTimeoutMillis: 10_000,
   });
   // Without this handler an idle-client error (e.g. the DB restarts) crashes the process.

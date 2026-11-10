@@ -75,17 +75,20 @@ function List({ rows }: { rows: ClientReportRow[] }) {
 /** The client's home: reports to review or approve, deviations to decide, and the signed archive. */
 export default async function ClientHomePage() {
   const user = await requireUser();
-  const [company] = user.clientCompanyId
-    ? await db
-        .select({ name: clientCompanies.name })
-        .from(clientCompanies)
-        .where(eq(clientCompanies.id, user.clientCompanyId))
-    : [];
+  // Everything on the page goes out together: each read is limited to the person's company.
+  const [[company], rows, deviations, wcrs] = await Promise.all([
+    user.clientCompanyId
+      ? db
+          .select({ name: clientCompanies.name })
+          .from(clientCompanies)
+          .where(eq(clientCompanies.id, user.clientCompanyId))
+      : Promise.resolve([]),
+    listClientReports(db, user),
+    can(user, "deviation.client_decide") ? clientDeviations(db, user) : Promise.resolve([]),
+    clientWcrs(db, user),
+  ]);
   const firstName = user.name.split(/\s+/)[0] ?? user.name;
-  const rows = await listClientReports(db, user);
-  const deviations = can(user, "deviation.client_decide") ? await clientDeviations(db, user) : [];
   const head = can(user, "reports.client_approve");
-  const wcrs = await clientWcrs(db, user);
   const wcrTodo = wcrs.filter((w) => w.canAccept);
   const todo = rows.filter(
     (r) => r.status === "released" || (r.status === "reviewed" && head && !r.reviewedByMe),

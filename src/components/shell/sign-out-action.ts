@@ -6,6 +6,7 @@ import { db } from "@/db/client";
 import { revokeSessionByToken } from "@/domain/auth/session-service";
 import { recordAudit } from "@/lib/audit";
 import { getCurrentSession } from "@/lib/auth/dal";
+import { forgetSessions } from "@/lib/auth/session-cache";
 import { clearSessionCookie, readSessionCookie } from "@/lib/auth/session-cookie";
 import { getRequestInfo } from "@/lib/request-info";
 
@@ -26,6 +27,7 @@ export async function signOutAction(): Promise<void> {
       });
     });
   }
+  forgetSessions();
   await clearSessionCookie();
   redirect("/login");
 }

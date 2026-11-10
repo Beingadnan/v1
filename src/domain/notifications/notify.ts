@@ -104,18 +104,15 @@ export async function clientPeople(tx: Exec, companyId: string, roles?: string[]
 
 /** The person's latest notifications and how many are unread. */
 export async function myNotifications(db: Database, actor: SessionUser, limit = 30) {
-  const rows = await db
-    .select()
-    .from(notifications)
-    .where(eq(notifications.userId, actor.id))
-    .orderBy(desc(notifications.createdAt))
-    .limit(limit);
-  const [{ unread }] = (await db
-    .select({ unread: sql<number>`count(*)::int` })
-    .from(notifications)
-    .where(and(eq(notifications.userId, actor.id), isNull(notifications.readAt)))) as [
-    { unread: number },
-  ];
+  const [rows, unread] = await Promise.all([
+    db
+      .select()
+      .from(notifications)
+      .where(eq(notifications.userId, actor.id))
+      .orderBy(desc(notifications.createdAt))
+      .limit(limit),
+    unreadCount(db, actor),
+  ]);
   return { rows, unread };
 }
 

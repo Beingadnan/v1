@@ -7,6 +7,7 @@ import {
   foreignKey,
   index,
   integer,
+  jsonb,
   numeric,
   pgTable,
   primaryKey,
@@ -18,18 +19,22 @@ import {
 } from "drizzle-orm/pg-core";
 
 import {
+  CONTRACT_TYPES,
   JOB_STATUSES,
+  ORDER_TYPES,
   RATE_BASES,
-  READINESS_ITEMS,
+  READINESS_KEYS,
   SEASONS,
   TEAM_ROLES,
   WORK_TYPES,
 } from "@/domain/jobs/types";
+import type { PlanFeature } from "@/domain/field/types";
 
 import { clientCompanies, clientSites, equipment } from "./clients";
 import { instruments } from "./instruments";
 import { organisations } from "./organisations";
 import { sites } from "./settings";
+import { storedFiles } from "./stored-files";
 import { users } from "./users";
 
 const list = (values: readonly string[]) => sql.raw(values.map((v) => `'${v}'`).join(", "));
@@ -74,6 +79,51 @@ export const rateCards = pgTable(
   ],
 );
 
+/**
+ * A client's annual contract that jobs are done under (QA Tech, Nov 2026): an
+ * ARC (annual rate contract) or an AMC (annual maintenance contract), valid
+ * for a period. Jobs point at it instead of carrying a PO of their own.
+ */
+export const clientContracts = pgTable(
+  "client_contracts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id, { onDelete: "restrict" }),
+    companyId: uuid("company_id").notNull(),
+    kind: text("kind").notNull(),
+    number: text("number").notNull(),
+    validFrom: date("valid_from").notNull(),
+    validTo: date("valid_to").notNull(),
+    /** Contract value before GST, when it has one. */
+    value: numeric("value", { precision: 12, scale: 2 }),
+    fileId: uuid("file_id").references(() => storedFiles.id, { onDelete: "restrict" }),
+    notes: text("notes").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdByUserId: uuid("created_by_user_id").references((): AnyPgColumn => users.id, {
+      onDelete: "restrict",
+    }),
+  },
+  (t) => [
+    unique("client_contracts_id_org_key").on(t.id, t.organisationId),
+    uniqueIndex("client_contracts_company_number_key").on(
+      t.companyId,
+      t.kind,
+      sql`lower(${t.number})`,
+    ),
+    index("client_contracts_company_idx").on(t.companyId, t.validTo),
+    foreignKey({
+      name: "client_contracts_company_fk",
+      columns: [t.companyId, t.organisationId],
+      foreignColumns: [clientCompanies.id, clientCompanies.organisationId],
+    }).onDelete("restrict"),
+    check("client_contracts_kind_check", sql`${t.kind} in (${list(CONTRACT_TYPES)})`),
+    check("client_contracts_dates_check", sql`${t.validTo} >= ${t.validFrom}`),
+    check("client_contracts_value_check", sql`${t.value} is null or ${t.value} >= 0`),
+  ],
+);
+
 /** A job: one client site, one or more equipment items, from creation to payment. */
 export const jobs = pgTable(
   "jobs",
@@ -82,7 +132,7 @@ export const jobs = pgTable(
     organisationId: uuid("organisation_id")
       .notNull()
       .references(() => organisations.id, { onDelete: "restrict" }),
-    /** QT/J/2026/0142: allocated at creation, never reused. */
+    /** QT/11/2026/0142: allocated at creation, never reused. */
     number: text("number").notNull(),
     status: text("status").notNull().default("created"),
     /** The status to return to when an on-hold job resumes. */
@@ -92,9 +142,23 @@ export const jobs = pgTable(
     /** QA Tech branch doing the work (BHW, BDD…): its loggers are booked first. */
     siteId: uuid("site_id").references(() => sites.id, { onDelete: "restrict" }),
     title: text("title").notNull().default(""),
+    /** po, srf, arc or amc: what the client's order for this job is. */
+    orderType: text("order_type").notNull().default("po"),
+    /** The PO or SRF number; under an ARC/AMC, a release order number if the client gives one. */
     poNumber: text("po_number").notNull().default(""),
     poDate: date("po_date"),
     poValue: numeric("po_value", { precision: 12, scale: 2 }),
+    /** The copy of the PO or SRF, uploaded when it comes. */
+    orderFileId: uuid("order_file_id").references(() => storedFiles.id, { onDelete: "restrict" }),
+    /** The ARC or AMC this job is done under. */
+    contractId: uuid("contract_id"),
+    /** The client's entry gate pass for QA Tech's instruments (QA Tech, Nov 2026). */
+    gatePassNumber: text("gate_pass_number").notNull().default(""),
+    gatePassFileId: uuid("gate_pass_file_id").references(() => storedFiles.id, {
+      onDelete: "restrict",
+    }),
+    /** This site needs no gate pass: booking goes ahead without one. */
+    gatePassNotNeeded: boolean("gate_pass_not_needed").notNull().default(false),
     /** A custom quote for non-standard work; overrides the rate card. */
     quotedValue: numeric("quoted_value", { precision: 12, scale: 2 }),
     plannedStart: date("planned_start").notNull(),
@@ -123,7 +187,13 @@ export const jobs = pgTable(
       columns: [t.clientSiteId, t.companyId],
       foreignColumns: [clientSites.id, clientSites.companyId],
     }).onDelete("restrict"),
+    foreignKey({
+      name: "jobs_contract_fk",
+      columns: [t.contractId, t.organisationId],
+      foreignColumns: [clientContracts.id, clientContracts.organisationId],
+    }).onDelete("restrict"),
     check("jobs_status_check", sql`${t.status} in (${list(JOB_STATUSES)})`),
+    check("jobs_order_type_check", sql`${t.orderType} in (${list(ORDER_TYPES)})`),
     check("jobs_dates_check", sql`${t.plannedEnd} >= ${t.plannedStart}`),
     check(
       "jobs_money_check",
@@ -160,8 +230,15 @@ export const studies = pgTable(
     rhMinPct: numeric("rh_min_pct", { precision: 5, scale: 1 }),
     rhMaxPct: numeric("rh_max_pct", { precision: 5, scale: 1 }),
     loggerCount: integer("logger_count").notNull().default(0),
+    /** Doors, pass boxes, LAFs, ducts… marked on the floor plan (QA Tech, Nov 2026). */
+    planFeatures: jsonb("plan_features").$type<PlanFeature[]>().notNull().default([]),
     intervalMinutes: integer("interval_minutes"),
     durationHours: integer("duration_hours"),
+    /**
+     * Pre- and post-calibration of the study's loggers, chosen per study (yes/no).
+     * Thermal validation always has both, whatever these say.
+     */
+    preCalRequired: boolean("pre_cal_required").notNull().default(false),
     postCalRequired: boolean("post_cal_required").notNull().default(false),
     /** Rate-card line price at creation (null when no line matched). */
     price: numeric("price", { precision: 12, scale: 2 }),
@@ -254,7 +331,7 @@ export const jobReadiness = pgTable(
       columns: [t.jobId, t.organisationId],
       foreignColumns: [jobs.id, jobs.organisationId],
     }).onDelete("cascade"),
-    check("job_readiness_key_check", sql`${t.key} in (${list(READINESS_ITEMS)})`),
+    check("job_readiness_key_check", sql`${t.key} in (${list(READINESS_KEYS)})`),
     check("job_readiness_state_check", sql`${t.state} in ('ready', 'pending', 'na')`),
   ],
 );

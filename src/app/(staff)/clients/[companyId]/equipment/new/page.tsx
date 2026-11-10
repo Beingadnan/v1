@@ -42,7 +42,7 @@ export default async function NewEquipmentPage({
           {data.company.name}
         </Link>
         <PageHeader
-          title={copy ? `Add equipment like ${copy.code}` : "Add equipment"}
+          title={copy ? `Add equipment like ${copy.code}` : "Add equipment or a room"}
           description={
             copy
               ? `Everything is copied from ${copy.code} except the equipment ID, serial number and last study date. Change what differs.`

@@ -128,6 +128,18 @@ export const BUILT_IN_TYPE_DEFAULTS: Record<EquipmentType, TypeDefaults> = {
     cycles: ["loaded"],
     seasonalMapping: true,
   },
+  // A room such as dispensing or sampling (QA Tech's WH013: NMT 25 °C, every
+  // 10 minutes for 24 hours, a logger on each wall plus one, and the ambient).
+  room: {
+    ...none,
+    tempMaxC: 25,
+    defaultChannels: null, // from the walls: see suggestLoggerCount
+    readingIntervalMinutes: 10,
+    studyDurationHours: 24,
+    requalificationMonths: 12,
+    cycles: ["empty"],
+    seasonalMapping: false,
+  },
   stability_chamber: {
     ...none,
     setPointC: 25,
@@ -206,12 +218,25 @@ export type LoggerSuggestion = { count: number; reason: string };
  *   1.8 m from 0.3 m up, at least 3 (WHO example: a 6 m store → 0.3, 1.8,
  *   3.6 and 5.4 m = 4 levels).
  */
-export function suggestLoggerCount(size: {
-  lengthM: number | null;
-  widthM: number | null;
-  heightM: number | null;
-}): LoggerSuggestion | null {
+export function suggestLoggerCount(
+  size: {
+    lengthM: number | null;
+    widthM: number | null;
+    heightM: number | null;
+  },
+  /** "room": loggers along the walls at working height (see roomWalls). */
+  kind: "room" | "box" = "box",
+): LoggerSuggestion | null {
   const { lengthM: l, widthM: w, heightM: h } = size;
+  if (kind === "room") {
+    if (!l || !w || l <= 0 || w <= 0) return null;
+    const walls = roomWalls(l, w);
+    const count = walls.reduce((n, k) => n + k, 0) + 1;
+    return {
+      count,
+      reason: `${count} at working height: ${walls.join(" + ")} along walls 1 to 4 (one every ~${ROOM_WALL_SPACING_M} m) and the centre`,
+    };
+  }
   if (!l || !w || !h || l <= 0 || w <= 0 || h <= 0) return null;
   const volume = l * w * h;
   if (volume <= 2) return { count: 9, reason: "9 for up to 2 m³: eight corners and the centre" };
@@ -230,6 +255,19 @@ export function suggestLoggerCount(size: {
     count,
     reason: `${along(l)} × ${along(w)} grid every ~${spacing} m at ${levels} heights (WHO TRS 961 Supp. 8)`,
   };
+}
+
+/** Rooms: one logger every ~5 m along each wall, at least one per wall. */
+export const ROOM_WALL_SPACING_M = 5;
+
+/**
+ * Loggers per wall of a room, walls numbered clockwise from the entrance
+ * side: 1 front (along the length), 2 right, 3 back, 4 left. As in QA Tech's
+ * WH013 report ("Working height on wall-1 near pass box & near door").
+ */
+export function roomWalls(lengthM: number, widthM: number): [number, number, number, number] {
+  const k = (d: number) => Math.max(1, Math.round(d / ROOM_WALL_SPACING_M));
+  return [k(lengthM), k(widthM), k(lengthM), k(widthM)];
 }
 
 function round(n: number): string {

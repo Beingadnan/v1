@@ -63,3 +63,45 @@ export function markersFor(cycle: CycleKey, thermal = false): readonly EventKind
 
 export const PRECAL_RESULTS = ["pass", "fail"] as const;
 export type PrecalResult = (typeof PRECAL_RESULTS)[number];
+
+/**
+ * What is marked on a room's floor plan beside the loggers (QA Tech's WH013
+ * diagram shows the RLAF, the supply duct and the pass box near the door).
+ * Positions are fractions of the plan, as for loggers.
+ */
+export const PLAN_FEATURE_KINDS = [
+  "door",
+  "pass_box",
+  "laf",
+  "supply",
+  "return",
+  "cooling",
+  "window",
+  "heat",
+  "other",
+] as const;
+export type PlanFeatureKind = (typeof PLAN_FEATURE_KINDS)[number];
+export const PLAN_FEATURE_LABELS: Record<PlanFeatureKind, string> = {
+  door: "Door",
+  pass_box: "Pass box",
+  laf: "LAF / RLAF",
+  supply: "Supply duct",
+  return: "Return air",
+  cooling: "AC / cooling unit",
+  window: "Window",
+  heat: "Heat source",
+  other: "Other",
+};
+/** Short marks drawn on the plan. */
+export const PLAN_FEATURE_MARKS: Record<PlanFeatureKind, string> = {
+  door: "D",
+  pass_box: "PB",
+  laf: "LAF",
+  supply: "SD",
+  return: "RA",
+  cooling: "AC",
+  window: "W",
+  heat: "H",
+  other: "*",
+};
+export type PlanFeature = { kind: PlanFeatureKind; label: string; x: number; y: number };

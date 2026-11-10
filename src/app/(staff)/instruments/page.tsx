@@ -20,6 +20,7 @@ import {
   dueBatches,
   expirySummary,
   listInstruments,
+  summariseExpiry,
   type InstrumentFilter,
 } from "@/domain/instruments/queries";
 import {
@@ -37,6 +38,8 @@ import { ValidityBadge } from "./validity-badge";
 
 export const metadata = { title: "Instruments" };
 
+const PAGE_SIZE = 100;
+
 const VIEWS = [
   { key: "", label: "All" },
   { key: "master", label: "Master standards" },
@@ -50,18 +53,30 @@ export default async function InstrumentsPage({ searchParams }: PageProps<"/inst
   const params = await searchParams;
   const q = typeof params.q === "string" ? params.q.trim().slice(0, 100) : "";
   const view = typeof params.view === "string" ? params.view : "";
+  const pageNo = Math.max(1, Math.floor(Number(params.page)) || 1);
   const filter: InstrumentFilter = { q };
   if (view === "master" || view === "working") filter.tier = view;
   if (view === "attention") filter.validity = "attention";
 
   const canCalibrate = can(actor, "calibration.perform");
-  const [rows, summary, options, batches] = await Promise.all([
+  // The default view lists everything, so the banner's counts come from the same rows.
+  const everything = !q && !filter.tier && !filter.validity;
+  const [rows, readSummary, options, batches] = await Promise.all([
     listInstruments(db, actor, filter),
-    expirySummary(db, actor),
+    everything ? Promise.resolve(null) : expirySummary(db, actor),
     canManage ? formOptions(actor) : Promise.resolve(null),
     view === "attention" && canCalibrate ? dueBatches(db, actor) : Promise.resolve([]),
   ]);
+  // The list stops at 2,000; past that the banner needs its own count.
+  const summary =
+    readSummary ?? (rows.length >= 2000 ? await expirySummary(db, actor) : summariseExpiry(rows));
   const { counts } = summary;
+  // 100 rows a page: the whole register (~400 rows) made a 1.2 MB page that took seconds.
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const current = Math.min(pageNo, pages);
+  const shown = rows.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
+  const pageHref = (n: number) =>
+    `/instruments?${new URLSearchParams({ ...(view ? { view } : {}), ...(q ? { q } : {}), ...(n > 1 ? { page: String(n) } : {}) }).toString()}`;
   const urgent = counts.expired + counts.due_7;
   const soon = counts.due_15 + counts.due_30;
 
@@ -256,7 +271,7 @@ export default async function InstrumentsPage({ searchParams }: PageProps<"/inst
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((r) => (
+            {shown.map((r) => (
               <TableRow key={r.id}>
                 <TableCell>
                   <Link
@@ -298,6 +313,24 @@ export default async function InstrumentsPage({ searchParams }: PageProps<"/inst
           </TableBody>
         </Table>
       )}
+      {pages > 1 ? (
+        <nav aria-label="Pages" className="flex flex-wrap items-center gap-3 text-sm">
+          <span className="text-muted-foreground">
+            {(current - 1) * PAGE_SIZE + 1}–{(current - 1) * PAGE_SIZE + shown.length} of{" "}
+            {rows.length}
+          </span>
+          {current > 1 ? (
+            <Link href={pageHref(current - 1)} className="text-primary hover:underline">
+              ← Previous
+            </Link>
+          ) : null}
+          {current < pages ? (
+            <Link href={pageHref(current + 1)} className="text-primary hover:underline">
+              Next →
+            </Link>
+          ) : null}
+        </nav>
+      ) : null}
       {rows.length >= 2000 ? (
         <p className="text-sm text-muted-foreground">
           Showing the first 2,000. Search to narrow the list.

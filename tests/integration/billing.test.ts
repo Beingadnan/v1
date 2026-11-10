@@ -91,12 +91,12 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 10: WCR, invoice, payments an
     );
     const r = await issueWcr(db, w.blobs, w.lead, w.jobId, req);
     wcrId = r.id;
-    expect(r.number).toMatch(/^WCR\/QT\/J\/\d{4}\/\d{4}$/);
+    expect(r.number).toMatch(/^WCR\/QT\/\d{2}\/\d{4}\/\d{4}$/);
     await expect(issueWcr(db, w.blobs, w.lead, w.jobId, req)).rejects.toThrow("already has a WCR");
     const pdf = (await wcrDownload(db, w.blobs, w.lead, wcrId))!;
     const doc = await PDFDocument.load(pdf.bytes);
     expect(doc.getPageCount()).toBe(1);
-    expect(pdf.fileName).toMatch(/^WCR QT-J-\d{4}-\d{4}\.pdf$/);
+    expect(pdf.fileName).toMatch(/^WCR QT-\d{2}-\d{4}-\d{4}\.pdf$/);
   });
 
   it("can't be invoiced before the client signs the WCR", async () => {

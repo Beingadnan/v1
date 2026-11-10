@@ -70,7 +70,7 @@ describe("settings", () => {
       .where(
         and(eq(auditLog.action, "settings.updated"), eq(auditLog.entityId, admin.organisationId)),
       );
-    expect(audit?.before).toEqual({ jobNumberFormat: "QT/J/{YYYY}/{SEQ:4}" });
+    expect(audit?.before).toEqual({ jobNumberFormat: "QT/{MM}/{YYYY}/{SEQ:4}" });
     expect(audit?.after).toEqual({ jobNumberFormat: "QT/JOB/{YYYY}/{SEQ:4}" });
     expect(audit?.summary).toContain("job number format");
 

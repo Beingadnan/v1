@@ -13,12 +13,14 @@ import type { ModelOption, Option } from "./instrument-dialogs";
 export async function formOptions(
   actor: SessionUser,
 ): Promise<{ sites: Option[]; models: ModelOption[] }> {
-  const siteRows = await db
-    .select({ id: sites.id, code: sites.code, name: sites.name })
-    .from(sites)
-    .where(and(eq(sites.organisationId, actor.organisationId), eq(sites.active, true)))
-    .orderBy(asc(sites.name));
-  const models = await listModels(db, actor);
+  const [siteRows, models] = await Promise.all([
+    db
+      .select({ id: sites.id, code: sites.code, name: sites.name })
+      .from(sites)
+      .where(and(eq(sites.organisationId, actor.organisationId), eq(sites.active, true)))
+      .orderBy(asc(sites.name)),
+    listModels(db, actor),
+  ]);
   return {
     sites: siteRows.map((s) => ({ id: s.id, label: `${s.name} (${s.code})` })),
     models: models.map((m) => ({

@@ -1,10 +1,13 @@
 import "server-only";
 
-import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
+import { reads } from "@/db/reads";
+
+import { and, asc, eq, inArray, ne, sql, type SQLWrapper } from "drizzle-orm";
 
 import type { Database, Transaction } from "@/db/client-factory";
 import {
   clientCompanies,
+  clientContracts,
   clientDepartments,
   clientSites,
   equipment,
@@ -16,14 +19,13 @@ import {
   jobTeam,
   jobs,
   organisationSettings,
-  rateCards,
   sites,
+  storedFiles,
   studies,
   users,
   type Job,
-  type RateCard,
 } from "@/db/schema";
-import { assertCan } from "@/domain/auth/permissions";
+import { assertCan, can } from "@/domain/auth/permissions";
 import type { RequestInfo } from "@/domain/auth/policy";
 import { isClientRole, isRole } from "@/domain/auth/roles";
 import type { SessionUser } from "@/domain/auth/session-service";
@@ -37,18 +39,17 @@ import { shortList } from "@/lib/text";
 
 import { INSTRUMENT_FOR, parseCodes, pickInstruments, sparesFor, type Candidate } from "./booking";
 import { JobsError } from "./errors";
-import { priceStudy, volumeOf, type RateLine } from "./pricing";
 import { computeReadiness, needsMasters, validThrough, type ReadinessInput } from "./readiness";
 import {
   jobHeaderSchema,
   jobSchema,
-  rateLineSchema,
+  orderSchema,
   readinessSchema,
   studyEditSchema,
   teamInputSchema,
   type JobHeaderInput,
   type JobInput,
-  type RateLineInput,
+  type OrderInput,
   type StudyEditInput,
 } from "./schemas";
 import { defaultLoggerCount, defaultWorkType, seasonFor, uniqueReportNumber } from "./studies";
@@ -56,11 +57,15 @@ import {
   FINISHED,
   HOLDS_INSTRUMENTS,
   JOB_STATUS_LABELS,
+  ORDER_TYPE_SHORT,
   PLANNING,
+  READINESS_ITEMS,
   TRANSITIONS,
   canTransition,
+  isContractType,
   isJobStatus,
   type JobStatus,
+  type OrderType,
   type Transition,
 } from "./types";
 
@@ -120,45 +125,85 @@ function assertOpen(job: Job) {
 export async function readinessInputFor(
   tx: Transaction | Database,
   organisationId: string,
-  job: Pick<Job, "id" | "poNumber" | "plannedStart" | "plannedEnd">,
+  job: Pick<
+    Job,
+    | "id"
+    | "poNumber"
+    | "plannedStart"
+    | "plannedEnd"
+    | "orderType"
+    | "contractId"
+    | "gatePassNumber"
+    | "gatePassNotNeeded"
+  >,
 ): Promise<ReadinessInput & { bookedIds: string[] }> {
-  const studyRows = await tx
-    .select({
-      workType: studies.workType,
-      loggerCount: studies.loggerCount,
-      postCalRequired: studies.postCalRequired,
-      durationHours: studies.durationHours,
-      cycles: studies.cycles,
-      label: equipment.code,
-      lastStudyOn: equipment.lastStudyOn,
-    })
-    .from(studies)
-    .innerJoin(equipment, eq(equipment.id, studies.equipmentId))
-    .where(eq(studies.jobId, job.id));
-  const booked = await tx
-    .select({
-      id: instruments.id,
-      code: instruments.code,
-      type: instruments.type,
-      tier: instruments.tier,
-      status: instruments.status,
-    })
-    .from(jobInstruments)
-    .innerJoin(instruments, eq(instruments.id, jobInstruments.instrumentId))
-    .where(eq(jobInstruments.jobId, job.id));
-  const certs = await certificatesOf(
-    tx,
-    organisationId,
-    booked.map((b) => b.id),
-  );
-  const manualRows = await tx.select().from(jobReadiness).where(eq(jobReadiness.jobId, job.id));
+  const [studyRows, booked, manualRows, contractRows, certs] = await reads(tx, [
+    () =>
+      tx
+        .select({
+          workType: studies.workType,
+          loggerCount: studies.loggerCount,
+          preCalRequired: studies.preCalRequired,
+          postCalRequired: studies.postCalRequired,
+          durationHours: studies.durationHours,
+          cycles: studies.cycles,
+          label: equipment.code,
+          lastStudyOn: equipment.lastStudyOn,
+          // The last report of this equipment signed in QTech, on another job.
+          previousReport: sql<string | null>`(
+            select p.report_number from studies p
+            where p.equipment_id = ${studies.equipmentId}
+              and p.job_id <> ${studies.jobId}
+              and p.archived_at is not null
+            order by p.archived_at desc limit 1)`,
+        })
+        .from(studies)
+        .innerJoin(equipment, eq(equipment.id, studies.equipmentId))
+        .where(eq(studies.jobId, job.id)),
+    () =>
+      tx
+        .select({
+          id: instruments.id,
+          code: instruments.code,
+          type: instruments.type,
+          tier: instruments.tier,
+          status: instruments.status,
+        })
+        .from(jobInstruments)
+        .innerJoin(instruments, eq(instruments.id, jobInstruments.instrumentId))
+        .where(eq(jobInstruments.jobId, job.id)),
+    () => tx.select().from(jobReadiness).where(eq(jobReadiness.jobId, job.id)),
+    () =>
+      job.contractId
+        ? tx
+            .select({
+              kind: clientContracts.kind,
+              number: clientContracts.number,
+              validFrom: clientContracts.validFrom,
+              validTo: clientContracts.validTo,
+            })
+            .from(clientContracts)
+            .where(
+              and(
+                eq(clientContracts.id, job.contractId),
+                eq(clientContracts.organisationId, organisationId),
+              ),
+            )
+        : Promise.resolve([]),
+    // Their certificates in the same round: the instruments by subquery, not by the ids above.
+    () => certificatesOf(tx, organisationId, bookedOn(tx, job.id)),
+  ]);
   return {
+    orderType: job.orderType as OrderType,
+    gatePass: { number: job.gatePassNumber, notNeeded: job.gatePassNotNeeded },
     poNumber: job.poNumber,
+    contract: contractRows[0] ?? null,
     plannedStart: job.plannedStart,
     plannedEnd: job.plannedEnd,
     studies: studyRows.map((s) => ({
       workType: s.workType as ReadinessInput["studies"][number]["workType"],
       loggerCount: s.loggerCount,
+      preCalRequired: s.preCalRequired,
       postCalRequired: s.postCalRequired,
       durationHours: s.durationHours,
       cycleCount: s.cycles.length,
@@ -166,12 +211,14 @@ export async function readinessInputFor(
     })),
     booked: booked.map((b) => ({ ...b, certificates: certs.get(b.id) ?? [] })),
     bookedIds: booked.map((b) => b.id),
-    isRequalification: studyRows.some((s) => s.lastStudyOn !== null),
+    previousReports: studyRows
+      .filter((s) => s.lastStudyOn !== null || s.previousReport !== null)
+      .map((s) => ({ label: s.label, lastStudyOn: s.lastStudyOn, report: s.previousReport })),
+    // Rows for items no longer shown ("dates_fit", "protocol") stay stored and are left out.
     manual: Object.fromEntries(
-      manualRows.map((r) => [
-        r.key,
-        { state: r.state as "ready" | "pending" | "na", note: r.note },
-      ]),
+      manualRows
+        .filter((r) => (READINESS_ITEMS as readonly string[]).includes(r.key))
+        .map((r) => [r.key, { state: r.state as "ready" | "pending" | "na", note: r.note }]),
     ),
   };
 }
@@ -224,7 +271,9 @@ async function syncReadiness(tx: Transaction, actor: SessionUser, job: Job, requ
   if (s === "created" && result.ready) {
     await setStatus(tx, actor, job, "ready", "Readiness checklist complete", request);
   } else if (s === "ready" && !result.ready) {
-    const pending = result.items.filter((i) => i.state === "pending").map((i) => i.label);
+    const pending = result.items
+      .filter((i) => i.state === "pending" && i.blocking)
+      .map((i) => i.label);
     await setStatus(tx, actor, job, "created", `Pending: ${pending.join(", ")}`, request);
   }
   return result;
@@ -257,28 +306,6 @@ async function loadEquipment(
   });
 }
 
-async function activeRates(tx: Transaction, organisationId: string): Promise<RateLine[]> {
-  return tx
-    .select()
-    .from(rateCards)
-    .where(and(eq(rateCards.organisationId, organisationId), eq(rateCards.active, true)));
-}
-
-function priceFor(
-  rates: RateLine[],
-  e: EquipmentRow,
-  s: { workType: string; durationHours: number | null; cycles: string[]; loggerCount: number },
-) {
-  return priceStudy(rates, {
-    workType: s.workType as never,
-    equipmentType: e.type,
-    durationHours: s.durationHours,
-    cycles: s.cycles,
-    loggerCount: s.loggerCount,
-    volumeM3: volumeOf(e.lengthM, e.widthM, e.heightM),
-  });
-}
-
 async function insertStudies(
   tx: Transaction,
   actor: SessionUser,
@@ -289,6 +316,8 @@ async function insertStudies(
     loggerCount?: number | null;
     cycles?: string[];
     season?: string;
+    preCal?: boolean;
+    postCal?: boolean;
   }[],
 ): Promise<string[]> {
   const ids = items.map((i) => i.equipmentId);
@@ -315,7 +344,6 @@ async function insertStudies(
     .from(clientSites)
     .where(eq(clientSites.id, job.clientSiteId));
   if (!company || !site) throw new JobsError("That client or site does not exist.");
-  const rates = await activeRates(tx, actor.organisationId);
   const [year, month] = job.plannedStart.split("-").map(Number) as [number, number];
   let position = existing.reduce((m, s) => Math.max(m, s.position), 0);
   const reserved = new Set<string>();
@@ -347,12 +375,6 @@ async function insertStudies(
     const cycles = opt.cycles ?? e.cycles;
     const loggerCount =
       opt.loggerCount ?? (workType === "onsite_calibration" ? 0 : defaultLoggerCount(e));
-    const price = priceFor(rates, e, {
-      workType,
-      durationHours: e.studyDurationHours,
-      cycles,
-      loggerCount,
-    });
     await tx.insert(studies).values({
       organisationId: actor.organisationId,
       jobId: job.id,
@@ -370,9 +392,9 @@ async function insertStudies(
       loggerCount,
       intervalMinutes: e.readingIntervalMinutes,
       durationHours: e.studyDurationHours,
-      postCalRequired: company.postCal || workType === "thermal_validation",
-      price: toNumeric(price.price),
-      priceNote: price.note,
+      // Yes/no per study, from the job form; else the client's SOP. Thermal validation always has both.
+      preCalRequired: workType === "thermal_validation" || (opt.preCal ?? company.postCal),
+      postCalRequired: workType === "thermal_validation" || (opt.postCal ?? company.postCal),
     });
     labels.push(e.code);
   }
@@ -413,6 +435,168 @@ async function writeTeam(
       .insert(jobTeam)
       .values(unique.map((t) => ({ organisationId: actor.organisationId, jobId, ...t })));
   }
+}
+
+// ---------------------------------------------------------------- the client's order
+
+/**
+ * Checks the order fields: a contract (ARC/AMC) must be this client's and of
+ * the kind picked. A PO or SRF carries no contract. Returns the contract id to
+ * store.
+ */
+async function checkOrder(
+  tx: Transaction,
+  organisationId: string,
+  companyId: string,
+  v: { orderType: OrderType; contractId: string | null },
+): Promise<string | null> {
+  if (!isContractType(v.orderType) || v.contractId === null) return null;
+  const [c] = await tx
+    .select({ kind: clientContracts.kind, companyId: clientContracts.companyId })
+    .from(clientContracts)
+    .where(
+      and(eq(clientContracts.id, v.contractId), eq(clientContracts.organisationId, organisationId)),
+    );
+  if (!c || c.companyId !== companyId) throw new JobsError("That contract isn't this client's.");
+  if (c.kind !== v.orderType) {
+    throw new JobsError(
+      `That contract is an ${ORDER_TYPE_SHORT[c.kind as OrderType]}, not an ${ORDER_TYPE_SHORT[v.orderType]}.`,
+    );
+  }
+  return v.contractId;
+}
+
+/**
+ * Records the client's order when it comes (after the job was made, at any
+ * stage until the job is closed): the PO or SRF number with its copy, or the
+ * ARC/AMC that covers the job. Managers and accounts can do it.
+ */
+export async function recordOrder(
+  db: Database,
+  actor: SessionUser,
+  jobId: string,
+  input: OrderInput,
+  request?: RequestInfo,
+): Promise<void> {
+  if (!can(actor, "jobs.manage") && !can(actor, "billing.record")) assertCan(actor, "jobs.manage");
+  const v = orderSchema.parse(input);
+  await db.transaction(async (tx) => {
+    const job = await lockJob(tx, actor, jobId);
+    if (status(job) === "cancelled" || status(job) === "closed") {
+      throw new JobsError(`This job is ${JOB_STATUS_LABELS[status(job)]}.`);
+    }
+    const contractId = await checkOrder(tx, actor.organisationId, job.companyId, v);
+    if (v.fileId) {
+      const [file] = await tx
+        .select({ id: storedFiles.id })
+        .from(storedFiles)
+        .where(
+          and(eq(storedFiles.id, v.fileId), eq(storedFiles.organisationId, actor.organisationId)),
+        );
+      if (!file) throw new JobsError("Upload the copy again.");
+    }
+    const after = {
+      orderType: v.orderType,
+      poNumber: v.poNumber,
+      poDate: v.poDate,
+      poValue: toNumeric(v.poValue),
+      contractId,
+      // A new copy replaces the old one; leaving it out keeps what is there.
+      orderFileId: v.fileId ?? job.orderFileId,
+    };
+    const before = Object.fromEntries(
+      Object.keys(after).map((k) => [k, job[k as keyof typeof after]]),
+    );
+    await tx
+      .update(jobs)
+      .set({ ...after, updatedAt: new Date() })
+      .where(eq(jobs.id, job.id));
+    const label = isContractType(v.orderType)
+      ? `${ORDER_TYPE_SHORT[v.orderType]}${contractId ? "" : " (contract not picked yet)"}`
+      : `${ORDER_TYPE_SHORT[v.orderType]} ${v.poNumber || "(number to come)"}`;
+    await recordAudit(tx, {
+      organisationId: actor.organisationId,
+      actor: user(actor),
+      action: "job.order_recorded",
+      entityType: "job",
+      entityId: job.id,
+      summary: `${actor.name} recorded the client's order on job ${job.number}: ${label}${v.fileId ? ", copy attached" : ""}`,
+      before,
+      after,
+      request,
+    });
+    Object.assign(job, after);
+    await syncReadiness(tx, actor, job, request);
+  });
+}
+
+// ---------------------------------------------------------------- the client's gate pass
+
+/**
+ * The client's entry gate pass for QA Tech's instruments (QA Tech, Nov
+ * 2026): its number and scan, or "not needed" for a site without one. The
+ * job page asks for it before the booking, and prints the list of booked
+ * instruments for the client's security.
+ */
+export async function recordGatePass(
+  db: Database,
+  actor: SessionUser,
+  jobId: string,
+  input: { number?: unknown; notNeeded?: unknown; fileId?: unknown },
+  request?: RequestInfo,
+): Promise<void> {
+  assertCan(actor, "jobs.manage");
+  const number = typeof input.number === "string" ? input.number.trim().slice(0, 60) : "";
+  const notNeeded =
+    input.notNeeded === true || input.notNeeded === "on" || input.notNeeded === "yes";
+  const fileId = typeof input.fileId === "string" && input.fileId ? input.fileId : null;
+  if (!number && !notNeeded) {
+    throw new JobsError("Enter the gate pass number, or mark it not needed.");
+  }
+  if (fileId && !isUuid(fileId)) throw new JobsError("Upload the scan again.");
+  await db.transaction(async (tx) => {
+    const job = await lockJob(tx, actor, jobId);
+    if (status(job) === "cancelled" || status(job) === "closed") {
+      throw new JobsError(`This job is ${JOB_STATUS_LABELS[status(job)]}.`);
+    }
+    if (fileId) {
+      const [file] = await tx
+        .select({ id: storedFiles.id })
+        .from(storedFiles)
+        .where(
+          and(eq(storedFiles.id, fileId), eq(storedFiles.organisationId, actor.organisationId)),
+        );
+      if (!file) throw new JobsError("Upload the scan again.");
+    }
+    const after = {
+      gatePassNumber: notNeeded ? "" : number,
+      gatePassNotNeeded: notNeeded,
+      gatePassFileId: notNeeded ? null : (fileId ?? job.gatePassFileId),
+    };
+    await tx
+      .update(jobs)
+      .set({ ...after, updatedAt: new Date() })
+      .where(eq(jobs.id, job.id));
+    await recordAudit(tx, {
+      organisationId: actor.organisationId,
+      actor: user(actor),
+      action: "job.gate_pass_recorded",
+      entityType: "job",
+      entityId: job.id,
+      summary: notNeeded
+        ? `${actor.name} marked job ${job.number} as needing no gate pass`
+        : `${actor.name} recorded gate pass ${number} on job ${job.number}${fileId ? " with its scan" : ""}`,
+      before: {
+        gatePassNumber: job.gatePassNumber,
+        gatePassNotNeeded: job.gatePassNotNeeded,
+        gatePassFileId: job.gatePassFileId,
+      },
+      after,
+      request,
+    });
+    Object.assign(job, after);
+    await syncReadiness(tx, actor, job, request);
+  });
 }
 
 // ---------------------------------------------------------------- jobs
@@ -500,6 +684,8 @@ export async function createJob(
           clientSiteId: clientSite.id,
           siteId,
           title: v.title,
+          orderType: v.orderType,
+          contractId: await checkOrder(tx, actor.organisationId, company.id, v),
           poNumber: v.poNumber,
           poDate: v.poDate,
           poValue: toNumeric(v.poValue),
@@ -557,10 +743,14 @@ export async function updateJob(
     const after = {
       siteId: v.siteId,
       title: v.title,
+      orderType: v.orderType,
+      contractId: await checkOrder(tx, actor.organisationId, job.companyId, v),
       poNumber: v.poNumber,
       poDate: v.poDate,
-      poValue: toNumeric(v.poValue),
-      quotedValue: toNumeric(v.quotedValue),
+      // Without money rights the form has no value fields: keep what is there.
+      poValue: can(actor, "jobs.money") ? toNumeric(v.poValue) : job.poValue,
+      // The custom quote went with the rate card: old jobs keep theirs.
+      quotedValue: job.quotedValue,
       plannedStart: v.plannedStart,
       plannedEnd: v.plannedEnd,
       notes: v.notes,
@@ -651,16 +841,13 @@ export async function updateStudy(
   await db.transaction(async (tx) => {
     const { study, code, job } = await lockStudy(tx, actor, studyId);
     assertPlanning(job, "Studies");
-    const [e] = await tx
-      .select({ e: equipment, department: sql<string | null>`null` })
-      .from(equipment)
-      .where(eq(equipment.id, study.equipmentId));
-    const price = priceFor(
-      await activeRates(tx, actor.organisationId),
-      { ...e!.e, department: null },
-      v,
-    );
-    const after = { ...v, price: toNumeric(price.price), priceNote: price.note };
+    // Thermal validation always has pre- and post-calibration.
+    const thermal = v.workType === "thermal_validation";
+    const after = {
+      ...v,
+      preCalRequired: thermal || v.preCalRequired,
+      postCalRequired: thermal || v.postCalRequired,
+    };
     await tx.update(studies).set(after).where(eq(studies.id, study.id));
     await recordAudit(tx, {
       organisationId: actor.organisationId,
@@ -676,64 +863,13 @@ export async function updateStudy(
         season: study.season,
         durationHours: study.durationHours,
         intervalMinutes: study.intervalMinutes,
+        preCalRequired: study.preCalRequired,
+        postCalRequired: study.postCalRequired,
       },
       after,
       request,
     });
     await syncReadiness(tx, actor, job, request);
-  });
-}
-
-/**
- * Prices every study again from today's rate card, for a job still being
- * planned (a rate added or changed after the job was made). Returns how many
- * prices changed and how many studies still have no rate.
- */
-export async function repriceJob(
-  db: Database,
-  actor: SessionUser,
-  jobId: string,
-  request?: RequestInfo,
-): Promise<{ changed: number; unpriced: number }> {
-  assertCan(actor, "jobs.manage");
-  assertCan(actor, "jobs.money");
-  return db.transaction(async (tx) => {
-    const job = await lockJob(tx, actor, jobId);
-    assertPlanning(job, "Prices");
-    const rates = await activeRates(tx, actor.organisationId);
-    const rows = await tx
-      .select({ study: studies, e: equipment })
-      .from(studies)
-      .innerJoin(equipment, eq(equipment.id, studies.equipmentId))
-      .where(eq(studies.jobId, job.id));
-    const before: Record<string, string | null> = {};
-    const after: Record<string, string | null> = {};
-    let unpriced = 0;
-    for (const { study, e } of rows) {
-      const p = priceFor(rates, { ...e, department: null }, study);
-      const price = toNumeric(p.price);
-      if (p.price === null) unpriced++;
-      if (Number(study.price ?? NaN) === Number(price ?? NaN) && study.priceNote === p.note)
-        continue;
-      before[e.code] = study.price;
-      after[e.code] = price;
-      await tx.update(studies).set({ price, priceNote: p.note }).where(eq(studies.id, study.id));
-    }
-    const changed = Object.keys(after).length;
-    if (changed > 0) {
-      await recordAudit(tx, {
-        organisationId: actor.organisationId,
-        actor: user(actor),
-        action: "job.updated",
-        entityType: "job",
-        entityId: job.id,
-        summary: `${actor.name} priced job ${job.number} from the rate card (${changed} changed)`,
-        before,
-        after,
-        request,
-      });
-    }
-    return { changed, unpriced };
   });
 }
 
@@ -908,13 +1044,22 @@ export async function changeStatus(
 // ---------------------------------------------------------------- bookings
 
 /** Other open jobs holding these instruments on dates that overlap. */
+/** The instruments booked on a job, as a subquery for `inArray` (ADR 0018). */
+export function bookedOn(tx: Transaction | Database, jobId: string) {
+  return tx
+    .select({ id: jobInstruments.instrumentId })
+    .from(jobInstruments)
+    .where(eq(jobInstruments.jobId, jobId));
+}
+
 export async function busyInstruments(
   tx: Transaction | Database,
   organisationId: string,
   job: Pick<Job, "id" | "plannedStart" | "plannedEnd">,
-  instrumentIds?: string[],
+  /** Ids, or a subquery of ids such as bookedOn(job). */
+  instrumentIds?: string[] | SQLWrapper,
 ): Promise<Map<string, string[]>> {
-  if (instrumentIds && instrumentIds.length === 0) return new Map();
+  if (Array.isArray(instrumentIds) && instrumentIds.length === 0) return new Map();
   const rows = await tx
     .select({ instrumentId: jobInstruments.instrumentId, number: jobs.number })
     .from(jobInstruments)
@@ -934,38 +1079,42 @@ export async function busyInstruments(
 }
 
 async function candidates(
-  tx: Transaction,
+  tx: Transaction | Database,
   actor: SessionUser,
   job: Job,
   where: { types?: string[]; ids?: string[] },
 ): Promise<Candidate[]> {
-  const rows = await tx
-    .select({
-      id: instruments.id,
-      code: instruments.code,
-      type: instruments.type,
-      tier: instruments.tier,
-      status: instruments.status,
-      modelId: instruments.modelId,
-      make: instruments.make,
-      model: instruments.model,
-      modelMake: instrumentModels.make,
-      modelName: instrumentModels.model,
-      homeSiteId: instruments.homeSiteId,
-    })
-    .from(instruments)
-    .leftJoin(instrumentModels, eq(instrumentModels.id, instruments.modelId))
-    .where(
-      and(
-        eq(instruments.organisationId, actor.organisationId),
-        where.types ? inArray(instruments.type, where.types) : undefined,
-        where.ids ? inArray(instruments.id, where.ids) : undefined,
-      ),
-    )
-    .orderBy(asc(instruments.code));
-  const ids = rows.map((r) => r.id);
-  const certs = await certificatesOf(tx, actor.organisationId, ids);
-  const busy = await busyInstruments(tx, actor.organisationId, job, ids);
+  const filter = and(
+    eq(instruments.organisationId, actor.organisationId),
+    where.types ? inArray(instruments.type, where.types) : undefined,
+    where.ids ? inArray(instruments.id, where.ids) : undefined,
+  );
+  // The instruments, their certificates and their other bookings in one round: the
+  // last two take the same filter as a subquery (ADR 0018).
+  const matching = tx.select({ id: instruments.id }).from(instruments).where(filter);
+  const [rows, certs, busy] = await reads(tx, [
+    () =>
+      tx
+        .select({
+          id: instruments.id,
+          code: instruments.code,
+          type: instruments.type,
+          tier: instruments.tier,
+          status: instruments.status,
+          modelId: instruments.modelId,
+          make: instruments.make,
+          model: instruments.model,
+          modelMake: instrumentModels.make,
+          modelName: instrumentModels.model,
+          homeSiteId: instruments.homeSiteId,
+        })
+        .from(instruments)
+        .leftJoin(instrumentModels, eq(instrumentModels.id, instruments.modelId))
+        .where(filter)
+        .orderBy(asc(instruments.code)),
+    () => certificatesOf(tx, actor.organisationId, matching),
+    () => busyInstruments(tx, actor.organisationId, job, matching),
+  ]);
   return rows.map((r) => ({
     id: r.id,
     code: r.code,
@@ -1020,14 +1169,16 @@ export type AutoBookResult = {
 };
 
 /**
- * Books what the studies still need, plus spares, and a master when pre/post-
- * calibration is needed. Run it again after adding studies: it tops up.
+ * Books the masters pre/post-calibration needs. QA Tech chooses its loggers
+ * by hand (Nov 2026), so the screens no longer pick loggers; `loggers: true`
+ * still books what the studies need plus spares, for seeding demo data.
  */
 export async function autoBook(
   db: Database,
   actor: SessionUser,
   jobId: string,
   request?: RequestInfo,
+  options: { loggers?: boolean } = {},
 ): Promise<AutoBookResult> {
   assertCan(actor, "jobs.manage");
   return db.transaction(async (tx) => {
@@ -1041,7 +1192,7 @@ export async function autoBook(
     const need = new Map<string, number>();
     for (const s of input.studies) {
       const type = INSTRUMENT_FOR[s.workType];
-      if (type) need.set(type, (need.get(type) ?? 0) + s.loggerCount);
+      if (type && options.loggers) need.set(type, (need.get(type) ?? 0) + s.loggerCount);
     }
     const result: AutoBookResult = { booked: [], short: [], skipped: [], masters: [] };
     for (const [type, count] of need) {
@@ -1074,7 +1225,11 @@ export async function autoBook(
     // A temperature master (and a humidity one for RH studies) for pre/post-cal.
     if (needsMasters(input.studies)) {
       const quantities = ["temperature"];
-      if (input.studies.some((s) => s.workType === "temperature_rh_mapping" && s.postCalRequired)) {
+      if (
+        input.studies.some(
+          (s) => s.workType === "temperature_rh_mapping" && (s.postCalRequired || s.preCalRequired),
+        )
+      ) {
         quantities.push("humidity");
       }
       const pool = (await candidates(tx, actor, job, {})).filter((c) => c.tier === "master");
@@ -1145,6 +1300,8 @@ export async function bookByCodes(
   jobId: string,
   text: unknown,
   request?: RequestInfo,
+  /** Only this model (its label, e.g. "Testo 174H"): QA Tech books one model at a time. */
+  model?: string,
 ): Promise<ManualBookResult> {
   assertCan(actor, "jobs.manage");
   const codes = parseCodes(typeof text === "string" ? text : "").slice(0, 500);
@@ -1185,6 +1342,13 @@ export async function bookByCodes(
     const ok: string[] = [];
     for (const c of pool) {
       if (existing.has(c.id)) continue;
+      if (model && c.tier !== "master" && c.modelLabel !== model) {
+        result.refused.push({
+          code: c.code,
+          reason: `is a ${c.modelLabel || "logger of no model"}, not a ${model}`,
+        });
+        continue;
+      }
       if (c.busyOn.length > 0) {
         result.refused.push({ code: c.code, reason: `booked on ${c.busyOn.join(", ")}` });
         continue;
@@ -1213,6 +1377,208 @@ export async function bookByCodes(
     await syncReadiness(tx, actor, job, request);
     return result;
   });
+}
+
+/** Where a logger stands for this job's dates (QA Tech, Nov 2026). */
+export type LoggerState = "free" | "booked" | "busy" | "out_of_date" | "not_in_use";
+
+export type BookingLogger = {
+  code: string;
+  serialNo: string;
+  validUntil: string | null;
+  state: LoggerState;
+  /** Why it isn't free, or where it is: "On QT/11/2026/0003 · Glenmark, Indore · 12.11–14.11". */
+  where: string;
+};
+
+export type BookingChoices = {
+  /** What the studies need, per instrument type. */
+  needs: { type: string; needed: number; booked: number }[];
+  /** Per model of those types: every logger and where it stands for this job. */
+  models: {
+    label: string;
+    type: string;
+    total: number;
+    booked: number;
+    busy: number;
+    outOfDate: number;
+    notInUse: number;
+    free: { code: string; serialNo: string; validUntil: string | null }[];
+    loggers: BookingLogger[];
+  }[];
+};
+
+const dm = (iso: string) => iso.slice(8, 10) + "." + iso.slice(5, 7);
+const dmy = (iso: string) => iso.split("-").reverse().join(".");
+const NOT_IN_USE: Record<string, string> = {
+  out_of_service: "Out of service",
+  retired: "Retired",
+  lost: "Lost",
+};
+
+/**
+ * What can be booked on a job, model by model (QA Tech, Nov 2026): the
+ * person picks the model and sees every logger: free ones to pick, and for
+ * the rest why not and where they are (the other job, its client and dates;
+ * the calibration due date; out of service). Free means in use, calibrated
+ * through the job's dates and on no other job on those dates.
+ */
+export async function bookingChoices(
+  db: Database,
+  actor: SessionUser,
+  jobId: string,
+  /** The job and its readiness when the caller already read them (the job page). */
+  loaded?: { job: Job; input?: Awaited<ReturnType<typeof readinessInputFor>> },
+): Promise<BookingChoices> {
+  assertCan(actor, "jobs.view");
+  if (!isUuid(jobId)) throw new JobsError("That job does not exist.");
+  const [job] =
+    loaded && loaded.job.id === jobId && loaded.job.organisationId === actor.organisationId
+      ? [loaded.job]
+      : await db
+          .select()
+          .from(jobs)
+          .where(and(eq(jobs.id, jobId), eq(jobs.organisationId, actor.organisationId)));
+  if (!job) throw new JobsError("That job does not exist.");
+  // The studies' needs and the loggers in one round: every logger type is read (there
+  // are two) rather than waiting for the studies to say which one (ADR 0018).
+  const loggerTypes = [
+    ...new Set(Object.values(INSTRUMENT_FOR).filter((t): t is string => t !== null)),
+  ];
+  const [input, allPool, serials, holders, homes] = await Promise.all([
+    loaded?.input ?? readinessInputFor(db, actor.organisationId, job),
+    candidates(db, actor, job, { types: loggerTypes }),
+    db
+      .select({ id: instruments.id, serialNo: instruments.serialNo })
+      .from(instruments)
+      .where(
+        and(
+          eq(instruments.organisationId, actor.organisationId),
+          inArray(instruments.type, loggerTypes),
+        ),
+      ),
+    // The other jobs holding loggers on these dates, with their client and dates.
+    db
+      .select({
+        instrumentId: jobInstruments.instrumentId,
+        number: jobs.number,
+        start: jobs.plannedStart,
+        end: jobs.plannedEnd,
+        client: clientCompanies.code,
+        site: clientSites.name,
+      })
+      .from(jobInstruments)
+      .innerJoin(jobs, eq(jobs.id, jobInstruments.jobId))
+      .innerJoin(clientCompanies, eq(clientCompanies.id, jobs.companyId))
+      .leftJoin(clientSites, eq(clientSites.id, jobs.clientSiteId))
+      .where(
+        and(
+          eq(jobInstruments.organisationId, actor.organisationId),
+          ne(jobs.id, job.id),
+          inArray(jobs.status, [...HOLDS_INSTRUMENTS]),
+          sql`${jobs.plannedStart} <= ${job.plannedEnd} and ${jobs.plannedEnd} >= ${job.plannedStart}`,
+        ),
+      ),
+    db
+      .select({ id: sites.id, name: sites.name })
+      .from(sites)
+      .where(eq(sites.organisationId, actor.organisationId)),
+  ]);
+  const needed = new Map<string, number>();
+  for (const s of input.studies) {
+    const type = INSTRUMENT_FOR[s.workType];
+    if (type) needed.set(type, (needed.get(type) ?? 0) + s.loggerCount);
+  }
+  const types = [...needed.keys()];
+  if (types.length === 0) return { needs: [], models: [] };
+  const pool = allPool.filter((c) => types.includes(c.type));
+  const serialOf = new Map(serials.map((r) => [r.id, r.serialNo]));
+  const heldBy = new Map<string, string[]>();
+  for (const h of holders) {
+    const where = [
+      `On ${h.number}`,
+      [h.client, h.site].filter(Boolean).join(", "),
+      `${dm(h.start)}–${dm(h.end)}`,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    heldBy.set(h.instrumentId, [...(heldBy.get(h.instrumentId) ?? []), where]);
+  }
+  const homeOf = new Map(homes.map((h) => [h.id, h.name]));
+  const booked = new Set(input.bookedIds);
+  const models = new Map<string, BookingChoices["models"][number]>();
+  for (const c of pool.filter((x) => x.tier !== "master")) {
+    const key = `${c.type}|${c.modelLabel}`;
+    const m = models.get(key) ?? {
+      label: c.modelLabel || "No model",
+      type: c.type,
+      total: 0,
+      booked: 0,
+      busy: 0,
+      outOfDate: 0,
+      notInUse: 0,
+      free: [],
+      loggers: [],
+    };
+    const due =
+      c.certificates
+        .map((x) => x.validUntil)
+        .filter((d): d is string => !!d)
+        .sort()
+        .at(-1) ?? null;
+    const base = { code: c.code, serialNo: serialOf.get(c.id) ?? "", validUntil: due };
+    const home = c.homeSiteId ? homeOf.get(c.homeSiteId) : null;
+    m.total += 1;
+    if (booked.has(c.id)) {
+      m.booked += 1;
+      m.loggers.push({ ...base, state: "booked", where: "Booked on this job" });
+    } else if (c.status !== "active") {
+      m.notInUse += 1;
+      m.loggers.push({
+        ...base,
+        state: "not_in_use",
+        where: NOT_IN_USE[c.status] ?? "Not in use",
+      });
+    } else if (c.busyOn.length > 0) {
+      m.busy += 1;
+      m.loggers.push({
+        ...base,
+        state: "busy",
+        where: (heldBy.get(c.id) ?? c.busyOn.map((n) => `On ${n}`)).join("; "),
+      });
+    } else if (!validThrough(c, job.plannedStart, job.plannedEnd).ok) {
+      m.outOfDate += 1;
+      m.loggers.push({
+        ...base,
+        state: "out_of_date",
+        where: due
+          ? `Calibration due ${dmy(due)}, before the job ends ${dmy(job.plannedEnd)}`
+          : "No calibration certificate",
+      });
+    } else {
+      m.free.push(base);
+      m.loggers.push({ ...base, state: "free", where: home ? `Free · at ${home}` : "Free" });
+    }
+    models.set(key, m);
+  }
+  // IDs in the order people count them: T-TRH017, T-TRH018 … T-TRH0173 (QA Tech's IDs
+  // have 3 and 4 digits), not as text, which put T-TRH0173 between 017 and 018.
+  const natural = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
+  for (const m of models.values()) {
+    m.loggers.sort((a, b) => natural.compare(a.code, b.code));
+    m.free.sort((a, b) => natural.compare(a.code, b.code));
+  }
+  return {
+    needs: types.map((type) => ({
+      type,
+      needed: needed.get(type)!,
+      booked: input.booked.filter((b) => b.type === type && b.tier !== "master").length,
+    })),
+    // Most free first: the model QA Tech can take a whole set of.
+    models: [...models.values()].sort(
+      (a, b) => b.free.length - a.free.length || a.label.localeCompare(b.label),
+    ),
+  };
 }
 
 export async function releaseInstruments(
@@ -1257,98 +1623,5 @@ export async function releaseInstruments(
     }
     await syncReadiness(tx, actor, job, request);
     return removed.length;
-  });
-}
-
-// ---------------------------------------------------------------- rate card
-
-const RATE_UNIQUE = {
-  rate_cards_org_line_key:
-    "There is already a price for this work, equipment type, duration and basis. Change that line instead.",
-};
-
-export async function saveRateLine(
-  db: Database,
-  actor: SessionUser,
-  input: RateLineInput,
-  id: string | null,
-  request?: RequestInfo,
-): Promise<RateCard> {
-  assertCan(actor, "ratecard.manage");
-  const v = rateLineSchema.parse(input);
-  const values = { ...v, price: String(v.price) };
-  return guarded(RATE_UNIQUE, () =>
-    db.transaction(async (tx) => {
-      if (id === null) {
-        const [row] = await tx
-          .insert(rateCards)
-          .values({ organisationId: actor.organisationId, ...values })
-          .returning();
-        await recordAudit(tx, {
-          organisationId: actor.organisationId,
-          actor: user(actor),
-          action: "rate_card.created",
-          entityType: "rate_card",
-          entityId: row!.id,
-          summary: `${actor.name} added a rate: ${v.workType} ${v.equipmentType || "any equipment"} ₹${v.price} ${v.basis}`,
-          after: values,
-          request,
-        });
-        return row!;
-      }
-      if (!isUuid(id)) throw new JobsError("That rate does not exist.");
-      const [current] = await tx
-        .select()
-        .from(rateCards)
-        .where(and(eq(rateCards.id, id), eq(rateCards.organisationId, actor.organisationId)))
-        .for("update");
-      if (!current) throw new JobsError("That rate does not exist.");
-      const [row] = await tx
-        .update(rateCards)
-        .set({ ...values, updatedAt: new Date() })
-        .where(eq(rateCards.id, id))
-        .returning();
-      await recordAudit(tx, {
-        organisationId: actor.organisationId,
-        actor: user(actor),
-        action: "rate_card.updated",
-        entityType: "rate_card",
-        entityId: id,
-        summary: `${actor.name} changed a rate: ${v.workType} ${v.equipmentType || "any equipment"} ₹${v.price} ${v.basis}`,
-        before: current,
-        after: values,
-        request,
-      });
-      return row!;
-    }),
-  );
-}
-
-export async function retireRateLine(
-  db: Database,
-  actor: SessionUser,
-  id: string,
-  request?: RequestInfo,
-): Promise<void> {
-  assertCan(actor, "ratecard.manage");
-  if (!isUuid(id)) throw new JobsError("That rate does not exist.");
-  await db.transaction(async (tx) => {
-    const [row] = await tx
-      .update(rateCards)
-      .set({ active: false, updatedAt: new Date() })
-      .where(and(eq(rateCards.id, id), eq(rateCards.organisationId, actor.organisationId)))
-      .returning();
-    if (!row) throw new JobsError("That rate does not exist.");
-    await recordAudit(tx, {
-      organisationId: actor.organisationId,
-      actor: user(actor),
-      action: "rate_card.updated",
-      entityType: "rate_card",
-      entityId: id,
-      summary: `${actor.name} removed a rate: ${row.workType} ${row.equipmentType || "any equipment"}`,
-      before: { active: true },
-      after: { active: false },
-      request,
-    });
   });
 }

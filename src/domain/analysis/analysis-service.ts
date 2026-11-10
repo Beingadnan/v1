@@ -1,5 +1,7 @@
 import "server-only";
 
+import { reads } from "@/db/reads";
+
 import { createHash } from "node:crypto";
 
 import { and, asc, desc, eq, inArray, isNotNull, isNull, max } from "drizzle-orm";
@@ -52,6 +54,7 @@ import {
   type DeviationDecision,
   type RunInputs,
 } from "./types";
+import { calibrationOf } from "@/domain/jobs/studies";
 
 const user = (actor: SessionUser) => ({ type: "user" as const, userId: actor.id });
 
@@ -100,23 +103,48 @@ export async function analysisInputs(
   study: Study,
   corrections: RunInputs["corrections"] = [],
 ): Promise<{ engine: EngineInput; inputs: RunInputs; hash: string }> {
-  const ctx = await dataContext(tx, organisationId, study);
+  const [ctx, excludedRows, acceptedRows, fileSums] = await reads(tx, [
+    () => dataContext(tx, organisationId, study),
+    () =>
+      tx
+        .select({
+          positionId: deviations.positionId,
+          number: deviations.number,
+          by: deviations.decidedByName,
+        })
+        .from(deviations)
+        .where(
+          and(
+            eq(deviations.studyId, study.id),
+            eq(deviations.decision, "exclude_probe"),
+            isNotNull(deviations.positionId),
+          ),
+        )
+        .orderBy(asc(deviations.number)),
+    () =>
+      tx
+        .select({ fingerprint: studyDataAcceptances.fingerprint })
+        .from(studyDataAcceptances)
+        .where(
+          and(eq(studyDataAcceptances.studyId, study.id), isNull(studyDataAcceptances.withdrawnAt)),
+        ),
+    // The current files' checksums, by subquery, in the same round.
+    () =>
+      tx
+        .select({ id: storedFiles.id, sha256: storedFiles.sha256 })
+        .from(storedFiles)
+        .where(
+          inArray(
+            storedFiles.id,
+            tx
+              .select({ id: studyDataFiles.fileId })
+              .from(studyDataFiles)
+              .where(and(eq(studyDataFiles.studyId, study.id), isNull(studyDataFiles.replacedAt))),
+          ),
+        ),
+  ]);
   const thermal = study.workType === "thermal_validation";
-  const sums = new Map(
-    ctx.files.length === 0
-      ? []
-      : (
-          await tx
-            .select({ id: storedFiles.id, sha256: storedFiles.sha256 })
-            .from(storedFiles)
-            .where(
-              inArray(
-                storedFiles.id,
-                ctx.files.map((f) => f.fileId),
-              ),
-            )
-        ).map((f) => [f.id, f.sha256]),
-  );
+  const sums = new Map(fileSums.map((f) => [f.id, f.sha256]));
   const fileById = new Map(ctx.files.map((f) => [f.id, f]));
   const positionById = new Map(ctx.positions.map((p) => [p.id, p]));
 
@@ -168,36 +196,12 @@ export async function analysisInputs(
         .map((e) => ({ kind: e.kind, at: e.at.getTime() })),
     }));
 
-  const excludedRows = await tx
-    .select({
-      positionId: deviations.positionId,
-      number: deviations.number,
-      by: deviations.decidedByName,
-    })
-    .from(deviations)
-    .where(
-      and(
-        eq(deviations.studyId, study.id),
-        eq(deviations.decision, "exclude_probe"),
-        isNotNull(deviations.positionId),
-      ),
-    )
-    .orderBy(asc(deviations.number));
   const excluded = excludedRows.map((d) => ({
     positionId: d.positionId!,
     reason: `${d.number}, decided by ${d.by}`,
   }));
 
-  const accepted = (
-    await tx
-      .select({ fingerprint: studyDataAcceptances.fingerprint })
-      .from(studyDataAcceptances)
-      .where(
-        and(eq(studyDataAcceptances.studyId, study.id), isNull(studyDataAcceptances.withdrawnAt)),
-      )
-  )
-    .map((a) => a.fingerprint)
-    .sort();
+  const accepted = acceptedRows.map((a) => a.fingerprint).sort();
 
   const limits = {
     tempMin: num(study.tempMinC),
@@ -884,20 +888,17 @@ export async function approvalBlockers(
   study: Study,
 ) {
   const out: string[] = [];
-  const run = await latestRun(tx, study.id);
-  if (study.dataStatus !== "received") out.push("The data isn't confirmed.");
-  if (!run) {
-    out.push("No analysis has been run.");
-    return { run, stale: false, out };
-  }
-  const { hash } = await analysisInputs(tx, organisationId, study);
-  const stale = hash !== run.inputHash;
-  if (stale)
-    out.push(`The data or decisions changed after run ${run.runNo}. Run the analysis again.`);
-
-  const reviewed = new Set(
-    (
-      await tx
+  const postCal = calibrationOf(study).post;
+  // Every read goes out at once: on a distant database each round trip costs ~250 ms.
+  // The inputs (the heaviest read) are only fetched when a run can exist: after the data is in.
+  const [run, inputs, reviewedRows, devs, [newest], placed, doneRows] = await reads(tx, [
+    () => latestRun(tx, study.id),
+    () =>
+      study.dataStatus === "received"
+        ? analysisInputs(tx, organisationId, study)
+        : Promise.resolve(null),
+    () =>
+      tx
         .select({ fingerprint: studyExcursionReviews.fingerprint })
         .from(studyExcursionReviews)
         .where(
@@ -905,9 +906,43 @@ export async function approvalBlockers(
             eq(studyExcursionReviews.studyId, study.id),
             isNull(studyExcursionReviews.withdrawnAt),
           ),
-        )
-    ).map((r) => r.fingerprint),
-  );
+        ),
+    () => tx.select().from(deviations).where(eq(deviations.studyId, study.id)),
+    () =>
+      tx
+        .select({ at: studyDataFiles.uploadedAt })
+        .from(studyDataFiles)
+        .where(and(eq(studyDataFiles.studyId, study.id), isNull(studyDataFiles.replacedAt)))
+        .orderBy(desc(studyDataFiles.uploadedAt))
+        .limit(1),
+    () =>
+      postCal
+        ? tx
+            .select({ id: studyPositions.instrumentId, label: studyPositions.label })
+            .from(studyPositions)
+            .where(
+              and(eq(studyPositions.studyId, study.id), isNotNull(studyPositions.instrumentId)),
+            )
+        : Promise.resolve([]),
+    () =>
+      postCal
+        ? tx
+            .select({ id: studyPrecal.instrumentId })
+            .from(studyPrecal)
+            .where(and(eq(studyPrecal.studyId, study.id), eq(studyPrecal.phase, "post")))
+        : Promise.resolve([]),
+  ]);
+  if (study.dataStatus !== "received") out.push("The data isn't confirmed.");
+  if (!run) {
+    out.push("No analysis has been run.");
+    return { run, stale: false, out };
+  }
+  const hash = (inputs ?? (await analysisInputs(tx, organisationId, study))).hash;
+  const stale = hash !== run.inputHash;
+  if (stale)
+    out.push(`The data or decisions changed after run ${run.runNo}. Run the analysis again.`);
+
+  const reviewed = new Set(reviewedRows.map((r) => r.fingerprint));
   const unreviewed = run.result.cycles.flatMap((c) =>
     c.excursions.filter((e) => !reviewed.has(excursionKey({ ...e, cycle: c.cycle }))),
   );
@@ -917,7 +952,6 @@ export async function approvalBlockers(
     );
   }
 
-  const devs = await tx.select().from(deviations).where(eq(deviations.studyId, study.id));
   const open = devs.filter((d) => !d.closedAt);
   if (open.length > 0) {
     out.push(
@@ -926,34 +960,15 @@ export async function approvalBlockers(
   }
   // "Repeat study": new data must come in after the decision.
   const repeat = devs.filter((d) => d.decision === "repeat_study" && d.closedAt);
-  if (repeat.length > 0) {
-    const [newest] = await tx
-      .select({ at: studyDataFiles.uploadedAt })
-      .from(studyDataFiles)
-      .where(and(eq(studyDataFiles.studyId, study.id), isNull(studyDataFiles.replacedAt)))
-      .orderBy(desc(studyDataFiles.uploadedAt))
-      .limit(1);
-    for (const d of repeat) {
-      if (!newest || newest.at <= d.closedAt!) {
-        out.push(`${d.number} decided to repeat the study: upload the new study's data.`);
-      }
+  for (const d of repeat) {
+    if (!newest || newest.at <= d.closedAt!) {
+      out.push(`${d.number} decided to repeat the study: upload the new study's data.`);
     }
   }
 
   // Post-calibration, when the client or thermal validation asks for it.
-  if (study.postCalRequired || study.workType === "thermal_validation") {
-    const placed = await tx
-      .select({ id: studyPositions.instrumentId, label: studyPositions.label })
-      .from(studyPositions)
-      .where(and(eq(studyPositions.studyId, study.id), isNotNull(studyPositions.instrumentId)));
-    const done = new Set(
-      (
-        await tx
-          .select({ id: studyPrecal.instrumentId })
-          .from(studyPrecal)
-          .where(and(eq(studyPrecal.studyId, study.id), eq(studyPrecal.phase, "post")))
-      ).map((r) => r.id),
-    );
+  if (postCal) {
+    const done = new Set(doneRows.map((r) => r.id));
     const missing = placed.filter((p) => !done.has(p.id!));
     if (missing.length > 0) {
       out.push(

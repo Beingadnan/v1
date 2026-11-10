@@ -1,0 +1,4 @@
+ALTER TABLE "equipment" DROP CONSTRAINT "equipment_type_check";--> statement-breakpoint
+ALTER TABLE "equipment_type_defaults" DROP CONSTRAINT "equipment_type_defaults_type_check";--> statement-breakpoint
+ALTER TABLE "equipment" ADD CONSTRAINT "equipment_type_check" CHECK ("equipment"."type" in ('refrigerator', 'freezer', 'deep_freezer', 'walk_in_freezer', 'cold_room', 'warehouse', 'room', 'stability_chamber', 'incubator', 'vehicle', 'autoclave', 'dry_heat_oven', 'other'));--> statement-breakpoint
+ALTER TABLE "equipment_type_defaults" ADD CONSTRAINT "equipment_type_defaults_type_check" CHECK ("equipment_type_defaults"."type" in ('refrigerator', 'freezer', 'deep_freezer', 'walk_in_freezer', 'cold_room', 'warehouse', 'room', 'stability_chamber', 'incubator', 'vehicle', 'autoclave', 'dry_heat_oven', 'other'));

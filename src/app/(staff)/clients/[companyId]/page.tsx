@@ -21,6 +21,9 @@ import { can } from "@/domain/auth/permissions";
 import { isRole, ROLE_LABELS } from "@/domain/auth/roles";
 import { EQUIPMENT_TYPE_INFO, isEquipmentType } from "@/domain/clients/equipment-types";
 import { getCompany } from "@/domain/clients/queries";
+import { listContracts } from "@/domain/jobs/contract-service";
+import { formatInr } from "@/domain/jobs/pricing";
+import { ORDER_TYPE_SHORT } from "@/domain/jobs/types";
 import { dueStatus, todayInIndia } from "@/domain/clients/requalification";
 import { requirePermission } from "@/lib/auth/dal";
 import { formatDate, formatDateTime, formatLimits } from "@/lib/format";
@@ -34,6 +37,8 @@ import {
   SiteDialog,
 } from "../client-dialogs";
 import { DueBadge } from "../due-badge";
+
+import { ContractButton } from "./contract-dialog";
 
 export const metadata: Metadata = { title: "Client" };
 
@@ -74,12 +79,19 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 export default async function ClientPage({ params }: PageProps<"/clients/[companyId]">) {
   const actor = await requirePermission("clients.view");
   const { companyId } = await params;
-  const data = await getCompany(db, actor, companyId);
+  // The contracts check the organisation themselves: read them alongside the client.
+  const [data, contracts] = await Promise.all([
+    getCompany(db, actor, companyId),
+    can(actor, "jobs.view") ? listContracts(db, actor, companyId) : Promise.resolve(null),
+  ]);
   if (!data) notFound();
   const { company, sites, departments, contacts, equipment, clientUsers } = data;
   const canManage = can(actor, "clients.manage");
   const canSeeUsers = can(actor, "users.view");
   const canInvite = can(actor, "users.manage");
+  // ARCs and AMCs: anyone who sees jobs sees them; managers and accounts keep them.
+  const canKeepContracts = can(actor, "jobs.manage") || can(actor, "billing.record");
+  const canSeeMoney = can(actor, "jobs.money");
 
   const siteName = new Map(sites.map((s) => [s.id, s.name]));
   const departmentName = new Map(departments.map((d) => [d.id, d.name]));
@@ -264,6 +276,100 @@ export default async function ClientPage({ params }: PageProps<"/clients/[compan
           </Table>
         )}
       </Section>
+
+      {contracts ? (
+        <Section
+          title="Contracts (ARC and AMC)"
+          description="Annual contracts jobs are done under, instead of a PO per job."
+          action={
+            canKeepContracts ? (
+              <ContractButton companyId={company.id} canSeeMoney={canSeeMoney} />
+            ) : undefined
+          }
+        >
+          {contracts.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No ARC or AMC. Jobs for this client need a PO or SRF each.
+            </p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Contract</TableHead>
+                  <TableHead>Valid</TableHead>
+                  {canSeeMoney ? <TableHead className="text-right">Value</TableHead> : null}
+                  <TableHead className="text-right">Jobs</TableHead>
+                  <TableHead>Copy</TableHead>
+                  {canKeepContracts ? <TableHead className="sr-only">Edit</TableHead> : null}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {contracts.map((c) => {
+                  const current = c.validFrom <= today && c.validTo >= today;
+                  return (
+                    <TableRow key={c.id}>
+                      <TableCell>
+                        <span className="font-medium">
+                          {ORDER_TYPE_SHORT[c.kind]} {c.number}
+                        </span>
+                        {c.notes ? (
+                          <span className="block text-xs text-muted-foreground">{c.notes}</span>
+                        ) : null}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        {formatDate(c.validFrom)} – {formatDate(c.validTo)}{" "}
+                        <StatusBadge
+                          tone={current ? "pass" : c.validTo < today ? "neutral" : "info"}
+                        >
+                          {current ? "Current" : c.validTo < today ? "Ended" : "Not started"}
+                        </StatusBadge>
+                      </TableCell>
+                      {canSeeMoney ? (
+                        <TableCell className="text-right">
+                          {c.value ? formatInr(Number(c.value)) : "—"}
+                        </TableCell>
+                      ) : null}
+                      <TableCell className="text-right">{c.jobs}</TableCell>
+                      <TableCell>
+                        {c.fileId ? (
+                          <a
+                            href={`/clients/${company.id}/contracts/${c.id}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-primary underline"
+                          >
+                            Open
+                          </a>
+                        ) : (
+                          <span className="text-muted-foreground">None</span>
+                        )}
+                      </TableCell>
+                      {canKeepContracts ? (
+                        <TableCell className="text-right">
+                          <ContractButton
+                            companyId={company.id}
+                            canSeeMoney={canSeeMoney}
+                            contract={{
+                              id: c.id,
+                              kind: c.kind,
+                              number: c.number,
+                              validFrom: c.validFrom,
+                              validTo: c.validTo,
+                              value: c.value ?? "",
+                              notes: c.notes,
+                              hasFile: !!c.fileId,
+                            }}
+                          />
+                        </TableCell>
+                      ) : null}
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
+        </Section>
+      ) : null}
 
       <Section
         title="Sites and departments"

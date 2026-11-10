@@ -1,8 +1,8 @@
 /**
  * Is a job ready for field work? Most items are worked out from the job
- * itself; only the protocol, site access and previous report are ticked by
- * people. Pure, so the job page, the board and the "start field work" check
- * all agree.
+ * itself; site access is ticked by people, and the previous report only when
+ * it was made before QTech. Pure, so the job page, the board and the "start
+ * field work" check all agree.
  */
 import {
   certificateCovering,
@@ -11,9 +11,12 @@ import {
 } from "@/domain/instruments/validity";
 
 import {
+  ORDER_TYPE_SHORT,
+  isContractType,
   READINESS_INFO,
   READINESS_ITEMS,
   type ReadinessKey,
+  type OrderType,
   type ReadinessState,
   type WorkType,
 } from "./types";
@@ -27,12 +30,20 @@ export type BookedInstrument = {
 };
 
 export type ReadinessInput = {
+  /** po, srf, arc or amc (older callers: a PO). */
+  orderType?: OrderType;
   poNumber: string;
+  /** The client's entry gate pass (older callers: none). */
+  gatePass?: { number: string; notNeeded: boolean };
+  /** The ARC or AMC the job is done under, if any. */
+  contract?: { kind: string; number: string; validFrom: string; validTo: string } | null;
   plannedStart: string;
   plannedEnd: string;
   studies: {
     workType: WorkType;
     loggerCount: number;
+    /** Optional in older callers; pre-calibration needs a master like post-calibration. */
+    preCalRequired?: boolean;
     postCalRequired: boolean;
     /** Hours the loggers record for; null when not set. */
     durationHours?: number | null;
@@ -42,8 +53,11 @@ export type ReadinessInput = {
     cycleCount?: number;
   }[];
   booked: BookedInstrument[];
-  /** Any equipment on the job studied before: a requalification. */
-  isRequalification: boolean;
+  /**
+   * Equipment on the job that was studied before (a requalification), with the
+   * last report signed in QTech when there is one.
+   */
+  previousReports: { label: string; lastStudyOn: string | null; report: string | null }[];
   manual: Partial<Record<ReadinessKey, { state: ReadinessState; note: string }>>;
 };
 
@@ -56,6 +70,8 @@ export type ReadinessItem = {
   detail: string;
   /** What a person wrote when ticking it (never the help text). */
   note: string;
+  /** Pending holds back field work. The client's order doesn't: it can come later. */
+  blocking: boolean;
 };
 
 const dmy = (iso: string) => iso.split("-").reverse().join(".");
@@ -104,12 +120,13 @@ export function loggersNeeded(studies: ReadinessInput["studies"]): number {
   );
 }
 
-/** Masters are needed for thermal validation, on-site calibration, or a client SOP asking for post-cal. */
+/** Masters are needed for thermal validation, on-site calibration, or a study with pre- or post-calibration. */
 export function needsMasters(studies: ReadinessInput["studies"]): boolean {
   return studies.some(
     (s) =>
       s.workType === "thermal_validation" ||
       s.workType === "onsite_calibration" ||
+      s.preCalRequired === true ||
       s.postCalRequired,
   );
 }
@@ -125,7 +142,10 @@ function listFew(reasons: string[]): string {
 export function computeReadiness(input: ReadinessInput): {
   items: ReadinessItem[];
   ready: boolean;
+  /** Items holding up field work. */
   pending: number;
+  /** Items still open that don't hold it up (the client's order). */
+  waiting: number;
 } {
   const working = input.booked.filter((b) => b.tier !== "master");
   const masters = input.booked.filter((b) => b.tier === "master");
@@ -133,9 +153,7 @@ export function computeReadiness(input: ReadinessInput): {
   const mastersNeeded = needsMasters(input.studies);
 
   const calc: Record<ReadinessKey, { state: ReadinessState; detail: string } | null> = {
-    purchase_order: input.poNumber.trim()
-      ? { state: "ready", detail: `PO ${input.poNumber.trim()}` }
-      : { state: "pending", detail: "Enter the client's PO number." },
+    purchase_order: orderReadiness(input),
     loggers_booked:
       needed === 0
         ? { state: "na", detail: "No loggers needed." }
@@ -179,64 +197,118 @@ export function computeReadiness(input: ReadinessInput): {
           }
         : { state: "pending" as const, detail: `Not valid through the study: ${listFew(bad)}.` };
     })(),
-    dates_fit: (() => {
-      const days =
-        (Date.parse(`${input.plannedEnd}T00:00:00Z`) -
-          Date.parse(`${input.plannedStart}T00:00:00Z`)) /
-        86_400_000;
-      const hours = days * 24;
-      // Cycles run one after another, each for the study's duration.
-      const total = (s: ReadinessInput["studies"][number]) =>
-        (s.durationHours ?? 0) * Math.max(1, s.cycleCount ?? 1);
-      const long = input.studies
-        .filter((s) => s.workType !== "onsite_calibration" && total(s) > hours)
-        .sort((a, b) => total(b) - total(a));
-      if (long.length === 0) {
-        const max = Math.max(0, ...input.studies.map(total));
-        return max
-          ? {
-              state: "ready" as const,
-              detail: `${hours} h on site; the longest study needs ${max} h.`,
-            }
-          : { state: "na" as const, detail: "No study duration set." };
-      }
-      const need = total(long[0]!);
-      const lastDay = new Date(
-        Date.parse(`${input.plannedStart}T00:00:00Z`) + Math.ceil(need / 24) * 86_400_000,
-      )
-        .toISOString()
-        .slice(0, 10);
+    site_access: (() => {
+      const g = input.gatePass;
+      if (g?.number.trim())
+        return { state: "ready" as const, detail: `Gate pass ${g.number.trim()}` };
+      if (g?.notNeeded) return { state: "na" as const, detail: "No gate pass at this site." };
+      // Jobs ticked by hand before the gate pass step keep their tick.
+      const m = input.manual.site_access;
+      if (m) return { state: m.state, detail: m.note || "Ticked before the gate pass step." };
       return {
         state: "pending" as const,
-        detail: `${dmy(input.plannedStart)}–${dmy(input.plannedEnd)} gives ${hours} h, but ${listFew(
-          long.map((s) =>
-            (s.cycleCount ?? 1) > 1
-              ? `${s.label ?? "a study"} needs ${total(s)} h (${s.cycleCount} cycles of ${s.durationHours} h)`
-              : `${s.label ?? "a study"} needs ${total(s)} h`,
-          ),
-        )}. Move the last day to ${dmy(lastDay)} or shorten the study.`,
+        detail: "Enter the client's gate pass number, or mark it not needed. Booking follows it.",
       };
     })(),
-    protocol: null,
-    site_access: null,
-    previous_report: input.isRequalification
-      ? null
-      : { state: "na", detail: "First study of this equipment." },
+    previous_report: (() => {
+      if (input.previousReports.length === 0) {
+        return { state: "na" as const, detail: "First study of this equipment." };
+      }
+      const outside = input.previousReports.filter((p) => p.report === null);
+      if (outside.length === 0) {
+        return {
+          state: "ready" as const,
+          detail: `In QTech: ${listFew(input.previousReports.map((p) => `${p.label} ${p.report}`))}.`,
+        };
+      }
+      // Mapped before QTech: someone has to find the old report and tick it.
+      return {
+        state: "pending" as const,
+        detail: `Mapped before QTech, keep the last report to hand: ${listFew(
+          outside.map((p) => (p.lastStudyOn ? `${p.label} (${dmy(p.lastStudyOn)})` : p.label)),
+        )}.`,
+      };
+    })(),
   };
 
   const items = READINESS_ITEMS.map((key): ReadinessItem => {
     const info = READINESS_INFO[key];
     const worked = calc[key];
     const manual = input.manual[key];
-    const base = { key, label: info.label, note: manual?.note ?? "" };
+    const base = {
+      key,
+      label: info.label,
+      note: manual?.note ?? "",
+      blocking: key !== "purchase_order",
+    };
     if (worked && info.calculated) return { ...base, calculated: true, ...worked };
-    // Manual items, and previous report when it doesn't apply unless someone ticked it.
+    // Worked out for certain (the previous report found in QTech, or no previous study).
+    if (worked && worked.state !== "pending") return { ...base, calculated: true, ...worked };
     if (manual) {
       return { ...base, calculated: false, state: manual.state, detail: manual.note || info.hint };
     }
     if (worked) return { ...base, calculated: false, ...worked };
     return { ...base, calculated: false, state: "pending", detail: info.hint };
   });
-  const pending = items.filter((i) => i.state === "pending").length;
-  return { items, ready: pending === 0, pending };
+  const pending = items.filter((i) => i.state === "pending" && i.blocking).length;
+  /** Pending but not holding up field work: the client's order. */
+  const waiting = items.filter((i) => i.state === "pending" && !i.blocking).length;
+  return { items, ready: pending === 0, pending, waiting };
+}
+
+/** The client's order: its number, or the ARC/AMC covering the job's dates. */
+function orderReadiness(input: ReadinessInput): { state: ReadinessState; detail: string } {
+  const type = input.orderType ?? "po";
+  const short = ORDER_TYPE_SHORT[type];
+  if (isContractType(type)) {
+    const c = input.contract;
+    if (!c) return { state: "pending", detail: `${short} pending: pick the client's ${short}.` };
+    if (c.validFrom > input.plannedStart || c.validTo < input.plannedStart) {
+      return {
+        state: "pending",
+        detail: `${short} ${c.number} runs ${dmy(c.validFrom)}–${dmy(c.validTo)}, not on ${dmy(input.plannedStart)}: pick the current one.`,
+      };
+    }
+    return { state: "ready", detail: `${short} ${c.number}, valid until ${dmy(c.validTo)}` };
+  }
+  const number = input.poNumber.trim();
+  return number
+    ? { state: "ready", detail: `${short} ${number}` }
+    : {
+        state: "pending",
+        detail: `${short} pending: field work can go ahead; enter it when it comes.`,
+      };
+}
+
+/**
+ * When the days on site are too short for the longest study (every cycle
+ * counted), says so and gives the last day that fits; otherwise null. Shown
+ * under the job's dates: QA Tech didn't want it as a readiness item.
+ */
+export function datesShortfall(
+  input: Pick<ReadinessInput, "plannedStart" | "plannedEnd" | "studies">,
+): string | null {
+  const hours =
+    ((Date.parse(`${input.plannedEnd}T00:00:00Z`) - Date.parse(`${input.plannedStart}T00:00:00Z`)) /
+      86_400_000) *
+    24;
+  // Cycles run one after another, each for the study's duration.
+  const total = (s: ReadinessInput["studies"][number]) =>
+    (s.durationHours ?? 0) * Math.max(1, s.cycleCount ?? 1);
+  const long = input.studies
+    .filter((s) => s.workType !== "onsite_calibration" && total(s) > hours)
+    .sort((a, b) => total(b) - total(a));
+  if (long.length === 0) return null;
+  const lastDay = new Date(
+    Date.parse(`${input.plannedStart}T00:00:00Z`) + Math.ceil(total(long[0]!) / 24) * 86_400_000,
+  )
+    .toISOString()
+    .slice(0, 10);
+  return `${dmy(input.plannedStart)}–${dmy(input.plannedEnd)} gives ${hours} h, but ${listFew(
+    long.map((s) =>
+      (s.cycleCount ?? 1) > 1
+        ? `${s.label ?? "a study"} needs ${total(s)} h (${s.cycleCount} cycles of ${s.durationHours} h)`
+        : `${s.label ?? "a study"} needs ${total(s)} h`,
+    ),
+  )}. Move the last day to ${dmy(lastDay)} or shorten the study.`;
 }

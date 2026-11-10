@@ -270,10 +270,10 @@ beforeAll(async () => {
   );
   jobId = job.id;
   studyId = (await getJob(db, leader, jobId))!.studies[0]!.id;
-  for (const key of ["protocol", "site_access", "previous_report"]) {
+  for (const key of ["site_access", "previous_report"]) {
     await setReadiness(db, leader, jobId, { key, state: "ready", note: "" }, req);
   }
-  await autoBook(db, leader, jobId, req);
+  await autoBook(db, leader, jobId, req, { loggers: true });
   await saveLayout(db, engineer, studyId, await layoutTemplate(db, engineer, studyId), req);
   for (const s of serials) await placeLogger(db, engineer, studyId, { code: s }, req);
   // A 24 h study that ended two hours ago, times tapped on the phone.

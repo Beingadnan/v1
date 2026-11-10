@@ -5,7 +5,7 @@
  * Coordinates are fractions of the inside size: x along the length (left →
  * right), y along the width (front → back), z up the height (floor → top).
  */
-import { suggestLoggerCount } from "@/domain/clients/study-defaults";
+import { roomWalls, suggestLoggerCount } from "@/domain/clients/study-defaults";
 
 export type Point = { x: number; y: number; z: number };
 export type LayoutPoint = Point & { label: string; note: string; ambient: boolean };
@@ -57,8 +57,13 @@ const corners = (z: number): Point[] => [
  * - otherwise a near-square grid per level (2 levels, 3 from 18 loggers).
  * People move points afterwards; this saves placing them one by one.
  */
-export function templateLayout(count: number, dims?: Dimensions): LayoutPoint[] {
+export function templateLayout(
+  count: number,
+  dims?: Dimensions,
+  options: { room?: boolean } = {},
+): LayoutPoint[] {
   if (count <= 0) return [];
+  if (options.room) return roomLayout(count, dims);
   let points: Point[];
   const centre: Point = { x: 0.5, y: 0.5, z: 0.5 };
   if (count === 9) {
@@ -97,6 +102,102 @@ export function templateLayout(count: number, dims?: Dimensions): LayoutPoint[] 
     note: describe(p, levels),
     ambient: false,
   }));
+}
+
+/** Bench height in a room: where product is handled (dispensing, sampling). */
+export const WORKING_HEIGHT_M = 1;
+
+const wallName = (n: number) => `wall-${n}`;
+
+/**
+ * A room: loggers at working height along the four walls, numbered clockwise
+ * from wall-1 at the front, then one in the centre (QA Tech's WH013 report).
+ * A count other than the suggested one is shared by wall length.
+ */
+function roomLayout(count: number, dims?: Dimensions): LayoutPoint[] {
+  const L = dims?.lengthM ?? 1;
+  const W = dims?.widthM ?? 1;
+  const z = workingZ(dims?.heightM ?? null);
+  // One in the centre from five loggers on (or the only one); the rest on the walls.
+  const onWalls = count === 1 ? 0 : count >= 5 ? count - 1 : count;
+  let walls = roomWalls(L, W) as number[];
+  if (walls.reduce((a, b) => a + b, 0) !== onWalls) {
+    // Share the loggers by wall length, the longer walls first.
+    const lengths = [L, W, L, W];
+    walls = [0, 0, 0, 0];
+    for (let i = 0; i < onWalls; i++) {
+      const next = [0, 1, 2, 3].sort(
+        (a, b) => walls[a]! / lengths[a]! - walls[b]! / lengths[b]! || a - b,
+      )[0]!;
+      walls[next]! += 1;
+    }
+  }
+  const along = (k: number, i: number) => IN + ((OUT - IN) * (i + 0.5)) / k;
+  const points: { p: Point; note: string }[] = [];
+  walls.forEach((k, w) => {
+    for (let i = 0; i < k; i++) {
+      const t = along(k, i);
+      const p: Point =
+        w === 0
+          ? { x: t, y: IN, z }
+          : w === 1
+            ? { x: OUT, y: t, z }
+            : w === 2
+              ? { x: 1 - t, y: OUT, z }
+              : { x: IN, y: 1 - t, z };
+      points.push({ p, note: `Working height on ${wallName(w + 1)}` });
+    }
+  });
+  if (points.length < count) {
+    points.push({ p: { x: 0.5, y: 0.5, z }, note: "Working height, centre of the room" });
+  }
+  return points.slice(0, count).map(({ p, note }, i) => ({
+    ...round(p),
+    label: label(i + 1),
+    note,
+    ambient: false,
+  }));
+}
+
+export function workingZ(heightM: number | null): number {
+  if (!heightM || heightM <= 0) return 0.4;
+  return Math.min(0.95, Math.max(0.05, WORKING_HEIGHT_M / heightM));
+}
+
+/**
+ * Where a point is in a room, in QA Tech's words: the nearest wall (or the
+ * centre) and the height ("Working height on wall-2", "Near the ceiling,
+ * centre of the room").
+ */
+export function describeRoom({ x, y, z }: Point, heightM: number | null): string {
+  const near = [
+    { wall: 1, d: y },
+    { wall: 2, d: 1 - x },
+    { wall: 3, d: 1 - y },
+    { wall: 4, d: x },
+  ].sort((a, b) => a.d - b.d);
+  const where =
+    near[0]!.d > 0.25
+      ? "centre of the room"
+      : near[1]!.d <= 0.2
+        ? `corner of ${wallName(Math.min(near[0]!.wall, near[1]!.wall))} & ${wallName(Math.max(near[0]!.wall, near[1]!.wall))}`
+        : wallName(near[0]!.wall);
+  const metres = heightM ? z * heightM : null;
+  const height =
+    metres === null
+      ? z <= 0.15
+        ? "Floor level"
+        : z >= 0.85
+          ? "Near the ceiling"
+          : "Working height"
+      : Math.abs(metres - WORKING_HEIGHT_M) <= 0.4
+        ? "Working height"
+        : z <= 0.15
+          ? "Floor level"
+          : z >= 0.85
+            ? "Near the ceiling"
+            : `At ${metres.toFixed(1)} m`;
+  return where === "centre of the room" ? `${height}, ${where}` : `${height} on ${where}`;
 }
 
 /** The WHO grid used for the logger count (see suggestLoggerCount). */
@@ -158,6 +259,67 @@ export function projector(
     x: ox + (p.x * L + p.y * dx) * scale,
     y: oy - (p.z * H + p.y * dy) * scale,
   });
+}
+
+/**
+ * A floor plan (top view) in a frame: length across, width up the page, the
+ * front (wall-1, the entrance side) at the bottom, true to the room's
+ * proportions. Returns the mapping and the drawn rectangle.
+ */
+export function planProjector(
+  dims: Dimensions,
+  frame: { width: number; height: number; margin: number },
+) {
+  const L = dims.lengthM ?? 1;
+  const W = dims.widthM ?? 1;
+  const scale = Math.min(
+    (frame.width - 2 * frame.margin) / L,
+    (frame.height - 2 * frame.margin) / W,
+  );
+  const w = L * scale;
+  const h = W * scale;
+  const left = (frame.width - w) / 2;
+  const top = (frame.height - h) / 2;
+  return {
+    rect: { x: left, y: top, w, h },
+    at: (p: { x: number; y: number }) => ({ x: left + p.x * w, y: top + (1 - p.y) * h }),
+  };
+}
+
+/**
+ * A 3-D view of the box or room from any side: turned by `yaw` around the
+ * upright axis and looked at from `pitch` above the floor (degrees), drawn
+ * without perspective so sizes stay comparable. `yaw` 0 and `pitch` 0 look
+ * straight at the front (wall-1); `pitch` 90 looks down from the top.
+ * Returns each point's place on screen and its depth (larger = further).
+ */
+export function orbitProjector(
+  dims: Dimensions,
+  view: { yaw: number; pitch: number },
+  frame: { width: number; height: number; margin: number },
+) {
+  const L = dims.lengthM ?? 1;
+  const W = dims.widthM ?? 1;
+  const H = dims.heightM ?? 1;
+  const a = (view.yaw * Math.PI) / 180;
+  const e = (Math.max(0, Math.min(90, view.pitch)) * Math.PI) / 180;
+  const radius = Math.sqrt(L * L + W * W + H * H) / 2;
+  const scale = Math.min(
+    (frame.width - 2 * frame.margin) / (2 * radius),
+    (frame.height - 2 * frame.margin) / (2 * radius),
+  );
+  const cx = frame.width / 2;
+  const cy = frame.height / 2;
+  return (p: Point) => {
+    const X = (p.x - 0.5) * L;
+    const Y = (p.y - 0.5) * W;
+    const Z = (p.z - 0.5) * H;
+    const x1 = X * Math.cos(a) - Y * Math.sin(a);
+    const y1 = X * Math.sin(a) + Y * Math.cos(a);
+    const up = Z * Math.cos(e) + y1 * Math.sin(e);
+    const depth = y1 * Math.cos(e) - Z * Math.sin(e);
+    return { x: cx + x1 * scale, y: cy - up * scale, depth };
+  };
 }
 
 /** The 12 edges of the box, as pairs of corners. */

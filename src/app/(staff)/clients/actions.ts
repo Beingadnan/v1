@@ -19,6 +19,7 @@ import {
   setEquipmentActive,
   updateEquipment,
 } from "@/domain/clients/equipment-service";
+import { isArea } from "@/domain/clients/equipment-types";
 import { ClientsError } from "@/domain/clients/errors";
 import type { GstLookupConfig } from "@/domain/clients/gst-lookup";
 import { lookupGstin, type GstFill } from "@/domain/clients/gst-lookup-service";
@@ -259,7 +260,11 @@ export async function saveEquipmentAction(
   return {
     ok: true,
     data: { id: result.data.id },
-    message: equipmentId ? saved(result.data.changed) : "Equipment added.",
+    message: equipmentId
+      ? saved(result.data.changed)
+      : isArea(values.type)
+        ? "Room added."
+        : "Equipment added.",
   };
 }
 

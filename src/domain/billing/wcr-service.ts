@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, desc, eq, ne } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, type SQLWrapper } from "drizzle-orm";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { z } from "zod";
 
@@ -94,6 +94,35 @@ export async function wcrBlockers(db: Database | Transaction, jobId: string) {
       (s) =>
         `${s.code}: ${s.status ? `report ${revLabel(s.rev!)} isn't with the client yet` : "no report yet"}`,
     );
+}
+
+/**
+ * For many jobs at once (the billing overview): how many reasons each job's
+ * WCR can't be issued yet; 0 means it can. One read for all of them, the jobs
+ * given as a subquery (ADR 0018). A job with no studies isn't in the map.
+ */
+export async function wcrBlockerCounts(
+  db: Database | Transaction,
+  jobIds: SQLWrapper,
+): Promise<Map<string, number>> {
+  const rows = await db
+    .select({
+      jobId: studies.jobId,
+      studyId: studies.id,
+      status: studyReports.status,
+    })
+    .from(studies)
+    .leftJoin(studyReports, eq(studyReports.studyId, studies.id))
+    .where(inArray(studies.jobId, jobIds))
+    .orderBy(desc(studyReports.rev));
+  const latest = new Map<string, (typeof rows)[number]>();
+  for (const r of rows) if (!latest.has(r.studyId)) latest.set(r.studyId, r);
+  const counts = new Map<string, number>();
+  for (const r of latest.values()) {
+    const blocked = !r.status || !WITH_CLIENT.includes(r.status as ReportStatus);
+    counts.set(r.jobId, (counts.get(r.jobId) ?? 0) + (blocked ? 1 : 0));
+  }
+  return counts;
 }
 
 async function liveWcr(db: Database | Transaction, jobId: string) {

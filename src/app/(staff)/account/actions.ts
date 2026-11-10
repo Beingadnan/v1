@@ -5,6 +5,7 @@ import { z } from "zod";
 import { db } from "@/db/client";
 import { changeOwnPassword } from "@/domain/auth/account-service";
 import { requireUser } from "@/lib/auth/dal";
+import { forgetSessions } from "@/lib/auth/session-cache";
 import { getRequestInfo } from "@/lib/request-info";
 
 export type ChangePasswordState = { error?: string; done?: boolean } | undefined;
@@ -35,5 +36,6 @@ export async function changePasswordAction(
     { currentPassword: parsed.data.current, newPassword: parsed.data.password },
     await getRequestInfo(),
   );
+  if (result.ok) forgetSessions();
   return result.ok ? { done: true } : { error: result.message };
 }

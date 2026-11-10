@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { auditLog, jobStatusHistory, rateCards, sites, users } from "@/db/schema";
+import { auditLog, jobStatusHistory, sites, users } from "@/db/schema";
 import { ensureOrganisation } from "@/db/seed/ensure-organisation";
 import { ForbiddenError } from "@/domain/auth/permissions";
 import { toSessionUser, type SessionUser } from "@/domain/auth/session-service";
@@ -22,14 +22,13 @@ import {
   createJob,
   releaseInstruments,
   removeStudy,
-  repriceJob,
-  retireRateLine,
-  saveRateLine,
   setReadiness,
   setTeam,
   updateJob,
   updateStudy,
 } from "@/domain/jobs/job-service";
+import { dueStatus, todayInIndia } from "@/domain/clients/requalification";
+import { getFieldStudy } from "@/domain/field/queries";
 import { getJob, listJobs, siteEquipment } from "@/domain/jobs/queries";
 
 import { openTestDatabase } from "../support/test-db";
@@ -200,51 +199,15 @@ afterAll(close);
 const state = async (id: string) => (await getJob(db, manager, id))!;
 
 describe("phase 4 exit test: a Watson job with 2 freezers", () => {
-  it("prices from the rate card", async () => {
-    await saveRateLine(
-      db,
-      manager,
-      {
-        workType: "temperature_mapping",
-        equipmentType: "walk_in_freezer",
-        durationHours: "24",
-        basis: "per_study",
-        price: "₹18,000",
-        notes: "",
-      },
-      null,
-      req,
-    );
-    await expect(
-      saveRateLine(
-        db,
-        engineer,
-        { workType: "temperature_mapping", basis: "per_study", price: "1" },
-        null,
-        req,
-      ),
-    ).rejects.toBeInstanceOf(ForbiddenError);
-    await expect(
-      saveRateLine(
-        db,
-        manager,
-        {
-          workType: "temperature_mapping",
-          equipmentType: "walk_in_freezer",
-          durationHours: "24",
-          basis: "per_study",
-          price: "1",
-        },
-        null,
-        req,
-      ),
-    ).rejects.toThrow("There is already a price");
-  });
-
   it("ticks the due freezer in the wizard", async () => {
     const list = await siteEquipment(db, leader, seawoodsId);
     const wf = list.find((e) => e.code === "BE-WF-02")!;
-    expect(wf).toMatchObject({ nextDue: "2026-11-09", due: "due_soon", onJob: null });
+    // Due soon until 9 Nov 2026, overdue after: the test doesn't depend on the day it runs.
+    expect(wf).toMatchObject({
+      nextDue: "2026-11-09",
+      due: dueStatus("2026-11-09", todayInIndia()),
+      onJob: null,
+    });
     expect(list.find((e) => e.code === "BE-WF-03")!.due).toBe("none");
   });
 
@@ -328,7 +291,7 @@ describe("phase 4 exit test: a Watson job with 2 freezers", () => {
     );
     jobId = created.id;
     jobNumber = created.number;
-    expect(jobNumber).toMatch(/^QT\/J\/2026\/\d{4}$/);
+    expect(jobNumber).toMatch(/^QT\/\d{2}\/2026\/\d{4}$/);
 
     const job = await state(jobId);
     expect(job.status).toBe("created");
@@ -337,15 +300,15 @@ describe("phase 4 exit test: a Watson job with 2 freezers", () => {
     expect(
       job.studies.map((s) => [s.equipment.code, s.reportNumber, s.loggerCount, s.price]),
     ).toEqual([
-      ["BE-WF-02", "Watson/Seawoods/11/26/Cold Storage (Walk In Freezer)/BE-WF-02", 9, "18000.00"],
-      ["BE-WF-03", "Watson/Seawoods/11/26/Cold Storage (Walk In Freezer)/BE-WF-03", 9, "18000.00"],
+      ["BE-WF-02", "Watson/Seawoods/11/26/Cold Storage (Walk In Freezer)/BE-WF-02", 9, null],
+      ["BE-WF-03", "Watson/Seawoods/11/26/Cold Storage (Walk In Freezer)/BE-WF-03", 9, null],
     ]);
-    expect(job.value).toMatchObject({ expected: 36000, source: "rate_card" });
+    // No rate card: the job is worth its PO, and there is none yet.
+    expect(job.value).toEqual({ expected: null, source: "none" });
     expect(job.team.map((t) => t.name).sort()).toEqual(["Rahul TL", "Suresh FE"]);
     const pending = job.readiness.items.filter((i) => i.state === "pending").map((i) => i.key);
     expect(pending).toEqual([
       "purchase_order",
-      "protocol",
       "site_access",
       "loggers_booked",
       "loggers_valid",
@@ -384,6 +347,12 @@ describe("phase 4 exit test: a Watson job with 2 freezers", () => {
     }
     expect(await listJobs(db, engineer, { q: "%" })).toEqual([]);
     expect(await listJobs(db, outsider, {})).toEqual([]);
+    // Newest job first by default; by planned start when asked (QA Tech, Nov 2026).
+    const all = await listJobs(db, manager, { scope: "all" });
+    expect(all[0]!.id).toBe(jobId);
+    const byStart = await listJobs(db, manager, { scope: "all", sort: "start" });
+    const starts = byStart.map((j) => j.plannedStart);
+    expect(starts).toEqual([...starts].sort());
     expect(await getJob(db, outsider, jobId)).toBeNull();
     await expect(
       createJob(
@@ -405,10 +374,9 @@ describe("phase 4 exit test: a Watson job with 2 freezers", () => {
     const forEngineer = (await getJob(db, engineer, jobId))!;
     expect(forEngineer.job.poValue).toBeNull();
     expect(forEngineer.value).toBeNull();
-    expect(forEngineer.studies[0]!.price).toBeNull();
     expect((await listJobs(db, engineer, { q: "98765" }))[0]!.poValue).toBeNull();
     const forAccounts = (await getJob(db, accounts, jobId))!;
-    expect(forAccounts.value).toMatchObject({ expected: 36000, poDifference: -6000 });
+    expect(forAccounts.value).toMatchObject({ expected: 30000, source: "po" });
     expect(forAccounts.canManage).toBe(false);
   });
 
@@ -430,7 +398,7 @@ describe("phase 4 exit test: a Watson job with 2 freezers", () => {
         req,
       );
     }
-    const booked = await autoBook(db, leader, jobId, req);
+    const booked = await autoBook(db, leader, jobId, req, { loggers: true });
     expect(booked.booked).toEqual([
       "T-01",
       "T-02",
@@ -446,15 +414,12 @@ describe("phase 4 exit test: a Watson job with 2 freezers", () => {
     ]);
     expect(booked.short).toEqual([]);
     // Run again: nothing more is needed.
-    expect((await autoBook(db, leader, jobId, req)).booked).toEqual([]);
+    expect((await autoBook(db, leader, jobId, req, { loggers: true })).booked).toEqual([]);
 
-    await setReadiness(
-      db,
-      leader,
-      jobId,
-      { key: "protocol", state: "ready", note: "QA-PR-112 approved" },
-      req,
-    );
+    // The protocol is no longer on the list (QA Tech, Nov 2026).
+    await expect(
+      setReadiness(db, leader, jobId, { key: "protocol", state: "ready", note: "" }, req),
+    ).rejects.toThrow();
     await setReadiness(db, leader, jobId, { key: "site_access", state: "ready", note: "" }, req);
     expect((await state(jobId)).status).toBe("created");
     await setReadiness(
@@ -572,7 +537,7 @@ describe("clashes, holds and repeat visits", () => {
     expect(job.teamClashes).toEqual([
       { userId: engineer.id, name: "Suresh FE", jobs: [{ id: jobId, number: jobNumber }] },
     ]);
-    const booked = await autoBook(db, leader, second, req);
+    const booked = await autoBook(db, leader, second, req, { loggers: true });
     // Every valid logger is on the first job; T-11 and T-12 run out.
     expect(booked.booked).toEqual([]);
     expect(booked.short).toEqual([{ type: "portable_logger", count: 3 }]);
@@ -595,7 +560,7 @@ describe("clashes, holds and repeat visits", () => {
 
     // A cancelled job no longer holds its loggers.
     await changeStatus(db, leader, jobId, "cancel", "Test of release", req);
-    expect((await autoBook(db, leader, second, req)).booked).toEqual([
+    expect((await autoBook(db, leader, second, req, { loggers: true })).booked).toEqual([
       "T-01",
       "T-02",
       "T-03",
@@ -654,8 +619,8 @@ describe("clashes, holds and repeat visits", () => {
       );
     const [a, b] = [await make(), await make()];
     const [ra, rb] = await Promise.all([
-      autoBook(db, leader, a.id, req),
-      autoBook(db, manager, b.id, req),
+      autoBook(db, leader, a.id, req, { loggers: true }),
+      autoBook(db, manager, b.id, req, { loggers: true }),
     ]);
     const both = [...ra.booked, ...rb.booked];
     expect(new Set(both).size).toBe(both.length);
@@ -702,7 +667,7 @@ describe("clashes, holds and repeat visits", () => {
       },
       req,
     );
-    const booked = await autoBook(db, leader, big.id, req);
+    const booked = await autoBook(db, leader, big.id, req, { loggers: true });
     expect(booked.booked).toHaveLength(60);
     expect(booked.short).toEqual([]);
     const [entry] = await db
@@ -754,9 +719,76 @@ describe("clashes, holds and repeat visits", () => {
       .update(studiesTable)
       .set({ workType: "temperature_rh_mapping", postCalRequired: true })
       .where(eq(studiesTable.jobId, rh.id));
-    const booked = await autoBook(db, leader, rh.id, req);
+    const booked = await autoBook(db, leader, rh.id, req, { loggers: true });
     expect(booked.masters).toEqual(["TL-65", "TL-38"]);
     expect(booked.short).toEqual([]);
+  });
+
+  it("has pre- and post-calibration only when chosen; thermal validation always", async () => {
+    const j = await createJob(
+      db,
+      leader,
+      {
+        companyId: watsonId,
+        clientSiteId: seawoodsId,
+        plannedStart: "2027-09-01",
+        plannedEnd: "2027-09-03",
+        items: [{ equipmentId: wf03, preCal: false, postCal: true }],
+      },
+      req,
+    );
+    const study = (await state(j.id)).studies[0]!;
+    expect([study.preCalRequired, study.postCalRequired]).toEqual([false, true]);
+    // Post-cal alone still needs a master; the study shows the Post-cal tab, not Pre-cal.
+    expect((await state(j.id)).readiness.items.find((i) => i.key === "masters_valid")!.state).toBe(
+      "pending",
+    );
+    const field = (await getFieldStudy(db, leader, study.id))!;
+    expect([field.precalNeeded, field.postcalNeeded]).toEqual([false, true]);
+
+    const edit = {
+      loggerCount: "4",
+      cycles: ["empty"],
+      season: "",
+      durationHours: "24",
+      intervalMinutes: "10",
+    };
+    await updateStudy(db, leader, study.id, { ...edit, workType: "temperature_mapping" }, req);
+    const none = (await state(j.id)).studies[0]!;
+    expect([none.preCalRequired, none.postCalRequired]).toEqual([false, false]);
+    expect((await state(j.id)).readiness.items.find((i) => i.key === "masters_valid")!.state).toBe(
+      "na",
+    );
+    await updateStudy(db, leader, study.id, { ...edit, workType: "thermal_validation" }, req);
+    const thermal = (await state(j.id)).studies[0]!;
+    expect([thermal.preCalRequired, thermal.postCalRequired]).toEqual([true, true]);
+  });
+
+  it("finds the last report signed in QTech for a requalification", async () => {
+    const { studies: studiesTable } = await import("@/db/schema");
+    const [signed] = await db
+      .update(studiesTable)
+      .set({ archivedAt: new Date("2026-11-20T10:00:00+05:30") })
+      .where(and(eq(studiesTable.jobId, jobId), eq(studiesTable.equipmentId, wf02)))
+      .returning({ reportNumber: studiesTable.reportNumber });
+    const again = await createJob(
+      db,
+      leader,
+      {
+        companyId: watsonId,
+        clientSiteId: seawoodsId,
+        plannedStart: "2027-11-01",
+        plannedEnd: "2027-11-03",
+        items: [{ equipmentId: wf02 }],
+      },
+      req,
+    );
+    const item = (await state(again.id)).readiness.items.find((i) => i.key === "previous_report")!;
+    expect(item).toMatchObject({
+      state: "ready",
+      calculated: true,
+      detail: `In QTech: BE-WF-02 ${signed!.reportNumber}.`,
+    });
   });
 
   it("audits every change", async () => {
@@ -775,63 +807,5 @@ describe("clashes, holds and repeat visits", () => {
     ]) {
       expect(actions.has(a as never), a).toBe(true);
     }
-  });
-
-  it("prices a planned job again after the rate card changes", async () => {
-    const j = await createJob(
-      db,
-      leader,
-      {
-        companyId: watsonId,
-        clientSiteId: seawoodsId,
-        plannedStart: "2027-04-01",
-        plannedEnd: "2027-04-02",
-        items: [{ equipmentId: cr01 }],
-      },
-      req,
-    );
-    expect((await state(j.id)).studies[0]!.price).toBeNull();
-    await saveRateLine(
-      db,
-      manager,
-      {
-        workType: "temperature_mapping",
-        equipmentType: "cold_room",
-        basis: "per_study",
-        price: "1.5 lakh",
-      },
-      null,
-      req,
-    );
-    await expect(repriceJob(db, engineer, j.id, req)).rejects.toBeInstanceOf(ForbiddenError);
-    expect(await repriceJob(db, leader, j.id, req)).toEqual({ changed: 1, unpriced: 0 });
-    expect((await state(j.id)).studies[0]!.price).toBe("150000.00");
-    expect(await repriceJob(db, leader, j.id, req)).toEqual({ changed: 0, unpriced: 0 });
-  });
-
-  it("retires a rate so new jobs aren't priced from it", async () => {
-    const [line] = await db
-      .select()
-      .from(rateCards)
-      .where(
-        and(eq(rateCards.organisationId, orgId), eq(rateCards.equipmentType, "walk_in_freezer")),
-      );
-    await retireRateLine(db, manager, line!.id, req);
-    const priced = await createJob(
-      db,
-      leader,
-      {
-        companyId: watsonId,
-        clientSiteId: seawoodsId,
-        plannedStart: "2027-01-10",
-        plannedEnd: "2027-01-11",
-        items: [{ equipmentId: wf03 }],
-      },
-      req,
-    );
-    const job = await state(priced.id);
-    expect(job.studies[0]!.price).toBeNull();
-    expect(job.studies[0]!.priceNote).toBe("No rate-card line for this work.");
-    expect(job.value).toMatchObject({ expected: null, unpriced: 1 });
   });
 });

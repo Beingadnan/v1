@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, desc, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull } from "drizzle-orm";
 
 import type { Database } from "@/db/client-factory";
 import {
@@ -33,46 +33,47 @@ function companyOf(actor: SessionUser) {
 export async function listClientReports(db: Database, actor: SessionUser) {
   const companyId = companyOf(actor);
   if (!companyId) return [];
-  const rows = await db
-    .select({
-      r: studyReports,
-      reportNumber: studies.reportNumber,
-      code: equipment.code,
-      name: equipment.name,
-      site: clientSites.name,
-      jobNumber: jobs.number,
-    })
-    .from(studyReports)
-    .innerJoin(studies, eq(studies.id, studyReports.studyId))
-    .innerJoin(jobs, eq(jobs.id, studies.jobId))
-    .innerJoin(equipment, eq(equipment.id, studies.equipmentId))
-    .leftJoin(clientSites, eq(clientSites.id, equipment.siteId))
-    .where(
-      and(
-        eq(studyReports.organisationId, actor.organisationId),
-        eq(jobs.companyId, companyId),
-        isNotNull(studyReports.releasedAt),
+  // "Reviewed by me" only needs this person's own review signatures: read them alongside.
+  const [rows, reviewers] = await Promise.all([
+    db
+      .select({
+        r: studyReports,
+        reportNumber: studies.reportNumber,
+        code: equipment.code,
+        name: equipment.name,
+        site: clientSites.name,
+        jobNumber: jobs.number,
+      })
+      .from(studyReports)
+      .innerJoin(studies, eq(studies.id, studyReports.studyId))
+      .innerJoin(jobs, eq(jobs.id, studies.jobId))
+      .innerJoin(equipment, eq(equipment.id, studies.equipmentId))
+      .leftJoin(clientSites, eq(clientSites.id, equipment.siteId))
+      .where(
+        and(
+          eq(studyReports.organisationId, actor.organisationId),
+          eq(jobs.companyId, companyId),
+          isNotNull(studyReports.releasedAt),
+        ),
+      )
+      .orderBy(desc(studyReports.releasedAt))
+      .limit(500),
+    db
+      .select({
+        entityId: signatures.entityId,
+        userId: signatures.userId,
+        hash: signatures.recordHash,
+      })
+      .from(signatures)
+      .where(
+        and(
+          eq(signatures.organisationId, actor.organisationId),
+          eq(signatures.userId, actor.id),
+          eq(signatures.entityType, "report"),
+          eq(signatures.meaning, "reviewed_by"),
+        ),
       ),
-    )
-    .orderBy(desc(studyReports.releasedAt))
-    .limit(500);
-  const ids = rows.map((x) => x.r.id);
-  const reviewers = ids.length
-    ? await db
-        .select({
-          entityId: signatures.entityId,
-          userId: signatures.userId,
-          hash: signatures.recordHash,
-        })
-        .from(signatures)
-        .where(
-          and(
-            eq(signatures.entityType, "report"),
-            eq(signatures.meaning, "reviewed_by"),
-            inArray(signatures.entityId, ids),
-          ),
-        )
-    : [];
+  ]);
   return rows.map((x) => ({
     id: x.r.id,
     label: revLabel(x.r.rev),

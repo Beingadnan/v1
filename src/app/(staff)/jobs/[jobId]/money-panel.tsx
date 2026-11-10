@@ -607,6 +607,9 @@ export function MoneyPanel({ jobId, m }: { jobId: string; m: JobMoney }) {
               </li>
             ))}
           </ul>
+          {m.can.record && !closed && m.orderMissing ? (
+            <p className="text-sm text-attention">{m.orderMissing}</p>
+          ) : null}
           {m.can.record && !closed ? (
             <InvoiceForm key={live.length} jobId={jobId} m={m} onDone={told} />
           ) : null}

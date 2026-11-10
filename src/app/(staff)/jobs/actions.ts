@@ -10,10 +10,9 @@ import {
   changeStatus,
   createJob,
   releaseInstruments,
+  recordGatePass,
+  recordOrder,
   removeStudy,
-  repriceJob,
-  retireRateLine,
-  saveRateLine,
   setReadiness,
   setTeam,
   updateJob,
@@ -21,6 +20,7 @@ import {
   type AutoBookResult,
   type ManualBookResult,
 } from "@/domain/jobs/job-service";
+import { saveContract } from "@/domain/jobs/contract-service";
 import { siteEquipment, type SiteEquipment } from "@/domain/jobs/queries";
 import type { Transition } from "@/domain/jobs/types";
 import { runAction, type ActionResult } from "@/lib/action-result";
@@ -43,10 +43,11 @@ const all = (formData: FormData, name: string) =>
 const HEADER_FIELDS = [
   "siteId",
   "title",
+  "orderType",
+  "contractId",
   "poNumber",
   "poDate",
   "poValue",
-  "quotedValue",
   "plannedStart",
   "plannedEnd",
   "notes",
@@ -84,7 +85,16 @@ export async function createJobAction(
         clientSiteId: field(formData, "clientSiteId"),
         ...header(formData),
         team: team(formData),
-        items: all(formData, "equipment").map((equipmentId) => ({ equipmentId })),
+        items: all(formData, "equipment").map((equipmentId) =>
+          // The pre/post-cal choice, when the form showed it; else the client's SOP decides.
+          formData.has(`cal-${equipmentId}`)
+            ? {
+                equipmentId,
+                preCal: formData.get(`precal-${equipmentId}`) === "on",
+                postCal: formData.get(`postcal-${equipmentId}`) === "on",
+              }
+            : { equipmentId },
+        ),
       },
       await getRequestInfo(),
     ),
@@ -202,6 +212,8 @@ export async function updateStudyAction(_prev: unknown, formData: FormData): Pro
           season: field(formData, "season"),
           durationHours: field(formData, "durationHours"),
           intervalMinutes: field(formData, "intervalMinutes"),
+          preCalRequired: field(formData, "preCalRequired"),
+          postCalRequired: field(formData, "postCalRequired"),
         },
         await getRequestInfo(),
       ),
@@ -219,18 +231,6 @@ export async function removeStudyAction(_prev: unknown, formData: FormData): Pro
     async () => removeStudy(db, actor, field(formData, "studyId"), await getRequestInfo()),
     "Removed.",
   );
-  if (result.ok) refresh(jobId);
-  return result;
-}
-
-export async function repriceAction(
-  _prev: unknown,
-  formData: FormData,
-): Promise<ActionResult<{ changed: number; unpriced: number }>> {
-  const actor = await userForAction();
-  if (!actor) return { ok: false, error: SESSION_ENDED };
-  const jobId = field(formData, "jobId");
-  const result = await runAction(async () => repriceJob(db, actor, jobId, await getRequestInfo()));
   if (result.ok) refresh(jobId);
   return result;
 }
@@ -255,7 +255,14 @@ export async function bookByCodesAction(
   if (!actor) return { ok: false, error: SESSION_ENDED };
   const jobId = field(formData, "jobId");
   const result = await runAction(async () =>
-    bookByCodes(db, actor, jobId, field(formData, "codes"), await getRequestInfo()),
+    bookByCodes(
+      db,
+      actor,
+      jobId,
+      field(formData, "codes"),
+      await getRequestInfo(),
+      field(formData, "model") || undefined,
+    ),
   );
   if (result.ok) refresh(jobId);
   return result;
@@ -278,38 +285,89 @@ export async function releaseAction(_prev: unknown, formData: FormData): Promise
   return result;
 }
 
-const RATE_FIELDS = [
-  "workType",
-  "equipmentType",
-  "durationHours",
-  "basis",
-  "price",
-  "notes",
-] as const;
-
-export async function saveRateAction(_prev: unknown, formData: FormData): Promise<ActionResult> {
+/** The client's order, recorded when it comes (number, value, copy, or the contract). */
+export async function recordOrderAction(_prev: unknown, formData: FormData): Promise<ActionResult> {
   const actor = await userForAction();
   if (!actor) return { ok: false, error: SESSION_ENDED };
-  const result = await runAction(async () => {
-    await saveRateLine(
-      db,
-      actor,
-      Object.fromEntries(RATE_FIELDS.map((n) => [n, field(formData, n)])),
-      field(formData, "rateId") || null,
-      await getRequestInfo(),
-    );
-  }, "Rate saved.");
-  if (result.ok) revalidatePath("/jobs/rates");
+  const jobId = field(formData, "jobId");
+  const result = await runAction(
+    async () =>
+      recordOrder(
+        db,
+        actor,
+        jobId,
+        {
+          orderType: field(formData, "orderType"),
+          contractId: field(formData, "contractId"),
+          poNumber: field(formData, "poNumber"),
+          poDate: field(formData, "poDate"),
+          poValue: field(formData, "poValue"),
+          fileId: field(formData, "fileId"),
+        },
+        await getRequestInfo(),
+      ),
+    "Order recorded.",
+  );
+  if (result.ok) refresh(jobId);
   return result;
 }
 
-export async function retireRateAction(_prev: unknown, formData: FormData): Promise<ActionResult> {
+/** A client's ARC or AMC, added or changed. */
+export async function saveContractAction(
+  _prev: unknown,
+  formData: FormData,
+): Promise<ActionResult> {
   const actor = await userForAction();
   if (!actor) return { ok: false, error: SESSION_ENDED };
+  const companyId = field(formData, "companyId");
+  const result = await runAction(async () => {
+    await saveContract(
+      db,
+      actor,
+      companyId,
+      {
+        kind: field(formData, "kind"),
+        number: field(formData, "number"),
+        validFrom: field(formData, "validFrom"),
+        validTo: field(formData, "validTo"),
+        value: field(formData, "value"),
+        fileId: field(formData, "fileId"),
+        notes: field(formData, "notes"),
+      },
+      field(formData, "contractId") || null,
+      await getRequestInfo(),
+    );
+  }, "Contract saved.");
+  if (result.ok) {
+    revalidatePath(`/clients/${companyId}`);
+    revalidatePath("/jobs/new");
+  }
+  return result;
+}
+
+/** The client's gate pass: its number and scan, or not needed at this site. */
+export async function recordGatePassAction(
+  _prev: unknown,
+  formData: FormData,
+): Promise<ActionResult> {
+  const actor = await userForAction();
+  if (!actor) return { ok: false, error: SESSION_ENDED };
+  const jobId = field(formData, "jobId");
   const result = await runAction(
-    async () => retireRateLine(db, actor, field(formData, "rateId"), await getRequestInfo()),
-    "Rate removed.",
+    async () =>
+      recordGatePass(
+        db,
+        actor,
+        jobId,
+        {
+          number: field(formData, "number"),
+          notNeeded: field(formData, "notNeeded"),
+          fileId: field(formData, "fileId"),
+        },
+        await getRequestInfo(),
+      ),
+    "Gate pass saved.",
   );
-  if (result.ok) revalidatePath("/jobs/rates");
+  if (result.ok) refresh(jobId);
   return result;
 }

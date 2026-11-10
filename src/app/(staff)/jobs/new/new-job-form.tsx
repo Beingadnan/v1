@@ -10,7 +10,9 @@ import { Input } from "@/components/ui/form-controls";
 import { FormMessage, SelectField, TextField, useFormAction } from "@/components/ui/form-kit";
 import { EQUIPMENT_TYPE_INFO, isEquipmentType } from "@/domain/clients/equipment-types";
 import type { SiteEquipment, WizardClient } from "@/domain/jobs/queries";
-import { TEAM_ROLE_LABELS, TEAM_ROLES } from "@/domain/jobs/schemas";
+
+import { OrderFields } from "../order-fields";
+import { TEAM_ROLE_LABELS, TEAM_ROLES } from "@/domain/jobs/types";
 
 import { createJobAction, siteEquipmentAction } from "../actions";
 
@@ -280,6 +282,7 @@ export function NewJobForm({
                       {DUE_LABEL[e.due]}
                     </span>
                   </label>
+                  {ticked.has(e.id) ? <CalibrationChoice e={e} /> : null}
                 </li>
               ))}
             </ul>
@@ -395,24 +398,19 @@ export function NewJobForm({
         className="flex flex-col gap-4 rounded-lg border border-border bg-surface p-4"
       >
         <h2 id="po" className="font-semibold">
-          4. Purchase order
+          4. Client&apos;s order
         </h2>
         <p className="text-sm text-muted-foreground">
-          Leave it blank if the PO hasn&apos;t come yet: the job stays in Created until it does.
+          A PO or SRF for this job, or the client&apos;s ARC or AMC. If it hasn&apos;t come yet,
+          leave it: field work can go ahead, and you&apos;ll be reminded until it is recorded.
         </p>
-        <div className="grid gap-4 sm:grid-cols-3">
-          <TextField name="poNumber" label="PO number" result={result} autoComplete="off" />
-          <TextField name="poDate" label="PO date" type="date" result={result} />
-          {canSeeMoney ? (
-            <TextField
-              name="poValue"
-              label="PO value (before GST)"
-              inputMode="decimal"
-              suffix="₹"
-              result={result}
-            />
-          ) : null}
-        </div>
+        <OrderFields
+          key={companyId}
+          contracts={company?.contracts ?? []}
+          result={result}
+          canSeeMoney={canSeeMoney}
+          start={start}
+        />
         <div className="grid gap-4 sm:grid-cols-3">
           <TextField
             name="title"
@@ -421,16 +419,6 @@ export function NewJobForm({
             className="sm:col-span-2"
             placeholder="e.g. Annual mapping, freezers"
           />
-          {canSeeMoney ? (
-            <TextField
-              name="quotedValue"
-              label="Custom quote"
-              inputMode="decimal"
-              suffix="₹"
-              result={result}
-              hint="Only for non-standard work; otherwise the rate card is used."
-            />
-          ) : null}
         </div>
         <TextField name="notes" label="Notes for the team" multiline result={result} />
       </section>
@@ -450,5 +438,32 @@ export function NewJobForm({
         </Button>
       </div>
     </form>
+  );
+}
+
+/**
+ * Pre- and post-calibration for one study, yes or no (QA Tech, Nov 2026).
+ * Ticked by default when the client's SOP asks; always on for thermal validation.
+ */
+function CalibrationChoice({ e }: { e: SiteEquipment }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 pb-2 pl-10 text-xs">
+      <input type="hidden" name={`cal-${e.id}`} value="1" />
+      {(["precal", "postcal"] as const).map((k) => (
+        <label key={k} className="inline-flex min-h-8 items-center gap-1.5">
+          <input
+            type="checkbox"
+            name={`${k}-${e.id}`}
+            defaultChecked={e.calibration}
+            disabled={e.thermal}
+            className="size-4 accent-primary"
+          />
+          {k === "precal" ? "Pre-calibration" : "Post-calibration"}
+        </label>
+      ))}
+      {e.thermal ? (
+        <span className="text-muted-foreground">Always on for thermal validation</span>
+      ) : null}
+    </div>
   );
 }

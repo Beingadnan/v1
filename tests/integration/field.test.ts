@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { auditLog, jobInstruments, jobs, sites, users } from "@/db/schema";
 import { ensureOrganisation } from "@/db/seed/ensure-organisation";
+import { hashPassword } from "@/domain/auth/password";
 import { ForbiddenError } from "@/domain/auth/permissions";
 import { toSessionUser, type SessionUser } from "@/domain/auth/session-service";
 import { createCompany } from "@/domain/clients/company-service";
@@ -25,6 +26,7 @@ import {
   setRoomSize,
   voidEvent,
 } from "@/domain/field/field-service";
+import { decideOverride, overridesOf, requestOverride } from "@/domain/field/override-service";
 import { ft12Pdf, getFieldStudy, myStudies } from "@/domain/field/queries";
 import { createExternalCertificate } from "@/domain/instruments/certificate-service";
 import {
@@ -289,11 +291,11 @@ beforeAll(async () => {
   const detail = (await getJob(db, leader, jobId))!;
   freezerStudy = detail.studies.find((s) => s.equipment.code === "BE-WF-02")!.id;
   roomStudy = detail.studies.find((s) => s.equipment.code === "BE-CR-01")!.id;
-  for (const key of ["protocol", "site_access", "previous_report"]) {
+  for (const key of ["site_access", "previous_report"]) {
     await setReadiness(db, leader, jobId, { key, state: "ready", note: "" }, req);
   }
   // The kit: 9 + 4 loggers and 2 spares, E-TRH0001…0015. 0016–0019 stay in the lab.
-  await autoBook(db, leader, jobId, req);
+  await autoBook(db, leader, jobId, req, { loggers: true });
 });
 
 afterAll(close);
@@ -330,6 +332,29 @@ describe("phase 5: an engineer places 9 loggers for BE-WF-02 and records start a
     const s = await study(freezerStudy);
     expect(s.positions.map((p) => p.label)).toEqual(template.map((p) => p.label));
     expect(s.equipment.dims).toEqual({ lengthM: 3.36, widthM: 6.4, heightM: 2.4 });
+  });
+
+  it("offers the last study's positions for the next study of the same equipment", async () => {
+    expect((await study(freezerStudy)).previousLayout).toBeNull();
+    const next = await createJob(
+      db,
+      leader,
+      {
+        companyId: watsonId,
+        clientSiteId: siteId,
+        plannedStart: "2027-12-01",
+        plannedEnd: "2027-12-03",
+        items: [{ equipmentId: wf02 }],
+      },
+      req,
+    );
+    const nextStudy = (await getJob(db, leader, next.id))!.studies[0]!.id;
+    const offered = (await study(nextStudy)).previousLayout!;
+    expect(offered.reportNumber).toBe((await study(freezerStudy)).study.reportNumber);
+    expect(offered.points.map((p) => p.label)).toEqual(
+      (await study(freezerStudy)).positions.map((p) => p.label),
+    );
+    expect(offered.points[0]).toMatchObject({ x: expect.any(Number), ambient: false });
   });
 
   it("records a room size measured on site when the equipment has none", async () => {
@@ -664,6 +689,115 @@ describe("phase 5: an engineer places 9 loggers for BE-WF-02 and records start a
     ).rejects.toThrow("Pick a master standard.");
   });
 
+  it("overrides a failed pre-calibration with a reason and a second person's signature", async () => {
+    const pw = "Leader-Signs-1";
+    await db
+      .update(users)
+      .set({ passwordHash: await hashPassword(pw, { N: 1024, r: 8, p: 1 }) })
+      .where(eq(users.id, leader.id));
+    const failed = (await study(roomStudy)).precal.find((r) => r.code === codes[14]!)!;
+    expect(failed).toMatchObject({ result: "fail", computed: "fail" });
+    await expect(
+      requestOverride(
+        db,
+        engineer,
+        failed.id,
+        { toResult: "fail", reason: "same result again" },
+        req,
+      ),
+    ).rejects.toThrow("already gives Fail");
+    await expect(
+      requestOverride(db, engineer, failed.id, { toResult: "pass", reason: "short" }, req),
+    ).rejects.toThrow();
+    await expect(
+      requestOverride(
+        db,
+        accounts,
+        failed.id,
+        { toResult: "pass", reason: "master re-checked, fine" },
+        req,
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+    const reason = "Master re-checked against TL-65: logger within 0.5 C";
+    const { id } = await requestOverride(db, leader, failed.id, { toResult: "pass", reason }, req);
+    await expect(
+      requestOverride(db, engineer, failed.id, { toResult: "pass", reason }, req),
+    ).rejects.toThrow("waiting for approval");
+    // Still blocked until a second person approves.
+    await expect(placeLogger(db, engineer, roomStudy, { code: codes[14]! }, req)).rejects.toThrow(
+      "failed pre-calibration",
+    );
+    // The asker can't approve their own override.
+    await expect(
+      decideOverride(db, leader, id, { approve: true, password: pw, note: "" }, req),
+    ).rejects.toThrow("A second person must decide");
+    await expect(
+      decideOverride(db, engineer, id, { approve: true, password: pw, note: "" }, req),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+    // A manager approves with their password; a wrong one signs nothing.
+    const managerPw = "Manager-Signs-1";
+    const [mgr] = await db
+      .update(users)
+      .set({ passwordHash: await hashPassword(managerPw, { N: 1024, r: 8, p: 1 }) })
+      .where(eq(users.email, "mgr@field.test"))
+      .returning();
+    const manager = toSessionUser(mgr!)!;
+    await expect(
+      decideOverride(db, manager, id, { approve: false, password: "", note: "no" }, req),
+    ).rejects.toThrow("Say why it is rejected.");
+    const wrong = await decideOverride(
+      db,
+      manager,
+      id,
+      { approve: true, password: "not-it", note: "" },
+      req,
+    );
+    expect(wrong.ok).toBe(false);
+    expect((await overridesOf(db, roomStudy))[0]!.status).toBe("requested");
+    expect(
+      await decideOverride(db, manager, id, { approve: true, password: managerPw, note: "" }, req),
+    ).toEqual({ ok: true });
+    await expect(
+      decideOverride(db, manager, id, { approve: true, password: managerPw, note: "" }, req),
+    ).rejects.toThrow("already decided");
+
+    const after = await study(roomStudy);
+    expect(after.precal.find((r) => r.id === failed.id)).toMatchObject({
+      result: "pass",
+      computed: "fail",
+    });
+    expect(after.overrides).toEqual([
+      expect.objectContaining({
+        status: "approved",
+        fromResult: "fail",
+        toResult: "pass",
+        requestedBy: "Tarun Lead",
+        decidedBy: "Meera Manager",
+        reason,
+      }),
+    ]);
+    // The logger passes the check now; only the full room stops it (the
+    // logger's problems are checked before the free positions).
+    await expect(placeLogger(db, engineer, roomStudy, { code: codes[14]! }, req)).rejects.toThrow(
+      "All 4 positions have a logger.",
+    );
+    const actions = (
+      await db.select({ action: auditLog.action }).from(auditLog).where(eq(auditLog.entityId, id))
+    ).map((a) => a.action);
+    expect(actions).toEqual(
+      expect.arrayContaining(["precal.override_requested", "precal.override_approved"]),
+    );
+    await expect(
+      requestOverride(
+        db,
+        engineer,
+        failed.id,
+        { toResult: "pass", reason: "asking a second time" },
+        req,
+      ),
+    ).rejects.toThrow("already overridden");
+  });
+
   it("stores photos once and refuses other files", async () => {
     const blobs = new LocalBlobStore(await mkdtemp(path.join(tmpdir(), "qtech-photos-")));
     const jpeg = new Uint8Array([
@@ -708,7 +842,7 @@ describe("phase 5: an engineer places 9 loggers for BE-WF-02 and records start a
   it("prints FT-12 with the box, the positions, the loggers and the times", async () => {
     const blobs = new LocalBlobStore(await mkdtemp(path.join(tmpdir(), "qtech-ft12-")));
     const pdf = (await ft12Pdf(db, blobs, leader, freezerStudy))!;
-    expect(pdf.fileName).toMatch(/^FT-12 BE-WF-02 QT-J-\d{4}-\d{4}\.pdf$/);
+    expect(pdf.fileName).toMatch(/^FT-12 BE-WF-02 QT-\d{2}-\d{4}-\d{4}\.pdf$/);
     expect(pdf.bytes.subarray(0, 5).toString()).toBe("%PDF-");
     await writeFile(path.join(tmpdir(), "ft12-test.pdf"), pdf.bytes);
     if (!hasPdftotext) return;
