@@ -14,9 +14,9 @@ export type PrintedSignature = {
 
 export const MEANING_LABELS: Record<PrintedSignature["meaning"], string> = {
   done_by: "Done By (prepared)",
-  checked_by: "Checked By",
+  checked_by: "For QA Tech",
   reviewed_by: "Reviewed By",
-  approved_by: "Approved By",
+  approved_by: "For the client",
 };
 
 /** "02.11.2026 07:45 IST", as QA Tech writes dates. */
@@ -85,15 +85,38 @@ export async function signedCopy(input: {
   const blue = rgb(0.1, 0.23, 0.47);
 
   const boxes = input.layout?.signBoxes;
+  const green = rgb(0.06, 0.45, 0.25);
   if (boxes) {
     for (const s of input.signatures) {
       const b = boxes[s.meaning];
+      if (!b) continue;
       const page = pdf.getPages()[b.signature.page - 1];
       if (!page) continue;
       const mid = b.signature.y + b.signature.h / 2;
-      centred(page, bold, "Signed electronically", 7, b.signature, mid + 3, blue);
-      centred(page, font, istStamp(s.signedAt), 7, b.signature, mid - 7, blue);
-      centred(page, bold, s.name.toUpperCase(), 8, b.name, b.name.y + b.name.h / 2 - 3);
+      centred(page, bold, "Signed electronically", 8, b.signature, mid + 4, blue);
+      centred(page, font, istStamp(s.signedAt), 7.5, b.signature, mid - 8, blue);
+      centred(page, bold, s.name.toUpperCase(), 9, b.name, b.name.y + b.name.h / 2 - 3);
+      if (b.role) {
+        // The role, and a line that says what the signature means (QA Tech's reference).
+        centred(page, font, s.role, 8, b.role, b.role.y + b.role.h - 9);
+        centred(
+          page,
+          bold,
+          s.meaning === "approved_by"
+            ? "APPROVED - ACCEPTED - QUALIFIED"
+            : "VERIFIED AND ISSUED - 21 CFR PART 11",
+          6.5,
+          b.role,
+          b.role.y + 3,
+          green,
+        );
+      }
+      for (const f of b.footer ?? []) {
+        const p = pdf.getPages()[f.page - 1];
+        if (!p) continue;
+        centred(p, bold, s.name.toUpperCase(), 7, f, f.y + f.h / 2, blue);
+        centred(p, font, istStamp(s.signedAt), 6, f, f.y + f.h / 2 - 9, blue);
+      }
     }
   }
 

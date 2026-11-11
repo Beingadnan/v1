@@ -90,12 +90,10 @@ export default async function ClientHomePage() {
   const firstName = user.name.split(/\s+/)[0] ?? user.name;
   const head = can(user, "reports.client_approve");
   const wcrTodo = wcrs.filter((w) => w.canAccept);
-  const todo = rows.filter(
-    (r) => r.status === "released" || (r.status === "reviewed" && head && !r.reviewedByMe),
-  );
-  const waiting = rows.filter(
-    (r) => (r.status === "reviewed" && !todo.includes(r)) || r.status === "returned",
-  );
+  // Only the person who signs for the client has reports "to do"; others see them waiting.
+  const open = (r: (typeof rows)[number]) => r.status === "released" || r.status === "reviewed";
+  const todo = head ? rows.filter(open) : [];
+  const waiting = rows.filter((r) => (open(r) && !head) || r.status === "returned");
   const signed = rows.filter((r) => r.status === "signed");
   const older = rows.filter((r) => r.status === "superseded");
 

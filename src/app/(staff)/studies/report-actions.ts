@@ -65,10 +65,18 @@ export async function editReportTextAction(
   );
 }
 
-/**
- * QA Tech's two signatures, from the password dialog: Done By (freezes the
- * draft and sends it for checking) and Checked By.
- */
+/** Freezes the draft and sends it for checking (no signature: QA Tech, Nov 2026). */
+export async function freezeReportAction(studyId: string, reportId: string) {
+  const actor = await userForAction();
+  if (!actor) return signedOut;
+  return act(studyId, async () => {
+    const f = await freezeReport(db, blobStore, actor, reportId, await getRequestInfo());
+    if (!f.ok) throw new ReportsError(f.message);
+    return f;
+  });
+}
+
+/** QA Tech's one signature on a report, by the checker, from the password dialog. */
 export async function signReportAction(
   _prev: unknown,
   formData: FormData,
@@ -81,17 +89,10 @@ export async function signReportAction(
   const password = field(formData, "password");
   return act(studyId, async () => {
     const request = await getRequestInfo();
-    if (step === "done_by") {
-      const f = await freezeReport(db, blobStore, actor, reportId, { password }, request);
-      if (!f.ok) throw new ReportsError(f.message);
-      return {
-        text: `Rev ${String(f.rev).padStart(2, "0")} frozen and signed Done By: ${f.pages} pages, SHA-256 ${f.sha256.slice(0, 12)}…. It's with the checker now.`,
-      };
-    }
     if (step === "checked_by") {
       const c = await checkReport(db, actor, reportId, { password }, request);
       if (!c.ok) throw new ReportsError(c.message);
-      return { text: "Signed Checked By. It can be released to the client." };
+      return { text: "Signed for QA Tech. It can be released to the client." };
     }
     throw new ReportsError("Unknown step.");
   });
@@ -134,14 +135,7 @@ export async function paperSignoffAction(
   const actor = await userForAction();
   if (!actor) return signedOut;
   const studyId = field(formData, "studyId");
-  const names = [
-    "fileId",
-    "reviewedByName",
-    "reviewedOn",
-    "approvedByName",
-    "approvedByTitle",
-    "approvedOn",
-  ] as const;
+  const names = ["fileId", "approvedByName", "approvedByTitle", "approvedOn"] as const;
   const input = Object.fromEntries(names.map((n) => [n, field(formData, n)]));
   const result = await runAction(
     async () =>

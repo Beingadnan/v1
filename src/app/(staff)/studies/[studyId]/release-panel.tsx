@@ -216,19 +216,15 @@ export function PaperSignoffForm({
         </p>
       ) : null}
       <div className="grid gap-2 sm:grid-cols-2">
-        <TextField name="reviewedByName" label="Reviewed By (name)" required result={result} />
         <TextField
-          name="reviewedOn"
-          label="Reviewed on"
-          type="date"
-          max={today()}
+          name="approvedByName"
+          label="Signed for the client by (name)"
           required
           result={result}
         />
-        <TextField name="approvedByName" label="Approved By (name)" required result={result} />
         <TextField
           name="approvedOn"
-          label="Approved on"
+          label="Signed on"
           type="date"
           max={today()}
           required
@@ -236,7 +232,7 @@ export function PaperSignoffForm({
         />
         <TextField
           name="approvedByTitle"
-          label="Approver's title"
+          label="Their title"
           placeholder="e.g. Head QA"
           result={result}
         />

@@ -3,7 +3,15 @@ import "server-only";
 import PDFDocument from "pdfkit";
 
 import type { CycleResult, EngineResult, Stats } from "@/domain/analysis/engine";
-import { BOX_EDGES, mm, projector, spreadLabels, type Point } from "@/domain/field/layout";
+import {
+  BOX_EDGES,
+  describe,
+  describeRoom,
+  mm,
+  projector,
+  spreadLabels,
+  type Point,
+} from "@/domain/field/layout";
 import { drawPlan } from "@/domain/field/plan-pdf";
 import type { PlanFeature } from "@/domain/field/types";
 
@@ -127,7 +135,8 @@ export type ReportData = {
     decidedOn: string;
     note: string;
   }[];
-  signatures: { doneBy: string; checkedBy: string; client: string };
+  /** Who signs for the client: the company name printed over its column. */
+  signatures: { client: string };
   /** Pages of the certificates joined after, for the index ("-" when none). */
   certificatePages: number;
 };
@@ -138,6 +147,8 @@ const BORDER = "#444444";
 const SHADE = "#d9d9d9";
 const HEAD = "#bfbfbf";
 const HOT = "#e3000f";
+/** Height of the spatial mapping key on the diagram page. */
+const KEY_H = 104;
 const COLD = "#ffd400";
 const LINE_COLOURS = [
   "#1f4e9c",
@@ -164,6 +175,8 @@ const ascii = (s: string) =>
 const f1 = (v: number | null | undefined) =>
   v === null || v === undefined ? "" : (Math.round(v * 10) / 10).toFixed(1);
 const plain = (v: number | null) => (v === null ? "" : String(Math.round(v * 100) / 100));
+/** "M/s. Name", without doubling a prefix the name already has. */
+const ms = (name: string) => (/^m\/s\.?\s/i.test(name) ? name : `M/s. ${name}`);
 const dmy = (iso: string | null | undefined) => (iso ? iso.split("-").reverse().join(".") : "");
 const ist = (ms: number) => {
   const d = new Date(ms + 330 * 60_000);
@@ -386,72 +399,316 @@ class Builder {
 
   // ------------------------------------------------------------------ pages
 
+  /** The verdict over every cycle: qualified, not qualified, or no limits to judge by. */
+  verdict() {
+    const cycles = this.d.result.cycles;
+    const judged = cycles.flatMap((c) => c.positions.filter((p) => p.pass !== null));
+    const ok = judged.filter((p) => p.pass === true).length;
+    const anyFail = cycles.some((c) => c.pass === false);
+    const allPass = cycles.length > 0 && cycles.every((c) => c.pass === true);
+    return {
+      ok,
+      judged: judged.length,
+      state: anyFail ? ("fail" as const) : allPass ? ("pass" as const) : ("none" as const),
+      label: anyFail
+        ? "RESULT: NOT QUALIFIED"
+        : allPass
+          ? `RESULT: QUALIFIED - ${ok}/${judged.length} LOCATIONS COMPLIANT`
+          : "RESULT: NOT JUDGED (NO LIMITS SET)",
+    };
+  }
+
+  /** A small rounded badge, green for a pass and red for a fail; returns its width. */
+  badge(
+    text: string,
+    x: number,
+    y: number,
+    state: "pass" | "fail" | "none",
+    align: "left" | "right" = "left",
+  ) {
+    const { doc } = this;
+    const t = ascii(text);
+    doc.font("Helvetica-Bold").fontSize(7);
+    const bw = doc.widthOfString(t) + 14;
+    const bx = align === "right" ? x - bw : x;
+    const [fill, ink] =
+      state === "pass"
+        ? ["#e6f4ea", "#0f7a3d"]
+        : state === "fail"
+          ? ["#fde8e8", "#b42318"]
+          : ["#eeeeee", "#444444"];
+    doc.roundedRect(bx, y, bw, 14, 3).fillAndStroke(fill, ink);
+    doc.fillColor(ink).text(t, bx + 7, y + 4, { width: bw - 14, lineBreak: false });
+    doc.fillColor("#000000");
+    return bw;
+  }
+
+  /** A section heading in small spaced capitals with a rule under it. */
+  caps(text: string, x: number, y: number, w: number) {
+    const { doc } = this;
+    doc.font("Helvetica-Bold").fontSize(8).fillColor("#1f3a68");
+    doc.text(ascii(text.toUpperCase()), x, y, {
+      width: w,
+      characterSpacing: 0.6,
+      lineBreak: false,
+    });
+    doc
+      .lineWidth(0.5)
+      .strokeColor("#c9d1dd")
+      .moveTo(x, y + 12)
+      .lineTo(x + w, y + 12)
+      .stroke();
+    doc.fillColor("#000000");
+  }
+
+  /** Acceptance range as "-15 °C To -25 °C", with %RH when set. */
+  acceptance() {
+    const l = this.d.study.limits;
+    const t =
+      l.tempMax !== null || l.tempMin !== null
+        ? `${plain(l.tempMax)} °C To ${plain(l.tempMin)} °C`
+        : "-";
+    const rh =
+      l.rhMax !== null || l.rhMin !== null ? ` / ${plain(l.rhMin)} to ${plain(l.rhMax)} %RH` : "";
+    return t + rh;
+  }
+
   cover() {
     const { d, doc } = this;
     this.page("body", "cover");
-    const w = this.content - 120;
-    const x = M + 60;
-    this.y = 290;
-    const box = (h: number, draw: () => void) => {
-      doc.rect(x - 3, this.y - 3, w + 6, h + 6).fill("#7f7f7f");
-      doc.rect(x, this.y, w, h).fill(SHADE);
-      doc.lineWidth(0.8).strokeColor(BORDER).rect(x, this.y, w, h).stroke();
-      draw();
-      this.y += h + 22;
-    };
-    box(56, () => {
-      doc.font("Helvetica-Bold").fontSize(15).fillColor("#000000");
-      doc.text(ascii(d.customer.name), x, this.y + 8, { width: w, align: "center" });
-      doc.font("Helvetica-Bold").fontSize(8.5);
-      doc.text(ascii(d.customer.address), x + 8, this.y + 30, {
-        width: w - 16,
-        align: "center",
-        height: 24,
-        ellipsis: true,
-      });
+    const w = this.content;
+    const x = M;
+    // Document type and status, as on QA Tech's reference cover.
+    doc.font("Helvetica-Bold").fontSize(7.5).fillColor("#1f3a68");
+    doc.text("DOCUMENT TYPE: THERMAL VALIDATION REPORT", x + 6, this.y + 2, {
+      width: w / 2,
+      characterSpacing: 0.4,
+      lineBreak: false,
     });
-    box(24, () => {
-      doc.font("Helvetica-Bold").fontSize(11).fillColor("#000000");
-      doc.text(ascii(d.study.typeLabel), x, this.y + 7, { width: w, align: "center" });
-    });
-    const top = this.y;
-    doc.rect(x - 3, top - 3, w + 6, 54).fill("#7f7f7f");
-    this.cell(x, top, 80, 22, `${this.noun} ID :`, { bold: true, size: 8, fill: SHADE });
-    this.cell(x + 80, top, w - 80, 22, d.equipment.code, {
-      bold: true,
-      size: 10,
+    doc.text(
+      `STATUS: ${d.watermark ? d.watermark.toUpperCase() : "FINAL"}  |  ${ascii(d.revision).toUpperCase()}`,
+      x + w / 2,
+      this.y + 2,
+      { width: w / 2 - 6, align: "right", characterSpacing: 0.4, lineBreak: false },
+    );
+    doc
+      .lineWidth(0.5)
+      .strokeColor("#c9d1dd")
+      .moveTo(x, this.y + 14)
+      .lineTo(x + w, this.y + 14)
+      .stroke();
+
+    // Client and facility.
+    const cx = x + 30;
+    const cw = w - 60;
+    let y = 240;
+    doc.rect(cx, y, cw, 78).lineWidth(0.6).strokeColor("#c9d1dd").stroke();
+    doc.font("Helvetica-Bold").fontSize(7).fillColor("#555555");
+    doc.text("CLIENT & FACILITY DETAILS", cx, y + 8, {
+      width: cw,
       align: "center",
-      fill: SHADE,
+      characterSpacing: 0.8,
     });
-    this.cell(x, top + 22, 80, 26, "Report No.      :", { bold: true, size: 8, fill: SHADE });
-    this.cell(x + 80, top + 22, w - 80, 26, d.reportNumber, {
-      bold: true,
-      size: 9,
+    doc.font("Helvetica-Bold").fontSize(15).fillColor("#000000");
+    doc.text(ascii(ms(d.customer.name)), cx + 10, y + 24, {
+      width: cw - 20,
       align: "center",
-      fill: SHADE,
+      lineBreak: false,
+      ellipsis: true,
     });
-    doc.font("Helvetica").fontSize(8).fillColor("#333333");
-    doc.text(ascii(d.revision), x, top + 62, { width: w, align: "center" });
+    doc.font("Helvetica").fontSize(8.5).fillColor("#333333");
+    doc.text(ascii(d.customer.address), cx + 20, y + 46, {
+      width: cw - 40,
+      align: "center",
+      height: 26,
+      ellipsis: true,
+    });
+
+    // The study's title.
+    y += 96;
+    doc.rect(cx, y, cw, 92).fill("#f3f5f9");
+    doc.lineWidth(0.6).strokeColor("#c9d1dd").rect(cx, y, cw, 92).stroke();
+    doc.font("Helvetica-Bold").fontSize(9).fillColor("#1f3a68");
+    doc.text(ascii(d.organisation.shortName.toUpperCase()), cx, y + 12, {
+      width: cw,
+      align: "center",
+      characterSpacing: 1,
+    });
+    doc.font("Helvetica").fontSize(6.5).fillColor("#555555");
+    doc.text(ascii(`(${d.organisation.legalName.toUpperCase()})`), cx, y + 25, {
+      width: cw,
+      align: "center",
+      characterSpacing: 0.6,
+    });
+    doc.font("Helvetica-Bold").fontSize(19).fillColor("#000000");
+    doc.text(ascii(d.study.typeLabel.toUpperCase()), cx, y + 40, {
+      width: cw,
+      align: "center",
+      lineBreak: false,
+      ellipsis: true,
+    });
+    doc.font("Helvetica").fontSize(9).fillColor("#333333");
+    doc.text(ascii(`${d.equipment.name}  ·  ${d.equipment.code}`), cx, y + 66, {
+      width: cw,
+      align: "center",
+      lineBreak: false,
+      ellipsis: true,
+    });
+
+    // Study execution and report identification.
+    const s = d.study;
+    const period =
+      ist(s.start).date === ist(s.end).date
+        ? ist(s.start).date
+        : `${ist(s.start).date} - ${ist(s.end).date}`;
+    const duration = [
+      s.durationHours ? `${s.durationHours} hrs` : "",
+      s.intervalMinutes ? `(${s.intervalMinutes} min logging)` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    this.y = this.bottom - 150;
+    this.caps("Study execution & report identification", x + 6, this.y, w - 12);
+    this.y += 18;
+    const k = w * 0.2;
+    const v = w * 0.3;
+    const rows: [string, string, string, string][] = [
+      [`${this.noun} Name`, d.equipment.name, `${this.noun} ID`, d.equipment.code],
+      [
+        "Operating Set Point",
+        s.setPoint === null ? "-" : `${plain(s.setPoint)} °C`,
+        "Acceptance Range",
+        this.acceptance(),
+      ],
+      ["Study Duration", duration || "-", "Mapping Period", period],
+    ];
+    for (const [a, b, c, e] of rows) {
+      this.row(16, [
+        [a, k, { bold: true, size: 7.5, fill: "#f3f5f9" }],
+        [b, v, { size: 7.5 }],
+        [c, k, { bold: true, size: 7.5, fill: "#f3f5f9" }],
+        [e, v, { size: 7.5 }],
+      ]);
+    }
+    this.row(16, [
+      ["Official Report No.", k, { bold: true, size: 7.5, fill: "#f3f5f9" }],
+      [d.reportNumber, w - k, { bold: true, size: 7.5 }],
+    ]);
+    this.y += 10;
+    doc.font("Helvetica-Bold").fontSize(7).fillColor("#1f3a68");
+    doc.text(ascii(d.organisation.shortName.toUpperCase()), x + 6, this.y, { lineBreak: false });
+    doc.text(`FORM: ${FT09_FORM}`, x + w / 2, this.y, {
+      width: w / 2 - 6,
+      align: "right",
+      lineBreak: false,
+    });
+    doc.font("Helvetica").fontSize(6).fillColor("#555555");
+    doc.text(
+      "Executed in accordance with ISO 9001:2015 · 21 CFR Part 11 · WHO TRS 961",
+      x + 6,
+      this.y + 10,
+      { width: w / 2, lineBreak: false },
+    );
+    doc.text("CONFIDENTIAL · PROPRIETARY", x + w / 2, this.y + 10, {
+      width: w / 2 - 6,
+      align: "right",
+      characterSpacing: 0.4,
+      lineBreak: false,
+    });
+    doc.fillColor("#000000");
   }
 
   index(entries: [string, string][]) {
+    const { d, doc } = this;
     this.page("body", "index");
     this.headerBox();
     this.y += 6;
     const w = this.content;
-    this.row(20, [["INDEX", w, { bold: true, size: 11, align: "center", fill: SHADE }]]);
+    this.row(20, [
+      ["TABLE OF CONTENTS / INDEX", w, { bold: true, size: 10, align: "center", fill: SHADE }],
+    ]);
     this.row(16, [
-      ["SR. No.", 60, { bold: true, align: "center" }],
-      ["Contents", w - 140, { bold: true, align: "center" }],
-      ["Page No.", 80, { bold: true, align: "center" }],
+      ["Sr. No.", 60, { bold: true, align: "center" }],
+      ["Document Section / Content", w - 140, { bold: true }],
+      ["Page Ref.", 80, { bold: true, align: "center" }],
     ]);
     entries.forEach(([content, page], i) =>
       this.row(16, [
         [String(i + 1), 60, { align: "center" }],
-        [content, w - 140, { bold: true, align: "center" }],
+        [content, w - 140, { bold: true }],
         [page, 80, { align: "center" }],
       ]),
     );
+
+    // Executive summary and objective, written from the study's own facts.
+    const s = d.study;
+    const hours = s.durationHours ? `${s.durationHours}-hour ` : "";
+    const where = [d.equipment.location, d.equipment.department].filter(Boolean).join(", ");
+    const traced =
+      d.loggers.length > 0 &&
+      d.loggers.every(
+        (l) =>
+          l.calibratedOn &&
+          (!l.validUntil || l.validUntil >= ist(s.end).date.split(".").reverse().join("-")),
+      );
+    const para = (text: string) => {
+      doc.font("Helvetica").fontSize(8.5).fillColor("#000000");
+      const t = ascii(text);
+      const h = doc.heightOfString(t, { width: w - 16 });
+      this.ensure(h + 6, "body");
+      doc.text(t, M + 8, this.y, { width: w - 16 });
+      this.y = doc.y + 5;
+    };
+    this.y += 18;
+    this.ensure(90, "body");
+    this.caps("Executive summary & study objective", M + 8, this.y, w - 16);
+    this.y += 20;
+    para(
+      `This report records the ${hours}${s.typeLabel.toLowerCase()} of ${d.equipment.name} (ID: ${d.equipment.code})${where ? `, ${where},` : ""} at ${ms(d.customer.name)}.`,
+    );
+    para(
+      `The objective was to find how temperature is distributed across the ${this.noun.toLowerCase()}, how uniform it is, and where its hot and cold points are, against the acceptance range of ${this.acceptance()}.${traced ? " Every data logger used was calibrated, with traceability to national standards, before the study." : ""}`,
+    );
+
+    // The verdict, in a sentence and a badge.
+    const v = this.verdict();
+    const c = d.result.cycles;
+    const temps = c.flatMap((x) =>
+      x.positions.filter((p) => !p.ambient && !p.excluded && p.temp).map((p) => p.temp!),
+    );
+    const mean = temps.length ? temps.reduce((a, t) => a + t.avg, 0) / temps.length : null;
+    const excursions = c.reduce((n, x) => n + x.excursions.length, 0);
+    this.y += 14;
+    this.ensure(100, "body");
+    this.caps("Executive conclusion & qualification verdict", M + 8, this.y, w - 16);
+    this.badge(v.label, M + w - 8, this.y - 3, v.state, "right");
+    this.y += 20;
+    const hot = c.find((x) => x.hot)?.hot;
+    const cold = c.find((x) => x.cold)?.cold;
+    para(
+      [
+        v.judged
+          ? `${v.ok} of ${v.judged} logger locations stayed within the acceptance range of ${this.acceptance()}.`
+          : "No acceptance limits were set, so no location is judged against them.",
+        mean !== null ? `The mean temperature was ${f1(mean)} °C,` : "",
+        excursions === 0
+          ? "with no excursions outside the range."
+          : `with ${excursions} excursion${excursions === 1 ? "" : "s"} outside the range (see the summary pages).`,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+    if (hot || cold) {
+      para(
+        `${cold ? `The cold point is ${cold.label} (${f1(cold.avg)} °C)` : ""}${hot && cold ? " and the" : hot ? "The" : ""}${hot ? ` hot point is ${hot.label} (${f1(hot.avg)} °C)` : ""}. ${
+          v.state === "pass"
+            ? `${d.equipment.name} (${d.equipment.code}) meets the thermal uniformity requirement and is qualified for its intended use.`
+            : v.state === "fail"
+              ? `${d.equipment.name} (${d.equipment.code}) does not meet the acceptance criteria; see the observations and deviations.`
+              : ""
+        }`,
+      );
+    }
   }
 
   details() {
@@ -463,13 +720,6 @@ class Builder {
     const k = w * 0.2;
     const v = w * 0.3;
     const s = d.study;
-    const l = s.limits;
-    const acceptance =
-      l.tempMax !== null || l.tempMin !== null
-        ? `${plain(l.tempMax)} °C To ${plain(l.tempMin)} °C`
-        : "-";
-    const rhRange =
-      l.rhMax !== null || l.rhMin !== null ? ` / ${plain(l.rhMin)} to ${plain(l.rhMax)} %RH` : "";
     const pairs: [string, string, string, string][] = [
       [
         `${this.noun} Name`,
@@ -477,7 +727,7 @@ class Builder {
         "Set Point",
         s.setPoint === null ? "-" : `${plain(s.setPoint)} °C`,
       ],
-      [`${this.noun} ID`, d.equipment.code, "Acceptance Range", acceptance + rhRange],
+      [`${this.noun} ID`, d.equipment.code, "Acceptance Range", this.acceptance()],
       ["Location", d.equipment.location || "-", "Mapping End Date", ist(s.end).date],
       ["Make", d.equipment.make || "NA", "Next Due Date", dmy(s.nextDue) || "-"],
       [
@@ -574,20 +824,27 @@ class Builder {
     const { d, doc } = this;
     this.page("body", "diagram");
     this.headerBox();
-    this.title("Diagram Indicating Sensors Positions:");
+    this.title("Diagram Indicating Sensor Positions & Hot / Cold Points");
     const hot = new Set(d.result.cycles.map((c) => c.hot?.positionId).filter(Boolean));
     const cold = new Set(d.result.cycles.map((c) => c.cold?.positionId).filter(Boolean));
-    const legendW = 90;
-    // A room: the floor plan, then the table of locations (QA Tech's WH013 page 3).
+    const legendW = 0;
+    // The drawing, then the spatial key and the placement table (QA Tech's reference
+    // page 4).
     const area = d.equipment.plan === true;
     const inPlan = d.positions.filter((p) => !p.ambient);
-    const tableH = area ? 16 + Math.min(d.positions.length, 24) * 14 : 0;
+    const tableH = 16 + Math.min(d.positions.length, 24) * 13;
     const box = {
       x: M,
       y: this.y + 4,
       w: this.content,
-      h: Math.max(220, this.bottom - this.y - 24 - (area ? tableH + 10 : 0)),
+      // A room's plan takes what the table leaves; a box is drawn no taller than it needs.
+      h: Math.max(
+        220,
+        Math.min(area ? Infinity : 330, this.bottom - this.y - 24 - tableH - KEY_H - 20),
+      ),
     };
+    const c0 = d.result.cycles[0];
+    const avgOf = (id: string) => c0?.positions.find((p) => p.positionId === id)?.temp?.avg;
     const dims = d.equipment.dims;
     if (area) {
       drawPlan(
@@ -639,6 +896,21 @@ class Builder {
       );
       for (const q of labels) {
         const fill = hot.has(q.id) ? HOT : cold.has(q.id) ? COLD : "#ffffff";
+        const avg = avgOf(q.id);
+        if ((hot.has(q.id) || cold.has(q.id)) && avg !== undefined) {
+          // The hot and cold points carry their average on the drawing, on white so
+          // an edge behind it doesn't cross the text.
+          doc.rect(q.x - 27, q.y + 7, 54, 9).fill("#ffffff");
+          doc
+            .font("Helvetica-Bold")
+            .fontSize(6.5)
+            .fillColor(hot.has(q.id) ? HOT : "#9a7b00")
+            .text(ascii(`${hot.has(q.id) ? "HOT" : "COLD"} ${f1(avg)} °C`), q.x - 30, q.y + 8, {
+              width: 60,
+              align: "center",
+              lineBreak: false,
+            });
+        }
         doc
           .lineWidth(0.6)
           .strokeColor("#222222")
@@ -656,49 +928,175 @@ class Builder {
           });
       }
     }
-    const lx = box.x + box.w - legendW + 30;
-    const ly = box.y + box.h - 150;
-    doc.fillColor(HOT).circle(lx, ly, 7).fill();
-    doc
-      .font("Helvetica")
-      .fontSize(7)
-      .fillColor("#000000")
-      .text("Hot Point", lx - 25, ly + 10, { width: 50, align: "center" });
-    doc
-      .fillColor(COLD)
-      .circle(lx, ly + 40, 7)
-      .fill();
-    doc
-      .lineWidth(0.4)
-      .strokeColor("#999999")
-      .circle(lx, ly + 40, 7)
-      .stroke();
-    doc.fillColor("#000000").text("Cold Point", lx - 25, ly + 50, { width: 50, align: "center" });
-    const ambient = d.positions.filter((p) => p.ambient);
-    if (ambient.length) {
+    this.y = box.y + box.h + 8;
+    this.spatialKey(hot, cold);
+    this.placementTable(hot, cold);
+  }
+
+  /** Hot and cold points, where the loggers sit by level, and the equipment's figures. */
+  spatialKey(hot: Set<string | undefined>, cold: Set<string | undefined>) {
+    const { d, doc } = this;
+    const w = this.content;
+    this.ensure(KEY_H, "body");
+    const top = this.y;
+    this.row(14, [
+      ["SPATIAL MAPPING KEY", w, { bold: true, size: 7.5, align: "center", fill: HEAD }],
+    ]);
+    const half = w / 2;
+    const c0 = d.result.cycles[0];
+    const pos = (id: string | undefined) => d.positions.find((p) => p.id === id);
+    const point = (
+      y: number,
+      title: string,
+      which: { positionId: string; label: string; avg: number } | null | undefined,
+      ink: string,
+      fill: string,
+    ) => {
+      doc.rect(M + 4, y, half - 8, 30).fillAndStroke(fill, ink);
       doc
         .font("Helvetica-Bold")
         .fontSize(7)
-        .text("Outside (ambient)", lx - 35, ly + 80, { width: 70, align: "center" });
-      doc.font("Helvetica").text(ambient.map((p) => p.label).join(", "), lx - 35, ly + 92, {
-        width: 70,
-        align: "center",
-      });
+        .fillColor(ink)
+        .text(title, M + 10, y + 4);
+      const p = pos(which?.positionId);
+      doc
+        .font("Helvetica")
+        .fontSize(7.5)
+        .fillColor("#000000")
+        .text(
+          ascii(
+            which
+              ? `Logger ${which.label}${p?.serial ? ` (Sr. ${p.serial})` : ""}: ${f1(which.avg)} °C average${p ? `, ${this.plane(p.z)}` : ""}`
+              : "-",
+          ),
+          M + 10,
+          y + 16,
+          { width: half - 20, lineBreak: false, ellipsis: true },
+        );
+    };
+    point(this.y + 4, "HOT POINT (HIGHEST AVERAGE)", c0?.hot, "#b42318", "#fde8e8");
+    point(this.y + 38, "COLD POINT (LOWEST AVERAGE)", c0?.cold, "#9a7b00", "#fff8d6");
+    // Right half: loggers by level, and the equipment's figures.
+    const inside = d.positions.filter((p) => !p.ambient);
+    const levels = new Map<string, string[]>();
+    for (const p of inside) {
+      const k = this.plane(p.z).split(" (")[0]!;
+      const tag = hot.has(p.id) ? " (hot)" : cold.has(p.id) ? " (cold)" : "";
+      levels.set(k, [...(levels.get(k) ?? []), p.label + tag]);
     }
-    this.y = box.y + box.h + 8;
-    if (area) {
-      const w = this.content;
-      this.row(16, [
-        ["Location No.", 90, { bold: true, align: "center", fill: SHADE }],
-        ["Location", w - 90, { bold: true, align: "center", fill: SHADE }],
-      ]);
-      for (const p of d.positions) {
-        this.ensure(14, "body");
-        this.row(14, [
-          [p.label, 90, { align: "center" }],
-          [p.note || (p.ambient ? "Outside the room (ambient)" : "-"), w - 90, {}],
-        ]);
+    const dims = d.equipment.dims;
+    const v = this.verdict();
+    const lines: [string, boolean][] = [
+      ["ELEVATION DISTRIBUTION", true],
+      ...["Top", "Mid", "Bottom"]
+        .filter((k) => levels.has(k))
+        .map((k) => [`${k}: ${levels.get(k)!.join(", ")}`, false] as [string, boolean]),
+      [
+        `Loggers placed: ${inside.length}${d.positions.length > inside.length ? ` (+${d.positions.length - inside.length} ambient)` : ""}`,
+        false,
+      ],
+      ["EQUIPMENT PARAMETERS", true],
+      [
+        `${d.equipment.code}: ${[dims.lengthM, dims.widthM, dims.heightM].some((x) => x !== null) ? `${mm(dims.lengthM)} (L) x ${mm(dims.widthM)} (W) x ${mm(dims.heightM)} (H)` : "size not recorded"}`,
+        false,
+      ],
+      [
+        `Set point: ${d.study.setPoint === null ? "-" : `${plain(d.study.setPoint)} °C`}  |  Range: ${this.acceptance()}`,
+        false,
+      ],
+      [v.judged ? `${v.ok}/${v.judged} locations compliant` : "No limits set", true],
+    ];
+    let ly = this.y + 4;
+    for (const [t, b] of lines) {
+      doc
+        .font(b ? "Helvetica-Bold" : "Helvetica")
+        .fontSize(6.8)
+        .fillColor(b ? "#1f3a68" : "#000000")
+        .text(ascii(t), M + half + 6, ly, { width: half - 12, lineBreak: false, ellipsis: true });
+      ly += 9;
+    }
+    doc.fillColor("#000000");
+    doc
+      .lineWidth(0.5)
+      .strokeColor(BORDER)
+      .rect(M, top, w, KEY_H - 6)
+      .stroke();
+    this.y = top + KEY_H;
+  }
+
+  /** "Top (2.0 m)" from a point's height in the box (0 at the floor, 1 at the top). */
+  plane(z: number) {
+    const h = this.d.equipment.dims.heightM;
+    const k = z >= 0.67 ? "Top" : z <= 0.33 ? "Bottom" : "Mid";
+    return h ? `${k} (${(Math.round(z * h * 10) / 10).toFixed(1)} m)` : k;
+  }
+
+  /** Where each logger sits and what it showed: QA Tech's placement reference table. */
+  placementTable(hot: Set<string | undefined>, cold: Set<string | undefined>) {
+    const { d, doc } = this;
+    const w = this.content;
+    const c0 = d.result.cycles[0];
+    const cols: [string, number][] = [
+      ["Location", w * 0.09],
+      ["Logger Sr. No.", w * 0.14],
+      ["Elevation Plane", w * 0.14],
+      ["Placement Description", w * 0.4],
+      ["Status / Classification", w * 0.23],
+    ];
+    const head = () =>
+      this.row(
+        14,
+        cols.map(
+          ([t, cw]) => [t, cw, { bold: true, size: 7, fill: SHADE }] as [string, number, CellOpts],
+        ),
+      );
+    this.ensure(30, "body");
+    head();
+    for (const p of d.positions) {
+      if (this.y + 13 > this.bottom) {
+        this.ensure(30, "body");
+        head();
       }
+      const r = c0?.positions.find((x) => x.positionId === p.id);
+      const avg = r?.temp ? ` (${f1(r.temp.avg)} °C)` : "";
+      const [status, ink] = hot.has(p.id)
+        ? [`HOT POINT${avg}`, HOT]
+        : cold.has(p.id)
+          ? [`COLD POINT${avg}`, "#9a7b00"]
+          : r?.excluded
+            ? ["Excluded", "#555555"]
+            : p.ambient
+              ? [`Ambient${avg}`, "#555555"]
+              : r?.pass === false
+                ? [`Out of spec${avg}`, HOT]
+                : r?.pass === true
+                  ? [`Within spec${avg}`, "#0f7a3d"]
+                  : [avg.trim() || "-", "#000000"];
+      const where =
+        p.note ||
+        (p.ambient
+          ? "Outside, ambient"
+          : d.equipment.plan
+            ? describeRoom(p, d.equipment.dims.heightM)
+            : describe(p));
+      const y = this.y;
+      this.row(13, [
+        [p.label, cols[0]![1], { bold: true, size: 7 }],
+        [p.serial || "-", cols[1]![1], { size: 7 }],
+        [p.ambient ? "-" : this.plane(p.z), cols[2]![1], { size: 7 }],
+        [where, cols[3]![1], { size: 7 }],
+        ["", cols[4]![1]],
+      ]);
+      doc
+        .font("Helvetica-Bold")
+        .fontSize(7)
+        .fillColor(ink)
+        .text(ascii(status), M + w - cols[4]![1] + 3, y + 3.5, {
+          width: cols[4]![1] - 6,
+          lineBreak: false,
+          ellipsis: true,
+        });
+      doc.fillColor("#000000");
     }
   }
 
@@ -926,7 +1324,32 @@ class Builder {
           [stat(p.rh, "avg"), cols[6]![1], { align: "center" }],
         );
       }
+      const rowY = this.y;
       this.row(12, cells);
+      // HOT SPOT / COLD SPOT tags, as on QA Tech's reference summary.
+      const spot =
+        c.hot?.positionId === p.positionId
+          ? "hot"
+          : c.cold?.positionId === p.positionId
+            ? "cold"
+            : null;
+      if (spot) {
+        const t = spot === "hot" ? "HOT SPOT" : "COLD SPOT";
+        const tw = 40;
+        const tx = M + cols[0]![1] - tw - 4;
+        this.doc
+          .roundedRect(tx, rowY + 1.8, tw, 8.4, 2)
+          .fillAndStroke(
+            spot === "hot" ? "#fde8e8" : "#fff8d6",
+            spot === "hot" ? "#b42318" : "#9a7b00",
+          );
+        this.doc
+          .font("Helvetica-Bold")
+          .fontSize(5.5)
+          .fillColor(spot === "hot" ? "#b42318" : "#9a7b00")
+          .text(t, tx, rowY + 3.5, { width: tw, align: "center", lineBreak: false });
+        this.doc.fillColor("#000000");
+      }
     }
     this.y += 10;
     this.ensure(56, "body");
@@ -976,6 +1399,55 @@ class Builder {
         this.y = this.doc.y + 2;
       }
     }
+    this.statConclusion(c);
+  }
+
+  /** The cycle's spread (hot minus cold average) and its verdict, in a box. */
+  statConclusion(c: CycleResult) {
+    const { doc } = this;
+    const w = this.content;
+    const inside = c.positions.filter((p) => !p.ambient && !p.excluded && p.temp);
+    const judged = inside.filter((p) => p.pass !== null);
+    const ok = judged.filter((p) => p.pass).length;
+    const spread = c.hot && c.cold ? c.hot.avg - c.cold.avg : null;
+    const range =
+      c.highest && c.lowest ? `${f1(c.lowest.value)} to ${f1(c.highest.value)} °C` : null;
+    const text = [
+      `${inside.length} logger${inside.length === 1 ? "" : "s"} recorded through the ${c.label.toLowerCase()}${judged.length ? `; ${ok} of ${judged.length} stayed within the acceptance range of ${this.acceptance()}` : ""}.`,
+      spread !== null
+        ? `The spread between the cold point ${c.cold!.label} (${f1(c.cold!.avg)} °C) and the hot point ${c.hot!.label} (${f1(c.hot!.avg)} °C) is ${f1(spread)} °C.`
+        : "",
+      range ? `Single readings ranged ${range}.` : "",
+      c.excursions.length === 0
+        ? "There were no excursions outside the range."
+        : `There ${c.excursions.length === 1 ? "was 1 excursion" : `were ${c.excursions.length} excursions`} outside the range (listed above).`,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    doc.font("Helvetica").fontSize(8);
+    const h = doc.heightOfString(ascii(text), { width: w - 20 }) + 30;
+    this.y += 8;
+    this.ensure(h + 4, "body");
+    const top = this.y;
+    doc.lineWidth(0.6).strokeColor("#c9d1dd").rect(M, top, w, h).stroke();
+    this.caps("Statistical conclusion & compliance verdict", M + 8, top + 7, w - 16);
+    this.badge(
+      c.pass === true
+        ? "CRITERIA MET"
+        : c.pass === false
+          ? "CRITERIA NOT MET"
+          : "NOT JUDGED (NO LIMITS)",
+      M + w - 8,
+      top + 4,
+      c.pass === true ? "pass" : c.pass === false ? "fail" : "none",
+      "right",
+    );
+    doc
+      .font("Helvetica")
+      .fontSize(8)
+      .fillColor("#000000")
+      .text(ascii(text), M + 10, top + 24, { width: w - 20 });
+    this.y = top + h + 4;
   }
 
   conclusion() {
@@ -997,72 +1469,99 @@ class Builder {
     this.bar("OBSERVATION");
     para(d.observation);
     this.bar("CONCLUSION");
+    const v = this.verdict();
+    this.badge(v.label, M + w - 4, this.y - 19, v.state, "right");
     para(d.conclusion);
     this.y += 6;
     this.ensure(40, "body");
-    this.row(16, [["ANNEXURE", w, { bold: true, align: "center" }]]);
-    this.row(14, [
-      ["SENSOR LOCATION", w * 0.35, { bold: true, align: "center" }],
-      ["Sr .no", w * 0.65, { bold: true, align: "center" }],
+    this.row(16, [
+      [
+        "ANNEXURE: SENSOR LOCATION & LOGGER SERIAL NO.",
+        w,
+        { bold: true, align: "center", fill: SHADE },
+      ],
     ]);
-    for (const p of d.positions) {
+    // Three location / serial pairs per row, as on QA Tech's reference.
+    const per = 3;
+    const lw = (w / per) * 0.42;
+    const sw = w / per - lw;
+    for (let i = 0; i < d.positions.length; i += per) {
       this.ensure(14, "body");
-      this.row(14, [
-        [p.label + (p.ambient ? " (Ambient)" : ""), w * 0.35, { align: "center" }],
-        [p.serial, w * 0.65, { bold: true, align: "center" }],
-      ]);
+      const cells: [string, number, CellOpts?][] = [];
+      for (let k = 0; k < per; k += 1) {
+        const p = d.positions[i + k];
+        cells.push(
+          [
+            p ? p.label + (p.ambient ? " (Amb.)" : "") : "",
+            lw,
+            { bold: true, align: "center", fill: p ? "#f3f5f9" : undefined },
+          ],
+          [p?.serial ?? "", sw, { align: "center" }],
+        );
+      }
+      this.row(14, cells);
     }
     this.y += 16;
-    this.ensure(92, "body");
-    const c0 = w * 0.14;
-    const cw = (w - c0) / 4;
+    this.signatureBlock();
+  }
+
+  /**
+   * Two columns, as on QA Tech's reference report: QA Tech (the service
+   * provider) on the left and the client's authorised signatory on the right.
+   * The cells stay empty here; names, roles and times are stamped on the
+   * issued copy from the e-signatures (signed-copy.ts).
+   */
+  signatureBlock() {
+    const { d } = this;
+    const w = this.content;
+    const half = w / 2;
+    const lw = 62;
+    const vw = half - lw;
+    this.ensure(18 + 16 + 46 + 20 + 28 + 14, "body");
+    this.row(18, [
+      ["QA TECH (SERVICE PROVIDER)", half, { bold: true, align: "center", fill: SHADE }],
+      ["CLIENT (AUTHORISED SIGNATORY)", half, { bold: true, align: "center", fill: SHADE }],
+    ]);
     this.row(16, [
-      ["", c0],
-      ["Done By", cw, { bold: true, align: "center" }],
-      ["Checked By", cw, { bold: true, align: "center" }],
-      ["Reviewed By", cw, { bold: true, align: "center" }],
-      ["Approved By", cw, { bold: true, align: "center" }],
+      [d.organisation.legalName, half, { size: 7, align: "center" }],
+      [ms(d.signatures.client), half, { size: 7, align: "center" }],
     ]);
-    const sigY = this.y;
-    this.row(36, [
-      ["Signature", c0, { bold: true, align: "center" }],
-      ["", cw],
-      ["", cw],
-      ["", cw],
-      ["", cw],
-    ]);
-    const nameY = this.y;
     // pdf-lib measures from the bottom left; pdfkit from the top left.
-    const box = (i: number, y: number, h: number): SignBox => ({
+    const box = (side: 0 | 1, y: number, h: number): SignBox => ({
       page: this.kinds.length,
-      x: M + c0 + cw * i,
+      x: M + side * half + lw,
       y: A4.h - y - h,
-      w: cw,
+      w: vw,
       h,
     });
-    const col = (i: number) => ({ signature: box(i, sigY, 36), name: box(i, nameY, 18) });
-    this.signBoxes = {
-      done_by: col(0),
-      checked_by: col(1),
-      reviewed_by: col(2),
-      approved_by: col(3),
+    const labelled = (h: number, label: string) => {
+      const y = this.y;
+      this.row(h, [
+        [label, lw, { bold: true, size: 7.5 }],
+        ["", vw],
+        [label, lw, { bold: true, size: 7.5 }],
+        ["", vw],
+      ]);
+      return y;
     };
-    this.row(18, [
-      ["Name", c0, { bold: true, align: "center" }],
-      [d.signatures.doneBy.toUpperCase(), cw, { bold: true, align: "center" }],
-      [d.signatures.checkedBy.toUpperCase(), cw, { bold: true, align: "center" }],
-      ["", cw],
-      ["", cw],
-    ]);
-    this.row(18, [
-      ["Organisation", c0, { bold: true, align: "center" }],
-      [
-        `${d.organisation.shortName} (${d.organisation.legalName})`,
-        cw * 2,
-        { size: 7, align: "center" },
-      ],
-      [d.signatures.client, cw * 2, { size: 7, align: "center" }],
-    ]);
+    const sigY = labelled(46, "Signature\n& date");
+    const nameY = labelled(20, "Name");
+    const roleY = labelled(28, "Designation");
+    const col = (side: 0 | 1) => ({
+      signature: box(side, sigY, 46),
+      name: box(side, nameY, 20),
+      role: box(side, roleY, 28),
+      footer: [] as SignBox[],
+    });
+    this.signBoxes = { ...this.signBoxes, checked_by: col(0), approved_by: col(1) };
+    this.doc.font("Helvetica").fontSize(6.5).fillColor("#333333");
+    this.doc.text(
+      "Signed electronically under 21 CFR Part 11: the time and meaning of each signature are listed on the last page.",
+      M,
+      this.y + 3,
+      { width: w, align: "center" },
+    );
+    this.y += 14;
   }
 
   raw() {
@@ -1079,7 +1578,7 @@ class Builder {
     for (let i = 0; i < series.length; i += perPage)
       chunks.push(series.slice(i, i + perPage).map((_, k) => i + k));
     for (const cols of chunks) {
-      const rowsPer = 34;
+      const rowsPer = 30;
       for (let r0 = 0; r0 < times.length; r0 += rowsPer) {
         this.page("raw", "raw");
         const w = this.content;
@@ -1156,8 +1655,36 @@ class Builder {
             ]);
           }
         }
+        this.rawFooter();
       }
     }
+  }
+
+  /**
+   * "Verified by QA Tech" and "Reviewed by the client" at the foot of every raw
+   * data page; the signers' names and times are stamped there on the issued copy.
+   */
+  rawFooter() {
+    const bw = 190;
+    const h = 30;
+    const y = this.bottom - h;
+    const labels: ["checked_by" | "approved_by", string][] = [
+      ["checked_by", "VERIFIED BY QA TECH"],
+      ["approved_by", "REVIEWED BY (CLIENT)"],
+    ];
+    labels.forEach(([meaning, label], i) => {
+      const x = M + this.content - bw * (2 - i);
+      this.cell(x, y, bw, 10, label, { bold: true, size: 6, align: "center", fill: SHADE });
+      this.cell(x, y + 10, bw, h - 10, "");
+      // Landscape page: pdf-lib's height is A4's width.
+      this.signBoxes?.[meaning]?.footer?.push({
+        page: this.kinds.length,
+        x,
+        y: A4.w - y - h,
+        w: bw,
+        h: h - 10,
+      });
+    });
   }
 
   postCal() {
@@ -1355,7 +1882,7 @@ export async function renderReport(d: ReportData): Promise<RenderedReport> {
     const conc = b?.marks.get("conclusion");
     const rawPages = b ? b.kinds.filter((k) => k === "raw").length : 0;
     const rows: [string, string][] = [
-      ["Index", at("index")],
+      ["Table of Contents & Executive Summary", at("index")],
       [`${d.equipment.noun ?? "Equipment"} & Mapping Details`, at("details")],
       ["Diagram Indicating Sensor Positions", at("diagram")],
       [

@@ -115,7 +115,7 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 8: the BE-WF-02 report", () =
       const text = textOf(p.bytes);
       expect(text).toContain("DRAFT");
       expect(text).toContain("Equipment & Mapping Details");
-      expect(text).toContain("Diagram Indicating Sensors Positions");
+      expect(text).toContain("Diagram Indicating Sensor Positions & Hot / Cold Points");
       expect(text).toContain("TEMPERATURE V/S TIME");
       // Page 5, row by row.
       for (const [pos, min, max, avg] of [
@@ -124,8 +124,21 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 8: the BE-WF-02 report", () =
         ["L-05", "-17.6", "-15.0", "-16.7"],
         ["L-08", "-23.3", "-15.0", "-19.7"],
       ]) {
-        expect(text).toMatch(new RegExp(`${pos}\\s+${min}\\s+${max}\\s+${avg}`));
+        expect(text).toMatch(
+          new RegExp(`${pos}\\s+(?:(?:HOT|COLD) SPOT\\s+)?${min}\\s+${max}\\s+${avg}`),
+        );
       }
+      // The reference report's verdicts: spot tags, the cycle's box and page 2's badge.
+      expect(text).toMatch(/L-04\s+COLD SPOT/);
+      expect(text).toMatch(/L-05\s+HOT SPOT/);
+      expect(text).toContain("CRITERIA MET");
+      expect(text.replace(/\s+/g, " ")).toContain(
+        "spread between the cold point L-04 (-21.9 °C) and the hot point L-05 (-16.7 °C) is 5.2 °C",
+      );
+      expect(text).toContain("RESULT: QUALIFIED - 9/9 LOCATIONS COMPLIANT");
+      expect(text).toContain("TABLE OF CONTENTS / INDEX");
+      expect(text).toContain("STUDY EXECUTION & REPORT IDENTIFICATION");
+      expect(text).toMatch(/L-05\s+62283645\s+Top \(2\.2 m\)/);
       expect(text).toMatch(/Average Minimum Temperature at\s+L-04\s+-21\.9/);
       expect(text).toMatch(/Average Maximum Temperature at\s+L-05\s+-16\.7/);
       expect(text).toContain("L-04 (62220170)");
@@ -215,7 +228,7 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 8: the BE-WF-02 report", () =
   });
 
   it("refuses to freeze while a certificate's PDF is missing", async () => {
-    await expect(freezeReport(db, blobs, preparer, reportId, pw, req)).rejects.toThrow(
+    await expect(freezeReport(db, blobs, preparer, reportId, req)).rejects.toThrow(
       /These certificates have no PDF on file: QATECH\/BHIWANDI\/04\/26\/PDL-77/,
     );
   });
@@ -259,7 +272,7 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 8: the BE-WF-02 report", () =
       attachCertificateFile(db, lead, { certificateId: pdl77!.id, fileId: stored.file.id }, req),
     ).rejects.toThrow("QATECH/BHIWANDI/04/26/PDL-77 already has its PDF.");
 
-    const f = await freezeReport(db, blobs, preparer, reportId, pw, req);
+    const f = await freezeReport(db, blobs, preparer, reportId, req);
     if (!f.ok) throw new Error(f.message);
     expect(f.rev).toBe(0);
     const pdf = (await frozenReport(db, blobs, preparer, reportId))!;
@@ -282,7 +295,7 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 8: the BE-WF-02 report", () =
         req,
       ),
     ).rejects.toThrow("Rev 00 is frozen and can't be changed.");
-    await expect(freezeReport(db, blobs, preparer, reportId, pw, req)).rejects.toThrow(
+    await expect(freezeReport(db, blobs, preparer, reportId, req)).rejects.toThrow(
       "Rev 00 is already frozen.",
     );
   });
@@ -304,7 +317,7 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 8: the BE-WF-02 report", () =
       req,
     );
     expect(r1.rev).toBe(1);
-    expect((await freezeReport(db, blobs, preparer, r1.id, pw, req)).ok).toBe(true);
+    expect((await freezeReport(db, blobs, preparer, r1.id, req)).ok).toBe(true);
     const rows = await db
       .select({ rev: studyReports.rev, status: studyReports.status, reason: studyReports.reason })
       .from(studyReports)

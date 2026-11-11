@@ -18,7 +18,6 @@ import { approvalBlockers } from "@/domain/analysis/analysis-service";
 import { assertCan } from "@/domain/auth/permissions";
 import type { RequestInfo } from "@/domain/auth/policy";
 import type { SessionUser } from "@/domain/auth/session-service";
-import { signRecordTx } from "@/domain/auth/signature-service";
 import { isUuid } from "@/domain/clients/shared";
 import { lockJob, setStatus } from "@/domain/jobs/job-service";
 import { JOB_STATUS_LABELS, type JobStatus } from "@/domain/jobs/types";
@@ -219,13 +218,6 @@ async function draftOf(tx: Transaction, actor: SessionUser, reportId: string) {
   return r;
 }
 
-/** Who prepared the draft (Done By on the report). */
-async function nameOf(db: Database | Transaction, id: string | null) {
-  if (!id) return "";
-  const [u] = await db.select({ name: users.name }).from(users).where(eq(users.id, id));
-  return u?.name ?? "";
-}
-
 /** The draft as it would print now, marked DRAFT. */
 export async function previewReport(
   db: Database,
@@ -251,8 +243,6 @@ export async function previewReport(
     observation: r.observation,
     conclusion: r.conclusion,
     watermark: "DRAFT",
-    doneBy: await nameOf(db, r.createdByUserId),
-    checkedBy: "",
   });
 }
 
@@ -289,12 +279,12 @@ export async function freezeReport(
   blobs: BlobStore,
   actor: SessionUser,
   reportId: string,
-  input: { password: string },
   request?: RequestInfo,
 ): Promise<SignOutcome<{ rev: number; sha256: string; pages: number }>> {
+  // Two signatures on a report (QA Tech, Nov 2026): QA Tech's checker and the client.
+  // Freezing sends the PDF for checking; who froze it and when is kept on the revision.
   assertCan(actor, "reports.prepare");
   if (!isUuid(reportId)) throw new ReportsError("That report does not exist.");
-  if (!input.password) throw new ReportsError("Enter your password to sign Done By.");
   // Render outside the transaction (it reads only), then check nothing moved while it did.
   const [r0] = await db
     .select()
@@ -316,10 +306,8 @@ export async function freezeReport(
     label: revLabel(r0.rev),
     observation: r0.observation,
     conclusion: r0.conclusion,
-    watermark: null,
     // Names and times are stamped from the signatures (phase 9).
-    doneBy: "",
-    checkedBy: "",
+    watermark: null,
   });
   if (built.missing.length > 0) {
     throw new ReportsError(
@@ -347,19 +335,6 @@ export async function freezeReport(
     if ((await openComments(tx, r.studyId)).length) {
       throw new ReportsError("A review comment came in while you were signing. Answer it first.");
     }
-    const signed = await signRecordTx(
-      tx,
-      actor,
-      {
-        meaning: "done_by",
-        entityType: "report",
-        entityId: r.id,
-        recordHash: stored.file.sha256,
-        password: input.password,
-      },
-      request ?? {},
-    );
-    if (!signed.ok) return { ok: false as const, message: signed.message };
     const now = new Date();
     await tx
       .update(studyReports)
@@ -390,7 +365,7 @@ export async function freezeReport(
       action: "report.frozen",
       entityType: "study",
       entityId: r.studyId,
-      summary: `${actor.name} froze ${l.study.reportNumber} ${revLabel(r.rev)} (${built.pages} pages, from analysis run ${run.runNo}), signed Done By and sent it for checking`,
+      summary: `${actor.name} froze ${l.study.reportNumber} ${revLabel(r.rev)} (${built.pages} pages, from analysis run ${run.runNo}) and sent it for checking`,
       after: { rev: r.rev, sha256: stored.file.sha256, runId: run.id, pages: built.pages },
       request,
     });
@@ -400,7 +375,7 @@ export async function freezeReport(
       except: actor.id,
       kind: "report_to_check",
       title: `${l.code} ${revLabel(r.rev)} to check`,
-      body: `${actor.name} signed Done By on ${l.study.reportNumber} (job ${l.job.number}).`,
+      body: `${actor.name} sent ${l.study.reportNumber} (job ${l.job.number}) for checking.`,
       href: `/studies/${r.studyId}?tab=report`,
     });
     return { ok: true as const, rev: r.rev, sha256: stored.file.sha256, pages: built.pages };

@@ -1,6 +1,6 @@
 "use client";
 
-import { Download, FilePlus2, MessageSquare, RefreshCw, Undo2 } from "lucide-react";
+import { Download, FilePlus2, MessageSquare, RefreshCw, Send, Undo2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
@@ -19,6 +19,7 @@ import {
   editReportTextAction,
   newRevisionAction,
   returnForReworkAction,
+  freezeReportAction,
   signReportAction,
 } from "../report-actions";
 import { MailBox, PaperSignoffForm, ReleaseForm, type Mail } from "./release-panel";
@@ -36,9 +37,9 @@ const TONES: Record<ReportStatus, StatusTone> = {
 
 const MEANINGS: Record<string, string> = {
   done_by: "Done By",
-  checked_by: "Checked By",
+  checked_by: "For QA Tech",
   reviewed_by: "Reviewed By",
-  approved_by: "Approved By",
+  approved_by: "For the client",
 };
 
 /** Revisions a new one can follow. */
@@ -189,9 +190,10 @@ export function ReportPanel({ r }: { r: StudyReport }) {
   const latest = r.revisions[0] ?? null;
   const shown = r.draft ? r.revisions.find((x) => x.id === r.draft!.id)! : latest;
   const open = r.comments.filter((c) => !c.answer);
-  const signedDoneByMe = shown?.signatures.some(
-    (g) => g.meaning === "done_by" && g.userId === r.me,
-  );
+  // Who froze a revision can't sign it for QA Tech (older revisions: who signed Done By).
+  const preparedByMe =
+    shown?.frozenByUserId === r.me ||
+    shown?.signatures.some((g) => g.meaning === "done_by" && g.userId === r.me);
 
   const go = (fn: () => Promise<Result>, done: (d: unknown) => string, after?: () => void) =>
     start(async () => {
@@ -375,23 +377,31 @@ export function ReportPanel({ r }: { r: StudyReport }) {
                 {canWork ? (
                   <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
                     <p className="text-sm">
-                      Signing Done By freezes this PDF as {shown.label} and sends it to the checker.
-                      It can&apos;t be changed after, only returned or revised.
+                      This freezes the PDF as {shown.label} and sends it to a team leader or
+                      manager, who signs it for QA Tech. It can&apos;t be changed after, only
+                      returned or revised.
                     </p>
                     {open.length ? (
                       <p className="text-sm text-attention">
                         Answer the review comments first: say what was fixed.
                       </p>
                     ) : null}
-                    <SignDialog
-                      label={`Sign Done By and send ${shown.label} for checking`}
-                      title="Sign as Done By"
-                      body={`You prepared ${s.reportNumber} ${shown.label}. It is frozen with your signature and goes to the checker.`}
-                      action={signReportAction}
-                      fields={{ ...fields, step: "done_by" }}
+                    <Button
+                      className="w-full sm:w-fit"
                       disabled={busy || open.length > 0 || Boolean(r.blocked)}
-                      onSigned={signed}
-                    />
+                      onClick={() =>
+                        go(
+                          () => freezeReportAction(s.id, r.draft!.id),
+                          (d) => {
+                            const f = d as { rev: number; pages: number; sha256: string };
+                            return `Rev ${String(f.rev).padStart(2, "0")} frozen: ${f.pages} pages, SHA-256 ${f.sha256.slice(0, 12)}…. It's with the checker now.`;
+                          },
+                        )
+                      }
+                    >
+                      <Send aria-hidden="true" />
+                      Send {shown.label} for checking
+                    </Button>
                   </div>
                 ) : null}
               </>
@@ -399,10 +409,10 @@ export function ReportPanel({ r }: { r: StudyReport }) {
 
             {shown.status === "checking" ? (
               r.can.check ? (
-                signedDoneByMe ? (
+                preparedByMe ? (
                   <p className="rounded-md bg-surface-muted px-3 py-2 text-sm">
-                    You signed Done By on {shown.label}. Another checker signs Checked By or returns
-                    it.
+                    You prepared {shown.label}. Another team leader or manager signs it for QA Tech
+                    or returns it.
                   </p>
                 ) : returning ? (
                   <CommentComposer
@@ -421,14 +431,14 @@ export function ReportPanel({ r }: { r: StudyReport }) {
                 ) : (
                   <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
                     <p className="text-sm">
-                      Check the PDF against the data. Sign Checked By, or send it back with comments
-                      pinned to the sections that need changing.
+                      Check the PDF against the data. Sign it for QA Tech, or send it back with
+                      comments pinned to the sections that need changing.
                     </p>
                     <div className="flex flex-wrap gap-2">
                       <SignDialog
-                        label="Sign Checked By"
-                        title="Sign as Checked By"
-                        body={`You checked ${s.reportNumber} ${shown.label}: the numbers, the wording and the annexures.`}
+                        label="Sign for QA Tech"
+                        title="Sign for QA Tech"
+                        body={`You checked ${s.reportNumber} ${shown.label} (the numbers, the wording and the annexures) and sign it for QA Tech. Your name goes in the QA Tech column of the signature block.`}
                         action={signReportAction}
                         fields={{ ...fields, step: "checked_by" }}
                         disabled={busy}
@@ -447,7 +457,7 @@ export function ReportPanel({ r }: { r: StudyReport }) {
                 )
               ) : (
                 <p className="rounded-md bg-surface-muted px-3 py-2 text-sm">
-                  With the checker: a team leader or manager signs Checked By.
+                  With the checker: a team leader or manager signs it for QA Tech.
                 </p>
               )
             ) : null}
@@ -467,10 +477,8 @@ export function ReportPanel({ r }: { r: StudyReport }) {
             ) : null}
             {(shown.status === "released" || shown.status === "reviewed") && !mail ? (
               <p className="rounded-md bg-info-soft px-3 py-2 text-sm text-info">
-                With the client since {when(shown.releasedAt)} ({shown.releasedTo.join(", ")}).
-                {shown.status === "reviewed"
-                  ? " Reviewed; waiting for the QA head's approval."
-                  : ""}
+                With the client since {when(shown.releasedAt)} ({shown.releasedTo.join(", ")}).{" "}
+                Their authorised signatory signs it, or they send it back.
               </p>
             ) : null}
             {["checked", "released", "reviewed"].includes(shown.status) && r.can.release ? (
@@ -491,8 +499,7 @@ export function ReportPanel({ r }: { r: StudyReport }) {
             ) : null}
             {shown.status === "signed" && shown.paper ? (
               <p className="rounded-md bg-pass-soft px-3 py-2 text-sm text-pass">
-                Signed on paper: reviewed by {shown.paper.reviewedBy} ({dmy(shown.paper.reviewedOn)}
-                ), approved by {shown.paper.approvedBy}
+                Signed on paper by {shown.paper.approvedBy}
                 {shown.paper.approvedByTitle ? `, ${shown.paper.approvedByTitle}` : ""} (
                 {dmy(shown.paper.approvedOn)}).
               </p>

@@ -34,12 +34,7 @@ import {
   wcrDownload,
 } from "@/domain/billing/wcr-service";
 import { freezeReport } from "@/domain/reports/report-service";
-import {
-  checkReport,
-  clientApprove,
-  clientReview,
-  releaseReport,
-} from "@/domain/reports/review-service";
+import { checkReport, clientApprove, releaseReport } from "@/domain/reports/review-service";
 import { storeFile } from "@/lib/storage/store-file";
 
 import { BE_WF_02_FILE, BE_WF_02_PASSWORD } from "../support/be-wf-02";
@@ -57,7 +52,7 @@ const jobStatus = async (id: string) =>
 /** The report frozen, checked and released (not yet signed). */
 async function released(slug: string) {
   const w = await reportWorld(db, slug);
-  const f = await freezeReport(db, w.blobs, w.preparer, w.reportId, pw, req);
+  const f = await freezeReport(db, w.blobs, w.preparer, w.reportId, req);
   if (!f.ok) throw new Error(f.message);
   if (!(await checkReport(db, w.lead, w.reportId, pw, req)).ok) throw new Error("check");
   await releaseReport(db, w.lead, w.reportId, { to: [w.qa.id, w.head.id] }, "https://x.test", req);
@@ -248,7 +243,6 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 10: WCR, invoice, payments an
     await expect(closeJob(db, w.manager, w.jobId, req)).rejects.toThrow(
       "isn't signed by the client.",
     );
-    expect((await clientReview(db, w.qa, w.reportId, pw, req)).ok).toBe(true);
     expect((await clientApprove(db, w.blobs, w.head, w.reportId, pw, req)).ok).toBe(true);
     // Signing the report doesn't move a paid job back.
     expect(await jobStatus(w.jobId)).toBe("paid");

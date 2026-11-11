@@ -6,7 +6,7 @@ import { db } from "@/db/client";
 import { clientDecideDeviation } from "@/domain/analysis/analysis-service";
 import { acceptWcr } from "@/domain/billing/wcr-service";
 import { ReportsError } from "@/domain/reports/errors";
-import { clientApprove, clientReturn, clientReview } from "@/domain/reports/review-service";
+import { clientApprove, clientReturn } from "@/domain/reports/review-service";
 import { runAction, type ActionResult } from "@/lib/action-result";
 import { SESSION_ENDED, userForAction } from "@/lib/auth/dal";
 import { flushEmails } from "@/lib/mail/flush";
@@ -27,7 +27,7 @@ function refresh(reportId: string) {
   revalidatePath("/reports");
 }
 
-/** Reviewed By (client QA) or Approved By (client QA head), from the password dialog. */
+/** The client's one signature (its authorised signatory), from the password dialog. */
 export async function clientSignAction(
   _prev: unknown,
   formData: FormData,
@@ -39,15 +39,10 @@ export async function clientSignAction(
   const password = field(formData, "password");
   const result = await runAction(async () => {
     const request = await getRequestInfo();
-    if (step === "reviewed_by") {
-      const r = await clientReview(db, actor, reportId, { password }, request);
-      if (!r.ok) throw new ReportsError(r.message);
-      return { text: "Signed Reviewed By. Your QA head can now approve it." };
-    }
     if (step === "approved_by") {
       const r = await clientApprove(db, blobStore, actor, reportId, { password }, request);
       if (!r.ok) throw new ReportsError(r.message);
-      return { text: "Approved. The signed report is issued and kept in your archive." };
+      return { text: "Signed. The report is issued and kept in your archive." };
     }
     throw new ReportsError("Unknown step.");
   });

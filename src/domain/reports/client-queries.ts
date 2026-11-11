@@ -186,11 +186,9 @@ export async function getClientReport(db: Database, actor: SessionUser, reportId
       answer: c.answer,
     })),
     can: {
-      review: can(actor, "reports.client_review") && status === "released",
+      // One client signature (QA Tech, Nov 2026): the authorised signatory approves.
       approve:
-        can(actor, "reports.client_approve") &&
-        status === "reviewed" &&
-        reviewed?.userId !== actor.id,
+        can(actor, "reports.client_approve") && (status === "released" || status === "reviewed"),
       return:
         can(actor, "reports.client_review") && (status === "released" || status === "reviewed"),
     },

@@ -154,6 +154,7 @@ export async function getStudyReport(db: Database, actor: SessionUser, studyId: 
       createdAt: r.createdAt,
       frozenAt: r.frozenAt,
       frozenBy: r.frozenByUserId ? (frozenBy.get(r.frozenByUserId) ?? null) : null,
+      frozenByUserId: r.frozenByUserId,
       sha256: r.sha256,
       pages: r.pages,
       sections: r.layout?.sections ?? {},

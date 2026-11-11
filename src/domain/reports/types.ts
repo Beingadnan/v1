@@ -91,10 +91,17 @@ export type SignBox = { page: number; x: number; y: number; w: number; h: number
 export type ReportLayout = {
   /** First page (1-based) of each section in the frozen PDF. */
   sections: Partial<Record<ReportSection, number>>;
-  /** Signature and name cells for each of the four columns. */
-  signBoxes: Record<
-    "done_by" | "checked_by" | "reviewed_by" | "approved_by",
-    { signature: SignBox; name: SignBox }
+  /**
+   * Where each signature is stamped: QA Tech's and the client's columns (two
+   * signatures since Nov 2026; older reports have all four meanings). `role`
+   * and `footer` boxes are on the two-column layout only: the signer's role,
+   * and a small "verified / reviewed" line at the foot of each raw data page.
+   */
+  signBoxes: Partial<
+    Record<
+      "done_by" | "checked_by" | "reviewed_by" | "approved_by",
+      { signature: SignBox; name: SignBox; role?: SignBox; footer?: SignBox[] }
+    >
   > | null;
 };
 

@@ -103,23 +103,18 @@ export function ClientReportView({ r }: { r: ClientReport }) {
         </div>
 
         <div className="flex flex-col gap-4">
-          {r.can.review || r.can.approve ? (
+          {r.can.approve ? (
             <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
               <p className="text-sm">
-                {r.can.approve
-                  ? "Reviewed by your QA. Approve it to issue the report, or send it back."
-                  : "Read the report. Sign Reviewed By when it is right, or send it back with comments."}
+                Read the report. Sign it for your company when it is right, or send it back with
+                comments.
               </p>
               <SignDialog
-                label={r.can.approve ? "Sign Approved By" : "Sign Reviewed By"}
-                title={r.can.approve ? "Sign as Approved By" : "Sign as Reviewed By"}
-                body={
-                  r.can.approve
-                    ? `You approve ${r.reportNumber} ${r.label}. The signed report is issued and can't be changed.`
-                    : `You reviewed ${r.reportNumber} ${r.label}. It then goes to your QA head for approval.`
-                }
+                label="Approve and sign"
+                title="Sign for your company"
+                body={`You approve ${r.reportNumber} ${r.label} as your company's authorised signatory. The signed report is issued and can't be changed.`}
                 action={clientSignAction}
-                fields={{ ...fields, step: r.can.approve ? "approved_by" : "reviewed_by" }}
+                fields={{ ...fields, step: "approved_by" }}
                 disabled={busy}
                 onSigned={(text) => {
                   setFeedback({ ok: true, text });
@@ -127,9 +122,10 @@ export function ClientReportView({ r }: { r: ClientReport }) {
                 }}
               />
             </div>
-          ) : r.status === "reviewed" && r.reviewedByMe ? (
+          ) : r.status === "released" || r.status === "reviewed" ? (
             <p className="rounded-md bg-surface-muted px-3 py-2 text-sm">
-              You signed Reviewed By. Your QA head signs Approved By.
+              Your authorised signatory (QA head) signs the report. You can send it back with
+              comments.
             </p>
           ) : null}
 
@@ -168,8 +164,7 @@ export function ClientReportView({ r }: { r: ClientReport }) {
 
           {r.paper ? (
             <p className="rounded-md bg-pass-soft px-3 py-2 text-sm text-pass">
-              Signed on paper: reviewed by {r.paper.reviewedBy} ({dmy(r.paper.reviewedOn)}),
-              approved by {r.paper.approvedBy} ({dmy(r.paper.approvedOn)}).
+              Signed on paper by {r.paper.approvedBy} ({dmy(r.paper.approvedOn)}).
             </p>
           ) : null}
 

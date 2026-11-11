@@ -269,8 +269,6 @@ export async function reportData(
     observation: string | null;
     conclusion: string | null;
     watermark: string | null;
-    doneBy: string;
-    checkedBy: string;
   },
   certificatePages: number,
 ): Promise<ReportData> {
@@ -401,7 +399,7 @@ export async function reportData(
         note: d.decisionNote,
       };
     }),
-    signatures: { doneBy: rev.doneBy, checkedBy: rev.checkedBy, client: row.company.name },
+    signatures: { client: row.company.name },
     certificatePages,
   };
 }

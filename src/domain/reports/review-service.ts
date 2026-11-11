@@ -300,10 +300,11 @@ export async function checkReport(
   return db.transaction(async (tx) => {
     const l = await loadReport(tx, actor, reportId);
     assertStatus(l, ["checking"], "Checking it");
+    // The one who prepared it can't sign for QA Tech (older revisions: Done By).
     const done = (await reportSignatures(tx, l.r)).find((s) => s.meaning === "done_by");
-    if (done?.userId === actor.id) {
+    if (l.r.frozenByUserId === actor.id || done?.userId === actor.id) {
       throw new ReportsError(
-        "You signed Done By on this revision. Another checker must sign Checked By.",
+        "You prepared this revision. Another team leader or manager signs for QA Tech.",
       );
     }
     const signed = await sign(tx, actor, l, "checked_by", input.password, request);
@@ -318,7 +319,7 @@ export async function checkReport(
       action: "report.checked",
       entityType: "study",
       entityId: l.study.id,
-      summary: `${actor.name} checked ${l.study.reportNumber} ${revLabel(l.r.rev)} (signed Checked By)`,
+      summary: `${actor.name} checked ${l.study.reportNumber} ${revLabel(l.r.rev)} and signed for QA Tech`,
       after: { sha256: l.r.sha256, signatureId: signed.signature.id },
       request,
     });
@@ -415,40 +416,12 @@ export async function releaseReport(
 
 // ----------------------------------------------------------------- client
 
-/** The client's QA signs Reviewed By. */
-export async function clientReview(
-  db: Database,
-  actor: SessionUser,
-  reportId: string,
-  input: { password: string },
-  request?: RequestInfo,
-): Promise<SignOutcome<object>> {
-  assertCan(actor, "reports.client_review");
-  assertClient(actor);
-  return db.transaction(async (tx) => {
-    const l = await loadReport(tx, actor, reportId);
-    assertStatus(l, ["released"], "Reviewing it");
-    const signed = await sign(tx, actor, l, "reviewed_by", input.password, request);
-    if (!signed.ok) return { ok: false as const, message: signed.message };
-    await tx.update(studyReports).set({ status: "reviewed" }).where(eq(studyReports.id, l.r.id));
-    await recordAudit(tx, {
-      organisationId: actor.organisationId,
-      actor: user(actor),
-      action: "report.client_reviewed",
-      entityType: "study",
-      entityId: l.study.id,
-      summary: `${actor.name} (${l.company}) reviewed ${l.study.reportNumber} ${revLabel(l.r.rev)} (signed Reviewed By)`,
-      after: { signatureId: signed.signature.id, sha256: l.r.sha256 },
-      request,
-    });
-    return { ok: true as const };
-  });
-}
-
 /**
- * The client's QA head signs Approved By: the report is issued. The signed
- * copy (signatures stamped in) is stored with its own SHA-256, and the study
- * goes to the company archive.
+ * The client's authorised signatory approves the report, the client's one
+ * signature (QA Tech, Nov 2026: one signature each side). The signed copy
+ * (signatures stamped in) is stored with its own SHA-256, and the study goes to
+ * the company archive. A revision the client reviewed under the old four-
+ * signature flow ("reviewed") is approved the same way.
  */
 export async function clientApprove(
   db: Database,
@@ -462,13 +435,7 @@ export async function clientApprove(
   assertClient(actor);
   const out = await db.transaction(async (tx) => {
     const l = await loadReport(tx, actor, reportId);
-    assertStatus(l, ["reviewed"], "Approving it");
-    const reviewed = (await reportSignatures(tx, l.r)).find((s) => s.meaning === "reviewed_by");
-    if (reviewed?.userId === actor.id) {
-      throw new ReportsError(
-        "You signed Reviewed By on this revision. Another person signs Approved By.",
-      );
-    }
+    assertStatus(l, ["released", "reviewed"], "Approving it");
     const signed = await sign(tx, actor, l, "approved_by", input.password, request);
     if (!signed.ok) return { ok: false as const, message: signed.message };
     const now = new Date();
@@ -483,7 +450,7 @@ export async function clientApprove(
       action: "report.client_approved",
       entityType: "study",
       entityId: l.study.id,
-      summary: `${actor.name} (${l.company}) approved ${l.study.reportNumber} ${revLabel(l.r.rev)} (signed Approved By); the report is issued`,
+      summary: `${actor.name} (${l.company}) approved and signed ${l.study.reportNumber} ${revLabel(l.r.rev)}; the report is issued`,
       after: { signatureId: signed.signature.id, sha256: l.r.sha256 },
       request,
     });
@@ -492,7 +459,7 @@ export async function clientApprove(
       to: [...(await jobLeads(tx, actor.organisationId, l.job.id)), l.r.createdByUserId],
       kind: "report_client_signed",
       title: `${l.code} ${revLabel(l.r.rev)} signed by ${l.company}`,
-      body: `${actor.name} signed Approved By.`,
+      body: `${actor.name} signed for ${l.company}.`,
       href: `/studies/${l.study.id}?tab=report`,
     });
     await syncJobToReports(
@@ -560,19 +527,12 @@ export async function clientReturn(
 
 // ------------------------------------------------------------------ paper
 
-const paperSchema = z
-  .object({
-    fileId: z.string().uuid("Upload the scan of the signed report."),
-    reviewedByName: z.string().trim().min(2, "Who signed Reviewed By?").max(200),
-    reviewedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Enter the date of Reviewed By."),
-    approvedByName: z.string().trim().min(2, "Who signed Approved By?").max(200),
-    approvedByTitle: z.string().trim().max(200).default(""),
-    approvedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Enter the date of Approved By."),
-  })
-  .refine((v) => v.approvedOn >= v.reviewedOn, {
-    message: "Approved By can't be dated before Reviewed By.",
-    path: ["approvedOn"],
-  });
+const paperSchema = z.object({
+  fileId: z.string().uuid("Upload the scan of the signed report."),
+  approvedByName: z.string().trim().min(2, "Who signed for the client?").max(200),
+  approvedByTitle: z.string().trim().max(200).default(""),
+  approvedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Enter the date they signed."),
+});
 
 const todayIst = () =>
   new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
@@ -610,15 +570,15 @@ export async function recordPaperSignoff(
       );
     }
     const today = todayIst();
-    if (v.approvedOn > today || v.reviewedOn > today) {
-      throw new ReportsError("A signature date is in the future.");
+    if (v.approvedOn > today) {
+      throw new ReportsError("The signature date is in the future.");
     }
     const checkedOn = l.r.checkedAt
       ? new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(l.r.checkedAt)
       : null;
-    if (checkedOn && v.reviewedOn < checkedOn) {
+    if (checkedOn && v.approvedOn < checkedOn) {
       throw new ReportsError(
-        `Reviewed By is dated before QA Tech checked the report (${checkedOn.split("-").reverse().join(".")}).`,
+        `The client's signature is dated before QA Tech signed the report (${checkedOn.split("-").reverse().join(".")}).`,
       );
     }
     await tx.insert(reportPaperSignoffs).values({
@@ -627,8 +587,9 @@ export async function recordPaperSignoff(
       fileId: f.id,
       scanSha256: f.sha256,
       reportSha256: l.r.sha256!,
-      reviewedByName: v.reviewedByName,
-      reviewedOn: v.reviewedOn,
+      // One client signature now; the old Reviewed By columns stay for older records.
+      reviewedByName: "",
+      reviewedOn: v.approvedOn,
       approvedByName: v.approvedByName,
       approvedByTitle: v.approvedByTitle,
       approvedOn: v.approvedOn,
@@ -646,7 +607,7 @@ export async function recordPaperSignoff(
       action: "report.paper_signed",
       entityType: "study",
       entityId: l.study.id,
-      summary: `${actor.name} recorded the client's paper sign-off of ${l.study.reportNumber} ${revLabel(l.r.rev)}: reviewed by ${v.reviewedByName} (${v.reviewedOn}), approved by ${v.approvedByName} (${v.approvedOn})`,
+      summary: `${actor.name} recorded the client's paper sign-off of ${l.study.reportNumber} ${revLabel(l.r.rev)}: signed by ${v.approvedByName} (${v.approvedOn})`,
       after: { ...v, scanSha256: f.sha256, reportSha256: l.r.sha256 },
       request,
     });

@@ -1,7 +1,8 @@
 /**
  * Phase 9 exit test: BE-WF-02's report goes Rev 00 → QA Tech's checker sends
- * it back → Done By and Checked By → released → the client returns it →
- * Rev 01 → the client's QA and QA head sign in the app. A second job closes
+ * it back → frozen again and signed for QA Tech → released → the client
+ * returns it → Rev 01 → the client's signatory signs in the app (two
+ * signatures: QA Tech and the client, Nov 2026). A second job closes
  * on paper. Every revision stays downloadable. Runs on QA Tech's own export
  * (fixtures/client; skipped without it).
  */
@@ -29,7 +30,6 @@ import {
   checkReport,
   clientApprove,
   clientReturn,
-  clientReview,
   recordPaperSignoff,
   releaseReport,
   reportDownload,
@@ -81,30 +81,22 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 9: review and sign-off in the
     w = await world("review-org");
   });
 
-  it("signs Done By when the preparer freezes; a wrong password signs nothing", async () => {
-    const bad = await freezeReport(db, w.blobs, w.preparer, w.reportId, { password: "nope" }, req);
-    expect(bad).toEqual({ ok: false, message: "That password is incorrect. Nothing was signed." });
-    expect(await statusOf(w.reportId)).toBe("draft");
-    const failed = await db
-      .select({ a: auditLog.action })
-      .from(auditLog)
-      .where(and(eq(auditLog.actorUserId, w.preparer.id), eq(auditLog.action, "signature.failed")));
-    expect(failed).toHaveLength(1);
-
-    const ok = await freezeReport(db, w.blobs, w.preparer, w.reportId, pw, req);
+  it("freezes for checking without a signature (two signatures: QA Tech and the client)", async () => {
+    const ok = await freezeReport(db, w.blobs, w.preparer, w.reportId, req);
     expect(ok.ok).toBe(true);
     expect(await statusOf(w.reportId)).toBe("checking");
     const sig = await db
       .select()
       .from(signatures)
       .where(and(eq(signatures.entityType, "report"), eq(signatures.entityId, w.reportId)));
-    expect(sig).toHaveLength(1);
-    expect(sig[0]).toMatchObject({
-      meaning: "done_by",
-      signerName: "Mangesh Phalskar",
-      signerRole: "Report preparer",
-      recordHash: ok.ok ? ok.sha256 : "",
-    });
+    expect(sig).toHaveLength(0);
+    const [r] = await db.select().from(studyReports).where(eq(studyReports.id, w.reportId));
+    expect(r!.frozenByUserId).toBe(w.preparer.id);
+    const frozen = await db
+      .select({ a: auditLog.action })
+      .from(auditLog)
+      .where(and(eq(auditLog.actorUserId, w.preparer.id), eq(auditLog.action, "report.frozen")));
+    expect(frozen).toHaveLength(1);
   });
 
   it("the checker sends it back with comments pinned to sections; the preparer must answer them", async () => {
@@ -127,7 +119,7 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 9: review and sign-off in the
     );
     expect(await statusOf(w.reportId)).toBe("draft");
     expect(await jobStatusOf(w.jobId)).toBe("rework");
-    await expect(freezeReport(db, w.blobs, w.preparer, w.reportId, pw, req)).rejects.toThrow(
+    await expect(freezeReport(db, w.blobs, w.preparer, w.reportId, req)).rejects.toThrow(
       "Answer the review comment first",
     );
     const [c] = await openComments(db, w.studyId);
@@ -137,12 +129,12 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 9: review and sign-off in the
     );
   });
 
-  it("no one checks their own report: the lead who signed Done By can't sign Checked By", async () => {
+  it("no one signs their own report for QA Tech: the lead who prepared it can't", async () => {
     // This time the team leader prepares it.
-    const done = await freezeReport(db, w.blobs, w.lead, w.reportId, pw, req);
+    const done = await freezeReport(db, w.blobs, w.lead, w.reportId, req);
     expect(done.ok).toBe(true);
     await expect(checkReport(db, w.lead, w.reportId, pw, req)).rejects.toThrow(
-      "You signed Done By on this revision.",
+      "You prepared this revision.",
     );
     const bad = await checkReport(db, w.manager, w.reportId, { password: "wrong" }, req);
     expect(bad.ok).toBe(false);
@@ -172,7 +164,7 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 9: review and sign-off in the
   });
 
   it("another company's QA can't see or sign it; client QA can't approve", async () => {
-    await expect(clientReview(db, w.stranger, w.reportId, pw, req)).rejects.toThrow(
+    await expect(clientApprove(db, w.blobs, w.stranger, w.reportId, pw, req)).rejects.toThrow(
       "That report does not exist.",
     );
     expect(await reportDownload(db, w.blobs, w.stranger, w.reportId)).toBeNull();
@@ -180,7 +172,7 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 9: review and sign-off in the
       ForbiddenError,
     );
     // QA Tech staff can't sign for the client.
-    await expect(clientReview(db, w.lead, w.reportId, pw, req)).rejects.toBeInstanceOf(
+    await expect(clientApprove(db, w.blobs, w.lead, w.reportId, pw, req)).rejects.toBeInstanceOf(
       ForbiddenError,
     );
   });
@@ -207,24 +199,20 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 9: review and sign-off in the
       req,
     );
     rev1 = r1.id;
-    await expect(freezeReport(db, w.blobs, w.preparer, rev1, pw, req)).rejects.toThrow(
+    await expect(freezeReport(db, w.blobs, w.preparer, rev1, req)).rejects.toThrow(
       "Answer the review comment first",
     );
     const [c] = await openComments(db, w.studyId);
     expect(c!.side).toBe("client");
     await answerComment(db, w.preparer, c!.id, "Fixed: conclusion now names the excursion.", req);
-    expect((await freezeReport(db, w.blobs, w.preparer, rev1, pw, req)).ok).toBe(true);
+    expect((await freezeReport(db, w.blobs, w.preparer, rev1, req)).ok).toBe(true);
     expect(await statusOf(w.reportId)).toBe("superseded");
     expect((await checkReport(db, w.lead, rev1, pw, req)).ok).toBe(true);
     await releaseReport(db, w.lead, rev1, { to: [w.qa.id, w.head.id] }, APP, req);
     expect(await jobStatusOf(w.jobId)).toBe("sent_to_client");
   });
 
-  it("the client's QA reviews and the QA head approves: the issued copy is stored and the study archived", async () => {
-    await expect(clientApprove(db, w.blobs, w.head, rev1, pw, req)).rejects.toThrow(
-      "Approving it isn't possible: Rev 01 is with the client.",
-    );
-    expect((await clientReview(db, w.qa, rev1, pw, req)).ok).toBe(true);
+  it("the client's signatory signs once: the issued copy is stored and the study archived", async () => {
     expect((await clientApprove(db, w.blobs, w.head, rev1, pw, req)).ok).toBe(true);
     const [r] = await db.select().from(studyReports).where(eq(studyReports.id, rev1));
     expect(r).toMatchObject({ status: "signed", signedVia: "app" });
@@ -249,11 +237,11 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 9: review and sign-off in the
       const text = textOf(issued.bytes);
       expect(text).toContain("Electronic signatures");
       expect(text).toContain(r!.sha256!);
-      for (const name of ["MANGESH PHALSKAR", "LEAD", "PRIYA NAIR", "SUNIL DESHMUKH"]) {
+      for (const name of ["LEAD", "SUNIL DESHMUKH"]) {
         expect(text).toContain(name);
       }
       expect(text).toContain("Signed electronically");
-      expect(text).toMatch(/Approved By\s+Sunil Deshmukh/);
+      expect(text).toMatch(/For the client\s+Sunil Deshmukh/);
       expect(text).toContain("Client QA head");
     }
   });
@@ -267,7 +255,7 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 9: review and sign-off in the
     );
     if (hasPdftotext) {
       const text = textOf(old.bytes);
-      expect(text).toContain("Checked By");
+      expect(text).toContain("QA TECH (SERVICE PROVIDER)");
       expect(text).not.toContain("Sunil Deshmukh");
     }
     // The same signatures always make the same copy.
@@ -292,7 +280,6 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 9: review and sign-off in the
         "report.checked",
         "report.released",
         "report.client_returned",
-        "report.client_reviewed",
         "report.client_approved",
         "report.issued_copy_stored",
       ]),
@@ -305,7 +292,7 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 9: the paper route", () => {
 
   beforeAll(async () => {
     w = await world("paper-org");
-    expect((await freezeReport(db, w.blobs, w.preparer, w.reportId, pw, req)).ok).toBe(true);
+    expect((await freezeReport(db, w.blobs, w.preparer, w.reportId, req)).ok).toBe(true);
     expect((await checkReport(db, w.lead, w.reportId, pw, req)).ok).toBe(true);
   });
 
@@ -323,8 +310,6 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 9: the paper route", () => {
     const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
     const base = {
       fileId: scan.file.id,
-      reviewedByName: "Priya Nair",
-      reviewedOn: today,
       approvedByName: "Sunil Deshmukh",
       approvedByTitle: "QA Head",
       approvedOn: today,
@@ -334,10 +319,10 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 9: the paper route", () => {
     );
     await expect(
       recordPaperSignoff(db, w.lead, w.reportId, { ...base, approvedOn: "2099-01-01" }, req),
-    ).rejects.toThrow("A signature date is in the future.");
+    ).rejects.toThrow("The signature date is in the future.");
     await expect(
-      recordPaperSignoff(db, w.lead, w.reportId, { ...base, reviewedOn: "2020-01-01" }, req),
-    ).rejects.toThrow("Reviewed By is dated before QA Tech checked the report");
+      recordPaperSignoff(db, w.lead, w.reportId, { ...base, approvedOn: "2020-01-01" }, req),
+    ).rejects.toThrow("The client's signature is dated before QA Tech signed the report");
     const [r] = await db.select().from(studyReports).where(eq(studyReports.id, w.reportId));
     const [frozenFile] = await db
       .select({ id: sql<string>`id` })

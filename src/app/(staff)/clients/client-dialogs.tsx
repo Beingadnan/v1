@@ -657,8 +657,9 @@ export type ContactValues = {
 };
 
 export const SIGNATORY_LABELS: Record<string, string> = {
-  reviewed_by: "Signs Reviewed By",
-  approved_by: "Signs Approved By",
+  // Older contacts may still say Reviewed By (before one client signature, Nov 2026).
+  reviewed_by: "Signed Reviewed By (old flow)",
+  approved_by: "Signs reports for the client",
 };
 
 export function ContactDialog({
@@ -764,8 +765,10 @@ function ContactForm({
           result={result}
         >
           <option value="">Not a signatory</option>
-          <option value="reviewed_by">Reviewed By</option>
-          <option value="approved_by">Approved By</option>
+          <option value="approved_by">Signs reports for the client</option>
+          {contact?.signatory === "reviewed_by" ? (
+            <option value="reviewed_by">Reviewed By (old flow)</option>
+          ) : null}
         </SelectField>
       </div>
       {contact ? <ActiveSelect defaultActive={contact.active} noun="contact" /> : null}

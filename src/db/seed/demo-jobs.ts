@@ -42,12 +42,7 @@ import {
 import { autoBook, createJob, setReadiness } from "@/domain/jobs/job-service";
 import { getJob } from "@/domain/jobs/queries";
 import { createReport, freezeReport } from "@/domain/reports/report-service";
-import {
-  checkReport,
-  clientApprove,
-  clientReview,
-  releaseReport,
-} from "@/domain/reports/review-service";
+import { checkReport, clientApprove, releaseReport } from "@/domain/reports/review-service";
 import type { BlobStore } from "@/lib/storage/blob-store";
 import { storeFile } from "@/lib/storage/store-file";
 
@@ -610,19 +605,12 @@ async function afterData(c: Ctx, plan: Plan, jobId: string, number: string, n: n
   }
   if (!reach(plan.stage, "with_checker")) return done();
 
-  // Reports: drafted and signed Done By; past that, checked and released.
+  // Reports: drafted and frozen for checking; past that, signed for QA Tech and released.
   const reportIds: string[] = [];
   for (const s of detail.studies) {
     const id = (await createReport(db, p.preparer.user, s.id, req)).id;
-    const f = await freezeReport(
-      db,
-      c.blobs,
-      p.preparer.user,
-      id,
-      { password: p.preparer.password },
-      req,
-    );
-    if (!f.ok) throw new Error(`Done By: ${f.message}`);
+    const f = await freezeReport(db, c.blobs, p.preparer.user, id, req);
+    if (!f.ok) throw new Error(`Freeze: ${f.message}`);
     reportIds.push(id);
   }
   if (!reach(plan.stage, "with_client")) return done();
@@ -635,10 +623,8 @@ async function afterData(c: Ctx, plan: Plan, jobId: string, number: string, n: n
 
   // The client signs; the WCR, the invoice and payments.
   for (const id of reportIds) {
-    const a = await clientReview(db, p.qa.user, id, { password: p.qa.password }, req);
-    if (!a.ok) throw new Error(`Reviewed By: ${a.message}`);
     const b = await clientApprove(db, c.blobs, p.head.user, id, { password: p.head.password }, req);
-    if (!b.ok) throw new Error(`Approved By: ${b.message}`);
+    if (!b.ok) throw new Error(`Client signature: ${b.message}`);
   }
   const wcr = await issueWcr(db, c.blobs, p.lead.user, jobId, req);
   const acc = await acceptWcr(db, p.head.user, wcr.id, p.head.password, req);

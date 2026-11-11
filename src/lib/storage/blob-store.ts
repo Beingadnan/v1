@@ -7,8 +7,8 @@ import path from "node:path";
  * the SHA-256 of the content, so the same bytes always get the same key and an
  * existing file is never overwritten.
  *
- * Local disk is used for development and single-server setups. A cloud
- * (S3/R2) implementation of this interface is added at deployment (phase 12).
+ * Local disk is used for development and single-server setups; Vercel Blob
+ * when its token is set (vercel-blob-store.ts, ADR 0019).
  */
 export interface BlobStore {
   /** Store bytes under their hash. Returns false when identical content was already stored. */

@@ -64,7 +64,6 @@ import {
   answerComment,
   checkReport,
   clientApprove,
-  clientReview,
   recordPaperSignoff,
   releaseReport,
   returnForRework,
@@ -656,7 +655,7 @@ describe.skipIf(!haveFiles)("QTech end to end on QA Tech's real files", () => {
     for (const eq of [freezer, warehouse]) {
       const st = await studyOf(eq);
       reportIds[eq] = (await createReport(db, p.preparer, st.id, req)).id;
-      const f = await freezeReport(db, blobs, p.preparer, reportIds[eq]!, { password: PW }, req);
+      const f = await freezeReport(db, blobs, p.preparer, reportIds[eq]!, req);
       if (!f.ok) throw new Error(f.message);
     }
   });
@@ -671,10 +670,10 @@ describe.skipIf(!haveFiles)("QTech end to end on QA Tech's real files", () => {
       { comments: [{ section: "details", page: 2, body: "Department should read Stores." }] },
       req,
     );
-    await expect(freezeReport(db, blobs, p.preparer, id, { password: PW }, req)).rejects.toThrow();
+    await expect(freezeReport(db, blobs, p.preparer, id, req)).rejects.toThrow();
     for (const c of await openComments(db, st.id))
       await answerComment(db, p.preparer, c.id, "Corrected: Stores.", req);
-    const again = await freezeReport(db, blobs, p.preparer, id, { password: PW }, req);
+    const again = await freezeReport(db, blobs, p.preparer, id, req);
     if (!again.ok) throw new Error(again.message);
   });
 
@@ -692,9 +691,6 @@ describe.skipIf(!haveFiles)("QTech end to end on QA Tech's real files", () => {
         req,
       );
     }
-    expect((await clientReview(db, p.qa, reportIds[freezer]!, { password: PW }, req)).ok).toBe(
-      true,
-    );
     expect(
       (await clientApprove(db, blobs, p.head, reportIds[freezer]!, { password: PW }, req)).ok,
     ).toBe(true);
@@ -708,8 +704,6 @@ describe.skipIf(!haveFiles)("QTech end to end on QA Tech's real files", () => {
       reportIds[warehouse]!,
       {
         fileId,
-        reviewedByName: "Priya Nair",
-        reviewedOn: today,
         approvedByName: "Sunil Deshmukh",
         approvedByTitle: "Head QA",
         approvedOn: today,

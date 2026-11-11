@@ -22,8 +22,17 @@ const envSchema = z.object({
    * trip (ADR 0018). Neon's pooled endpoint (-pooler) accepts thousands of clients.
    */
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(50).default(30),
-  /** Local file storage root (development / single-server). Cloud storage driver comes later. */
+  /** Local file storage root, used when no Vercel Blob token is set. */
   STORAGE_LOCAL_DIR: z.string().min(1).default("./.data/storage"),
+  /**
+   * Vercel Blob read-write token (Vercel → Storage → your Blob store → .env.local tab).
+   * When set, files are kept in that store (private) instead of on local disk (ADR 0019).
+   */
+  BLOB_READ_WRITE_TOKEN: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => v || undefined),
   /** Hard upload limit in megabytes; logger exports are small, certificate scans can be larger. */
   UPLOAD_MAX_MB: z.coerce.number().int().min(1).max(200).default(50),
   /**

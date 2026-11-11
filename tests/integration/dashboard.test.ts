@@ -32,7 +32,6 @@ import { freezeReport } from "@/domain/reports/report-service";
 import {
   checkReport,
   clientApprove,
-  clientReview,
   releaseReport,
   returnForRework,
 } from "@/domain/reports/review-service";
@@ -72,7 +71,7 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))(
     });
 
     it("tells the team leader a report is ready to check (bell only), and the preparer when it comes back (email at once)", async () => {
-      expect((await freezeReport(db, w.blobs, w.preparer, w.reportId, pw, req)).ok).toBe(true);
+      expect((await freezeReport(db, w.blobs, w.preparer, w.reportId, req)).ok).toBe(true);
       expect(await kindsOf(w.lead.id)).toEqual(["report_to_check:none"]);
       await returnForRework(
         db,
@@ -104,7 +103,7 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))(
       for (const x of await openComments(db, w.studyId)) {
         await answerComment(db, w.preparer, x.id, "Fixed: department corrected.", req);
       }
-      expect((await freezeReport(db, w.blobs, w.preparer, w.reportId, pw, req)).ok).toBe(true);
+      expect((await freezeReport(db, w.blobs, w.preparer, w.reportId, req)).ok).toBe(true);
       expect((await checkReport(db, w.manager, w.reportId, pw, req)).ok).toBe(true);
       // The QA head keeps email on; client QA turns it off.
       await setEmailAlerts(db, w.qa, false);
@@ -121,7 +120,6 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))(
     });
 
     it("the team hears when the client signs", async () => {
-      expect((await clientReview(db, w.qa, w.reportId, pw, req)).ok).toBe(true);
       expect((await clientApprove(db, w.blobs, w.head, w.reportId, pw, req)).ok).toBe(true);
       expect(await kindsOf(w.lead.id)).toContain("report_client_signed:none");
     });
