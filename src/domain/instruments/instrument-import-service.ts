@@ -261,6 +261,8 @@ export type ImportChoices = {
   assignModelId?: string;
   /** Model for new instruments when a list names neither make nor model. */
   listModelId?: string;
+  /** ID prefixes of a client's own equipment, left out (see ImportOptions.notOurs). */
+  notOurs?: string[];
 };
 
 function importOptions(choices: ImportChoices): ImportOptions {
@@ -278,6 +280,10 @@ function importOptions(choices: ImportChoices): ImportOptions {
         }
       : null,
     listModelId: choices.listModelId && isUuid(choices.listModelId) ? choices.listModelId : null,
+    notOurs: (choices.notOurs ?? [])
+      .map((p) => p.trim())
+      .filter(Boolean)
+      .slice(0, 20),
   };
 }
 
@@ -571,7 +577,13 @@ export async function applyInstrumentImport(
             })),
           );
         }
-        const linked = c.masters.filter((m) => m.instrumentId && m.certificateId);
+        // One link per master: two rows naming the same master (sensor and indicator) link once.
+        const linked = c.masters.filter(
+          (m, i, all) =>
+            m.instrumentId &&
+            m.certificateId &&
+            all.findIndex((x) => x.instrumentId === m.instrumentId) === i,
+        );
         if (linked.length > 0) {
           await tx.insert(certificateMasters).values(
             linked.map((m, position) => ({

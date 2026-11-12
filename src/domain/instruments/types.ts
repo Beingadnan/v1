@@ -103,9 +103,10 @@ export function instrumentTypeFromText(text: string): InstrumentType | null {
     if (info.certificateKind.toLowerCase() === key || info.label.toLowerCase() === key) return type;
   }
   const aliases: [RegExp, InstrumentType][] = [
-    [/data ?logger|portable/, "portable_logger"],
+    // The sensor names the type: "RTD Sensor with Data Logger" is an RTD.
     [/\brtd\b|pt ?100/, "rtd"],
     [/thermo ?couple|\btc\b/, "thermocouple"],
+    [/data ?logger|portable/, "portable_logger"],
     [/pressure/, "pressure_transmitter"],
     [/humidity|\brh\b|rotronic/, "humidity_indicator"],
     [/sprt|reference|drt/, "reference_thermometer"],

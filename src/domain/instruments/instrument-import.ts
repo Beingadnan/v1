@@ -20,7 +20,9 @@ import { firstCodes, lastCodeIn, nextCodes } from "./codes";
 import { INSTRUMENT_CODE } from "./schemas";
 import {
   isCertificateSheet,
+  isSingleCertificateSheet,
   readCertificateSheet,
+  readSingleCertificateSheet,
   type WorkbookCertificate,
 } from "./certificate-workbook";
 import {
@@ -264,7 +266,21 @@ export async function readInstrumentList(bytes: Uint8Array): Promise<ReadResult>
       if (read.certificate) workbookCertificates.push(read.certificate);
       continue;
     }
+    if (isSingleCertificateSheet(sheet, workbook)) {
+      const read = readSingleCertificateSheet(sheet, workbook);
+      problems.push(...read.problems);
+      if (read.certificate) workbookCertificates.push(read.certificate);
+      continue;
+    }
     rows.push(...readListSheet(sheet, problems));
+  }
+  for (const c of workbookCertificates) {
+    if (c.validUntil && c.calibratedOn && c.validUntil <= c.calibratedOn) {
+      problems.push(
+        `${c.number}: due date ${c.validUntil.split("-").reverse().join(".")} is not after the calibration date ${c.calibratedOn.split("-").reverse().join(".")}; imported without a due date. Check the certificate.`,
+      );
+      c.validUntil = null;
+    }
   }
   return { rows, workbookCertificates, problems };
 }
@@ -304,7 +320,48 @@ export type ImportOptions = {
   assign?: { prefix: string; modelId: string | null } | null;
   /** Model for new instruments from a list that names neither make nor model. */
   listModelId?: string | null;
+  /**
+   * ID prefixes that are a client's own equipment, not QA Tech's (e.g. "E ENG GEN TE-"
+   * on Gennova's sensors): left out, and a certificate naming only those is skipped.
+   */
+  notOurs?: string[];
 };
+
+const squash = (code: string) => code.replace(/\s+/g, "").toLowerCase();
+
+/** The read with every instrument whose ID starts with one of `prefixes` taken out. */
+function withoutTheirs(read: ReadResult, prefixes: string[]): ReadResult {
+  const keys = prefixes.map(squash).filter(Boolean);
+  if (keys.length === 0) return read;
+  const theirs = (code: string) => keys.some((k) => squash(code).startsWith(k));
+  const problems = [...read.problems];
+  const workbookCertificates = read.workbookCertificates.flatMap((c) => {
+    const keep = c.instruments
+      .map((i, index) => (theirs(i.code) ? -1 : index))
+      .filter((i) => i >= 0);
+    if (keep.length === c.instruments.length) return [c];
+    if (keep.length === 0) {
+      problems.push(`${c.number}: every instrument on it is the client's own equipment; skipped.`);
+      return [];
+    }
+    problems.push(
+      `${c.number}: ${c.instruments.length - keep.length} of its instruments are the client's own equipment; left out.`,
+    );
+    return [
+      {
+        ...c,
+        instruments: keep.map((i) => c.instruments[i]!),
+        readings: c.readings.map((row) => keep.map((i) => row[i] ?? "")),
+      },
+    ];
+  });
+  return {
+    ...read,
+    rows: read.rows.filter((r) => !theirs(r.code)),
+    workbookCertificates,
+    problems,
+  };
+}
 
 export type PlannedModel = {
   key: string;
@@ -455,6 +512,7 @@ export function planInstrumentImport(
   snapshot: Snapshot,
   options: ImportOptions = { defaultType: "portable_logger" },
 ): ImportPlan {
+  read = withoutTheirs(read, options.notOurs ?? []);
   const plan: ImportPlan = {
     models: [],
     instruments: [],
@@ -746,15 +804,23 @@ export function planInstrumentImport(
       const cert = snapshot.certificates.find(
         (c) => c.number.toLowerCase() === m.certificateNo.toLowerCase(),
       );
+      const named = (i: Snapshot["instruments"][number]) =>
+        (i.serialNo.length >= 4 && m.serialNo.includes(i.serialNo)) ||
+        // Sheets that name masters by QA Tech ID ("QATM/CAL/TL-02 B"): spacing ignored.
+        (m.codes ?? []).some((c) => c.toLowerCase() === i.code.replace(/\s+/g, "").toLowerCase());
+      // A lab certificate can cover a pair (sensor and indicator): prefer the one named.
+      const onCert = snapshot.instruments.filter(
+        (i) => cert?.itemIds.includes(i.id) && (i.tier ?? "master") === "master",
+      );
       const master =
-        snapshot.instruments.find(
-          (i) => cert?.itemIds.includes(i.id) && (i.tier ?? "master") === "master",
-        ) ??
-        snapshot.instruments.find(
-          (i) => i.tier === "master" && i.serialNo.length >= 4 && m.serialNo.includes(i.serialNo),
-        );
+        onCert.find(named) ??
+        onCert[0] ??
+        snapshot.instruments.find((i) => i.tier === "master" && named(i));
       return {
-        label: `${m.name} (${m.make} ${m.model}, S/N ${m.serialNo})`.replace(/\s+/g, " "),
+        label: (m.serialNo
+          ? `${m.name} (${m.make} ${m.model}, S/N ${m.serialNo})`
+          : `${m.name} (${[m.make, ...(m.codes ?? [])].filter(Boolean).join(", ")})`
+        ).replace(/\s+/g, " "),
         certificateNo: m.certificateNo,
         serialNo: m.serialNo,
         validUntil: m.validUntil,

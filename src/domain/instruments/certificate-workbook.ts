@@ -24,6 +24,8 @@ export type WorkbookMaster = {
   serialNo: string;
   validUntil: string | null;
   certificateNo: string;
+  /** QA Tech IDs printed for the master ("ID NO. QATM/CAL/TL-30"), when the sheet gives IDs, not serials. */
+  codes?: string[];
 };
 
 export type WorkbookCertificate = {
@@ -120,9 +122,26 @@ function labelValue(g: Grid, match: RegExp, toRow = 20): string {
   return valueRightOf(g, findLabel(g, match, 1, toRow));
 }
 
+/**
+ * The value beside a label, or under it: some sheets print "Date of Calibration |
+ * Due Date | Issue Date | Certificate No." as one row of headings with the values below.
+ */
+function rightOrBelow(g: Grid, match: RegExp, looksRight: (v: string) => boolean): string {
+  const at = findLabel(g, match, 1, 20);
+  if (!at) return "";
+  const right = valueRightOf(g, at);
+  if (right && looksRight(right)) return right;
+  const below = g.text(at.r + 1, at.c);
+  if (below && looksRight(below)) return below;
+  return right;
+}
+
 function isoDate(text: string): string | null {
   const t = dateText(text.trim());
-  return /^\d{4}-\d{2}-\d{2}$/.test(t) && !Number.isNaN(Date.parse(`${t}T00:00:00Z`)) ? t : null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return null;
+  // A typed 30.02.2027 is not a date: JavaScript would quietly roll it into March.
+  const d = new Date(`${t}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === t ? t : null;
 }
 
 /** Does this sheet look like an FT-05 certificate? */
@@ -143,9 +162,9 @@ export function readCertificateSheet(
   const problems: string[] = [];
   const where = `Sheet “${sheet.name}”`;
 
-  const number = labelValue(g, /^certificate no/);
-  const calibratedOn = isoDate(labelValue(g, /^date of calibration/));
-  const dueText = labelValue(g, /^due date/);
+  const number = rightOrBelow(g, /^certificate no/, (v) => /\d/.test(v) && v.includes("/"));
+  const calibratedOn = isoDate(rightOrBelow(g, /^date of calibration/, (v) => !!isoDate(v)));
+  const dueText = rightOrBelow(g, /^due date/, (v) => !!isoDate(v) || /^n\.?a\.?$/i.test(v));
   const validUntil = isoDate(dueText);
   if (!number)
     return { certificate: null, problems: [`${where}: no certificate number; skipped.`] };
@@ -369,6 +388,193 @@ export function readCertificateSheet(
       points,
       instruments,
       readings: points.map((_, p) => instruments.map((_, i) => cells.get(`${p}|${i}`) ?? "")),
+    },
+    problems,
+  };
+}
+
+// ------------------------------------------------- one instrument per sheet
+
+/**
+ * The other FT-05 layout: one instrument per sheet ("T-TRH0364.xls", Sikkim's
+ * Testo loggers), with "Instrument Code No.", "Serial No." and observation
+ * tables of Input / Master Reading / UUC Reading per quantity, and a
+ * "Calibration standards used" table that names the masters by QA Tech ID.
+ */
+export function isSingleCertificateSheet(
+  sheet: ExcelJS.Worksheet,
+  workbook: ExcelJS.Workbook,
+): boolean {
+  const g = gridOf(sheet, workbook);
+  return (
+    findLabel(g, /^calibration certificate no/, 1, 8) !== null &&
+    findLabel(g, /^instrument code\b/, 1, 8) !== null &&
+    findLabel(g, /^uuc reading/, 1, g.rows) !== null
+  );
+}
+
+/** The value after "Label :" in the same cell, else the next cell right that isn't ":" or the label. */
+function fieldValue(g: Grid, match: RegExp, toRow = 20): string {
+  const at = findLabel(g, match, 1, toRow);
+  if (!at) return "";
+  const own = /:\s*(.+)$/.exec(g.text(at.r, at.c))?.[1]?.trim();
+  if (own) return own;
+  const label = g.text(at.r, at.c);
+  for (let c = at.c + 1; c <= g.cols; c++) {
+    const v = g.text(at.r, c);
+    if (v && v !== ":" && v !== label) return v.replace(/^:\s*/, "");
+  }
+  return "";
+}
+
+export function readSingleCertificateSheet(
+  sheet: ExcelJS.Worksheet,
+  workbook: ExcelJS.Workbook,
+): { certificate: WorkbookCertificate | null; problems: string[] } {
+  const g = gridOf(sheet, workbook);
+  const where = `Sheet “${sheet.name}”`;
+  const number = fieldValue(g, /^calibration certificate no/, 6);
+  const code = fieldValue(g, /^instrument code\b/, 6);
+  const calibratedOn = isoDate(fieldValue(g, /^calibration date/));
+  const validUntil = isoDate(fieldValue(g, /^calibration due date/));
+  if (!number)
+    return { certificate: null, problems: [`${where}: no certificate number; skipped.`] };
+  if (!calibratedOn) {
+    return { certificate: null, problems: [`${where} (${number}): no calibration date; skipped.`] };
+  }
+  const serial = fieldValue(g, /^serial no/).replace(/\.0+$/, "");
+  const makeModel = fieldValue(g, /^make ?& ?model/);
+  const [make = "", model = ""] = makeModel.split(/\s*&\s*/);
+  const customerAt = findLabel(g, /^customer name/, 1, 10);
+  const customerName = fieldValue(g, /^customer name/, 10);
+  let customerAddress = "";
+  if (customerAt) {
+    for (let c = 1; c <= g.cols && !customerAddress; c++) {
+      const v = g.text(customerAt.r + 1, c);
+      if (v && !/^instrument/i.test(v)) customerAddress = v;
+    }
+  }
+  // These sit in one cell with their label ("Calibration SOP NO. : QATECH/CAL-026").
+  const cellWith = (match: RegExp) => {
+    const at = findLabel(g, match, 1, 25);
+    return at ? g.text(at.r, at.c) : "";
+  };
+  const sop = /sop no\.?\s*:?\s*([A-Z0-9/-]+)/i.exec(cellWith(/sop no/));
+  const envT = /temperature\s*:\s*(.+)$/i.exec(cellWith(/^temperature\s*:/));
+  const envH = /humidity\s*:\s*(.+)$/i.exec(cellWith(/humidity\s*:/));
+
+  // Observation tables: a heading row with Master and UUC Reading, a units row, then
+  // one row per point while the first column is a number.
+  const points: WorkbookCertificate["points"] = [];
+  const readings: string[][] = [];
+  const problems: string[] = [];
+  for (let hr = 1; hr <= g.rows; hr++) {
+    let masterCol = 0;
+    let uucCol = 0;
+    for (let c = 1; c <= g.cols; c++) {
+      const h = lc(g.text(hr, c));
+      if (/^master reading/.test(h) && !masterCol) masterCol = c;
+      if (/^uuc reading/.test(h) && !uucCol) uucCol = c;
+    }
+    if (!masterCol || !uucCol) continue;
+    let srCol = 1;
+    for (let c = 1; c < masterCol; c++) if (/^sr\.? ?no/.test(lc(g.text(hr, c)))) srCol = c;
+    // The units row ("°C" or "%RH") sits a row or two under the heading.
+    let unitRow = hr + 1;
+    while (unitRow <= hr + 3 && !g.text(unitRow, masterCol)) unitRow += 1;
+    const unit = lc(g.text(unitRow, masterCol));
+    const quantity: Quantity = /rh|%/.test(unit) ? "humidity" : "temperature";
+    let r = unitRow;
+    for (; r <= g.rows; r++) {
+      const sr = g.text(r, srCol);
+      if (!sr && points.length && !g.text(r, masterCol)) break;
+      if (!/^\d+$/.test(sr)) {
+        // Merged heading cells repeat above the first point; after the points, the table ends.
+        if (r <= unitRow + 1 || !sr) continue;
+        break;
+      }
+      const reference = cleanDecimal(g.text(r, masterCol));
+      const reading = cleanDecimal(g.text(r, uucCol));
+      if (reference === null) {
+        problems.push(
+          `${where} (${number}) row ${r}: master reading “${g.text(r, masterCol)}” is not a number; point skipped.`,
+        );
+        continue;
+      }
+      points.push({ quantity, reference, condition: "" });
+      readings.push([reading ?? ""]);
+    }
+    hr = r - 1;
+  }
+  if (points.length === 0) {
+    return {
+      certificate: null,
+      problems: [...problems, `${where} (${number}): no readings found; skipped.`],
+    };
+  }
+
+  // Standards used: the name cell holds "… MAKE : ISOTECH, ID NO. QATM/CAL/TL-02 B (Sensor), …".
+  const masters: WorkbookMaster[] = [];
+  const head = findLabel(g, /^name,? make/, 1, g.rows);
+  if (head) {
+    const col: Record<string, number> = {};
+    for (let c = head.c + 1; c <= g.cols; c++) {
+      const h = lc(g.text(head.r, c));
+      if (/^cert/.test(h) && col.cert === undefined) col.cert = c;
+      else if (/valid|due/.test(h) && col.due === undefined) col.due = c;
+    }
+    for (let r = head.r + 1; r <= g.rows; r++) {
+      const text = g.text(r, head.c);
+      if (!text || /^remark/i.test(text)) break;
+      const make = /make\s*:\s*([^,&]+)/i.exec(text)?.[1]?.trim() ?? "";
+      const ids = (/id\.? ?no\.?\s*:?\s*(.+)$/i.exec(text)?.[1] ?? "")
+        .split(/,|\band\b/i)
+        .map((x) =>
+          x
+            .replace(/\((sensor|indicator)\)/gi, "")
+            .replace(/\s+/g, "")
+            .trim(),
+        )
+        .filter((x) => /[A-Z]+-?\d/i.test(x));
+      masters.push({
+        name: text
+          .split(/\s*make\s*:/i)[0]!
+          .replace(/,\s*$/, "")
+          .trim(),
+        make,
+        model: "",
+        serialNo: "",
+        validUntil: isoDate(col.due ? g.text(r, col.due) : ""),
+        certificateNo: col.cert ? g.text(r, col.cert) : "",
+        codes: ids,
+      });
+    }
+  }
+
+  return {
+    certificate: {
+      sheet: sheet.name,
+      number,
+      calibratedOn,
+      validUntil,
+      customerName,
+      customerAddress,
+      location: fieldValue(g, /^location/),
+      department: fieldValue(g, /^section/),
+      equipmentName: fieldValue(g, /^instrument\/?equipment name/),
+      make,
+      model,
+      rangeText: fieldValue(g, /^range/),
+      resolutionText: fieldValue(g, /^least count/),
+      sopNo: sop?.[1] ?? "",
+      conditionOnReceipt: "",
+      accuracyText: fieldValue(g, /^specified accuracy/),
+      environmentTemperature: envT?.[1]?.trim() ?? "",
+      environmentHumidity: envH?.[1]?.trim() ?? "",
+      masters,
+      points,
+      instruments: [{ code, serialNo: /^\d{6,12}$/.test(serial) ? serial : "" }],
+      readings,
     },
     problems,
   };
