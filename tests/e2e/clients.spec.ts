@@ -26,13 +26,21 @@ test("phase 2 exit test: Watson Pharma → Seawoods → BA → BE-WF-02 with −
     page.getByRole("heading", { level: 1, name: "Watson Pharma Pvt Limited" }),
   ).toBeVisible();
 
-  await page.getByRole("button", { name: "Department at Seawoods" }).click();
+  // The client's folders: company → site → department → year.
+  await page
+    .getByRole("navigation", { name: "Client folders" })
+    .getByRole("link", { name: /Seawoods/ })
+    .click();
+  await expect(page.getByRole("heading", { level: 1, name: "Seawoods" })).toBeVisible();
+  await page.getByRole("button", { name: "Add department at Seawoods" }).click();
   await page.getByRole("dialog").getByLabel("Department name").fill("BA");
   await page.getByRole("dialog").getByRole("button", { name: "Add department" }).click();
+  await page.getByRole("main").getByRole("link", { name: /^BA/ }).first().click();
   await expect(page.getByRole("button", { name: "Edit department BA" })).toBeVisible();
 
+  // Added from the department's folder: its site and department are already chosen.
   await page.getByRole("link", { name: "Add equipment" }).first().click();
-  await expect(page.getByRole("heading", { level: 1, name: "Add equipment" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: /^Add equipment/ })).toBeVisible();
   await page.getByLabel("Department", { exact: true }).selectOption({ label: "BA" });
   await page.getByLabel("Equipment ID").fill("BE-WF-02");
   await page.getByLabel("Equipment name").fill("Cold Storage (Walk In Freezer)");
@@ -59,7 +67,10 @@ test("phase 2 exit test: Watson Pharma → Seawoods → BA → BE-WF-02 with −
   ).toBeVisible();
   await expect(page.getByText("22 May 2027")).toBeVisible();
 
-  await page.getByRole("link", { name: "Watson Pharma Pvt Limited" }).click();
+  await page
+    .getByRole("navigation", { name: "Breadcrumb" })
+    .getByRole("link", { name: "BA" })
+    .click();
   const row = page.getByRole("row", { name: /BE-WF-02/ });
   await expect(row).toContainText("Seawoods");
   await expect(row).toContainText("BA");
@@ -159,8 +170,12 @@ test("clients and equipment import from the Excel template", async ({
 
   await page.getByRole("link", { name: "Go to clients" }).click();
   await page.getByRole("link", { name: "Lupin Limited" }).click();
-  await expect(page.getByRole("row", { name: /CR-01/ })).toContainText("2 to 8 °C");
   await expect(page.getByText("Required by client SOP")).toBeVisible();
+  // Filed under Lupin → Pithampur → Stores.
+  const folders = page.getByRole("navigation", { name: "Client folders" });
+  await folders.getByRole("link", { name: /Pithampur/ }).click();
+  await folders.getByRole("link", { name: /Stores/ }).click();
+  await expect(page.getByRole("row", { name: /CR-01/ })).toContainText("2 to 8 °C");
   expect(errors).toEqual([]);
 });
 
@@ -176,7 +191,7 @@ test("adding a client works on a phone", async ({ page, isMobile }) => {
   await dialog.getByLabel("Site name").fill("Kurkumbh");
   await dialog.getByRole("button", { name: "Add client" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Cipla Limited" })).toBeVisible();
-  await expect(page.getByText("Kurkumbh", { exact: true })).toBeVisible();
+  await expect(page.getByText("Kurkumbh", { exact: true }).first()).toBeVisible();
   expect(errors).toEqual([]);
 });
 
@@ -246,7 +261,7 @@ test("choosing a type fills its usual values, and 'Add similar' copies an item",
   ).toBeVisible();
 
   await page.getByRole("link", { name: "Add equipment" }).first().click();
-  await expect(page.getByRole("heading", { level: 1, name: "Add equipment" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: /^Add equipment/ })).toBeVisible();
   await page.getByLabel("Equipment ID").fill("RF-01");
   await page.getByLabel("Equipment name").fill("Vaccine refrigerator 1");
   await page.getByLabel("Type").selectOption({ label: "Refrigerator" });

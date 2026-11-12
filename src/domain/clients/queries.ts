@@ -10,6 +10,9 @@ import {
   clientDepartments,
   clientSites,
   equipment,
+  jobs,
+  studies,
+  studyReports,
   users,
 } from "@/db/schema";
 import { assertCan, can } from "@/domain/auth/permissions";
@@ -185,4 +188,45 @@ export async function getEquipmentHistory(db: Database, actor: SessionUser, equi
     )
     .orderBy(desc(auditLog.id))
     .limit(50);
+}
+
+/**
+ * Every study done for a client's equipment, newest first, with its job and the
+ * latest report revision's status: the client page files them under
+ * site → department → year (QA Tech's own folders, Nov 2026).
+ */
+export async function companyStudies(db: Database, actor: SessionUser, companyId: string) {
+  assertCan(actor, "clients.view");
+  if (!isUuid(companyId)) return [];
+  const latest = db
+    .selectDistinctOn([studyReports.studyId], {
+      studyId: studyReports.studyId,
+      status: studyReports.status,
+      rev: studyReports.rev,
+    })
+    .from(studyReports)
+    .where(eq(studyReports.organisationId, actor.organisationId))
+    .orderBy(studyReports.studyId, desc(studyReports.rev))
+    .as("latest");
+  return db
+    .select({
+      id: studies.id,
+      equipmentId: studies.equipmentId,
+      workType: studies.workType,
+      reportNumber: studies.reportNumber,
+      jobId: jobs.id,
+      jobNumber: jobs.number,
+      jobStatus: jobs.status,
+      start: jobs.plannedStart,
+      reportStatus: latest.status,
+      reportRev: latest.rev,
+    })
+    .from(studies)
+    .innerJoin(jobs, eq(jobs.id, studies.jobId))
+    .innerJoin(equipment, eq(equipment.id, studies.equipmentId))
+    .leftJoin(latest, eq(latest.studyId, studies.id))
+    .where(
+      and(eq(equipment.companyId, companyId), eq(studies.organisationId, actor.organisationId)),
+    )
+    .orderBy(desc(jobs.plannedStart), asc(studies.position));
 }

@@ -7,7 +7,7 @@ const run = String(Date.now() % 1_000_000).padStart(6, "0");
 
 async function addFreezer(page: Page, code: string, lastStudy: string) {
   await page.getByRole("link", { name: "Add equipment" }).first().click();
-  await expect(page.getByRole("heading", { level: 1, name: "Add equipment" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: /^Add equipment/ })).toBeVisible();
   await page.getByLabel("Equipment ID").fill(code);
   await page.getByLabel("Equipment name").fill("Cold Storage (Walk In Freezer)");
   await page.getByLabel("Type").selectOption({ label: "Walk-in freezer" });
@@ -18,10 +18,8 @@ async function addFreezer(page: Page, code: string, lastStudy: string) {
   if (lastStudy) await page.getByLabel("Last study ended on").fill(lastStudy);
   await page.getByRole("button", { name: "Add equipment" }).click();
   await expect(page.getByRole("heading", { level: 1, name: new RegExp(`^${code}`) })).toBeVisible();
-  await page
-    .getByRole("link", { name: /^Watson / })
-    .first()
-    .click();
+  // Back to the client from the breadcrumb (Clients › W… › Seawoods › …).
+  await page.getByRole("navigation", { name: "Breadcrumb" }).getByRole("link").nth(1).click();
 }
 
 async function certify(page: Page, code: string, number: string, due: string) {

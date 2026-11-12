@@ -107,6 +107,7 @@ export function EquipmentForm({
   sites,
   departments,
   values,
+  startAt,
   typeDefaults,
   readOnly,
 }: {
@@ -115,6 +116,8 @@ export function EquipmentForm({
   sites: { id: string; name: string }[];
   departments: { id: string; name: string; siteId: string }[];
   values?: EquipmentFormValues;
+  /** A new item's site and department, when added from that folder of the client page. */
+  startAt?: { siteId: string; departmentId: string };
   /** QA Tech's defaults per type (Settings); fill empty fields when a type is chosen. */
   typeDefaults: Record<EquipmentType, TypeDefaults>;
   readOnly?: boolean;
@@ -123,7 +126,7 @@ export function EquipmentForm({
   const formRef = useRef<HTMLFormElement>(null);
   const { result, pending, onSubmit } = useFormAction(saveEquipmentAction);
   const isNew = !values?.id;
-  const [siteId, setSiteId] = useState(values?.siteId ?? sites[0]?.id ?? "");
+  const [siteId, setSiteId] = useState(values?.siteId ?? startAt?.siteId ?? sites[0]?.id ?? "");
   const [type, setType] = useState<EquipmentType | "">(values?.type ?? "");
   // Equipment (a box with a door) or a room or store mapped as an area.
   const [kind, setKind] = useState<"equipment" | "area">(
@@ -225,7 +228,13 @@ export function EquipmentForm({
           key={siteId}
           name="departmentId"
           label="Department"
-          defaultValue={v?.siteId === siteId ? v.departmentId : ""}
+          defaultValue={
+            v?.siteId === siteId
+              ? v.departmentId
+              : startAt?.siteId === siteId
+                ? startAt.departmentId
+                : ""
+          }
           hint={siteDepartments.length === 0 ? "Add departments on the client's page." : undefined}
           {...common}
         >

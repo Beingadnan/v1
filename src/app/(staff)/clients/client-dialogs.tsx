@@ -564,25 +564,20 @@ export function DepartmentDialog({
     <FormDialog
       trigger={(open) =>
         department ? (
-          <button
-            type="button"
+          <Button
+            variant="secondary"
             onClick={open}
-            className="rounded-full border border-border bg-surface px-2.5 py-0.5 text-xs hover:border-primary hover:text-primary data-[inactive=true]:text-muted-foreground data-[inactive=true]:line-through"
-            data-inactive={!department.active}
             aria-label={`Edit department ${department.name}`}
           >
-            {department.name}
-          </button>
+            <Pencil aria-hidden="true" />
+            Edit department
+          </Button>
         ) : (
-          <button
-            type="button"
-            onClick={open}
-            className="inline-flex items-center gap-1 rounded-full border border-dashed border-input px-2.5 py-0.5 text-xs text-muted-foreground hover:border-primary hover:text-primary"
-          >
-            <Plus className="size-3" aria-hidden="true" />
-            Department
+          <Button variant="secondary" size="sm" onClick={open}>
+            <Plus aria-hidden="true" />
+            Add department
             <span className="sr-only"> at {siteName}</span>
-          </button>
+          </Button>
         )
       }
     >

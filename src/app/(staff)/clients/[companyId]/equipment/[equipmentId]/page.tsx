@@ -1,4 +1,4 @@
-import { ChevronLeft, Copy } from "lucide-react";
+import { Copy } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -15,6 +15,7 @@ import { formatDate, formatDateTime } from "@/lib/format";
 
 import { DueBadge } from "../../../due-badge";
 import { EquipmentForm, RetireEquipmentButton } from "../equipment-form";
+import { placeHref, Trail } from "../../client-explorer";
 
 export const metadata = { title: "Equipment" };
 
@@ -43,16 +44,29 @@ export default async function EquipmentPage({
     .filter((d) => d.active || d.id === item.departmentId)
     .map((d) => ({ id: d.id, name: d.name, siteId: d.siteId }));
 
+  // Where it is filed on the client page: site → department.
+  const site = data.sites.find((x) => x.id === item.siteId);
+  const dept = data.departments.find((x) => x.id === item.departmentId);
+
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-6">
       <div className="flex flex-col gap-3">
-        <Link
-          href={`/clients/${company.id}`}
-          className="inline-flex w-fit items-center gap-1 text-sm text-muted-foreground hover:text-primary"
-        >
-          <ChevronLeft className="size-4" aria-hidden="true" />
-          {company.name}
-        </Link>
+        <Trail
+          parts={[
+            { label: "Clients", href: "/clients" },
+            { label: company.code || company.name, href: placeHref(company.id, {}) },
+            ...(site ? [{ label: site.name, href: placeHref(company.id, { site: site.id }) }] : []),
+            ...(site && dept
+              ? [
+                  {
+                    label: dept.name,
+                    href: placeHref(company.id, { site: site.id, dept: dept.id }),
+                  },
+                ]
+              : []),
+            { label: item.code },
+          ]}
+        />
         <PageHeader
           title={`${item.code} · ${item.name}`}
           description={`${EQUIPMENT_TYPE_INFO[item.type].label} · ${

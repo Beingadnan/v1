@@ -162,10 +162,10 @@ export async function seedFieldJob(
     },
     req,
   );
-  for (const key of ["protocol", "site_access", "previous_report"]) {
+  for (const key of ["site_access", "previous_report"]) {
     await setReadiness(db, lead, job.id, { key, state: "ready", note: "" }, req);
   }
-  await autoBook(db, lead, job.id, req);
+  await autoBook(db, lead, job.id, req, { loggers: true });
   return job;
 }
 
@@ -269,10 +269,10 @@ export async function seedDataJob(
     },
     req,
   );
-  for (const key of ["protocol", "site_access", "previous_report"]) {
+  for (const key of ["site_access", "previous_report"]) {
     await setReadiness(db, lead, job.id, { key, state: "ready", note: "" }, req);
   }
-  await autoBook(db, lead, job.id, req);
+  await autoBook(db, lead, job.id, req, { loggers: true });
   const studyId = (await getJob(db, lead, job.id))!.studies[0]!.id;
   await saveLayout(db, engineer, studyId, await layoutTemplate(db, engineer, studyId), req);
   for (const l of loggers) await placeLogger(db, engineer, studyId, { code: l.serialNo }, req);
@@ -399,10 +399,10 @@ export async function seedAnalysisJob(
     },
     req,
   );
-  for (const key of ["protocol", "site_access", "previous_report"]) {
+  for (const key of ["site_access", "previous_report"]) {
     await setReadiness(db, lead, job.id, { key, state: "ready", note: "" }, req);
   }
-  await autoBook(db, lead, job.id, req);
+  await autoBook(db, lead, job.id, req, { loggers: true });
   const studyId = (await getJob(db, lead, job.id))!.studies[0]!.id;
   await saveLayout(db, engineer, studyId, await layoutTemplate(db, engineer, studyId), req);
   for (const l of loggers) await placeLogger(db, engineer, studyId, { code: l.serialNo }, req);

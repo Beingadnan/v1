@@ -21,7 +21,7 @@ export default async function NewEquipmentPage({
 }: PageProps<"/clients/[companyId]/equipment/new">) {
   const actor = await requirePermission("clients.manage");
   const { companyId } = await params;
-  const { from } = await searchParams;
+  const { from, site, dept } = await searchParams;
   // "Add similar": start from another item of this client, without its ID, serial and history.
   const source = typeof from === "string" ? await getEquipment(db, actor, from) : null;
   const copy = source && source.company.id === companyId ? source.equipment : null;
@@ -57,6 +57,18 @@ export default async function NewEquipmentPage({
         departments={data.departments
           .filter((d) => d.active)
           .map((d) => ({ id: d.id, name: d.name, siteId: d.siteId }))}
+        startAt={
+          typeof site === "string" && sites.some((s) => s.id === site)
+            ? {
+                siteId: site,
+                departmentId:
+                  typeof dept === "string" &&
+                  data.departments.some((d) => d.id === dept && d.siteId === site && d.active)
+                    ? dept
+                    : "",
+              }
+            : undefined
+        }
         typeDefaults={await getEffectiveTypeDefaults(db, actor.organisationId)}
         values={
           copy && isEquipmentType(copy.type)
