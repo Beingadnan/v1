@@ -1,0 +1,76 @@
+Imported 11 files: 335 instruments, 27 certificates, 1320 readings. 0 had nothing new, 1 only name loggers with no QA Tech ID, 0 failed, 0 were not instrument files. 21 serials have no QA Tech ID.
+
+OK      All site portable datalogger lis Baddi.xlsx: 184 instruments, 16 certificates, 0 readings
+          ! Testo Temp.RH (Baddi) row 75: ID “84734583” looks like a serial number; check it.
+          ! 9 serials with no QA Tech ID left out
+NO IDS  Data logger details.xlsx: 19 serial numbers have no QA Tech ID. Enter an ID prefix to give them IDs.
+OK      TRH-3601 to TRH-3620.xlsx: 18 instruments, 1 certificates, 120 readings
+          ! QATECH/BHIWANDI/07/26/PDL-01 (TRH-3601 to TRH-3620 (°C)): serial 84028451 is registered as T-TRH0124; this file calls it TRH-3611. Its records go to T-TRH0124; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-01 (TRH-3601 to TRH-3620 (°C)): serial 84028482 is registered as T-TRH0132; this file calls it TRH-3616. Its records go to T-TRH0132; the registered ID is kept.
+OK      TRH-3621 to TRH-3640.xlsx: 18 instruments, 1 certificates, 120 readings
+          ! QATECH/BHIWANDI/07/26/PDL-02 (TRH-3621 to TRH-3640 (°C)): serial 84028493 is registered as T-TRH0715; this file calls it TRH-3622. Its records go to T-TRH0715; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-02 (TRH-3621 to TRH-3640 (°C)): serial 84029363 is registered as T-TRH0119; this file calls it TRH-3633. Its records go to T-TRH0119; the registered ID is kept.
+OK      TRH-3641 to TRH-3660.xlsx: 19 instruments, 1 certificates, 120 readings
+          ! QATECH/BHIWANDI/07/26/PDL-03 (TRH-3641 to TRH-3660 (°C)): serial 84072958 is registered as T-TRH0658; this file calls it TRH-3655. Its records go to T-TRH0658; the registered ID is kept.
+OK      TRH-3661 to TRH-3680.xlsx: 18 instruments, 1 certificates, 120 readings
+          ! QATECH/BHIWANDI/07/26/PDL-04 (TRH-3661 to TRH-3680 (°C)): serial 84076801 is registered as T-TRH0140; this file calls it TRH-3669. Its records go to T-TRH0140; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-04 (TRH-3661 to TRH-3680 (°C)): serial 84077449 is registered as T-TRH084; this file calls it TRH-3675. Its records go to T-TRH084; the registered ID is kept.
+OK      TRH-3681 to TRH-3700.xlsx: 15 instruments, 1 certificates, 120 readings
+          ! QATECH/BHIWANDI/07/26/PDL-05 (TRH-3681 to TRH-3700 (°C)): serial 84092926 is registered as T-TRH0699; this file calls it TRH-3684. Its records go to T-TRH0699; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-05 (TRH-3681 to TRH-3700 (°C)): serial 84092930 is registered as T-TRH0147; this file calls it TRH-3686. Its records go to T-TRH0147; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-05 (TRH-3681 to TRH-3700 (°C)): serial 84092940 is registered as T-TRH019; this file calls it TRH-3693. Its records go to T-TRH019; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-05 (TRH-3681 to TRH-3700 (°C)): serial 84092946 is registered as T-TRH0100; this file calls it TRH-3697. Its records go to T-TRH0100; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-05 (TRH-3681 to TRH-3700 (°C)): serial 84093138 is registered as T-TRH043; this file calls it TRH-3700. Its records go to T-TRH043; the registered ID is kept.
+OK      TRH-3701 to TRH-3720 Final.xlsx: 11 instruments, 1 certificates, 120 readings
+          ! QATECH/BHIWANDI/07/26/PDL-06 (TRH-3701 to TRH-3720): serial 84664007 is registered as 84734583; this file calls it TRH-3701. Its records go to 84734583; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-06 (TRH-3701 to TRH-3720): serial 84664083 is registered as T-TRH039; this file calls it TRH-3702. Its records go to T-TRH039; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-06 (TRH-3701 to TRH-3720): serial 84664116 is registered as T-TRH010; this file calls it TRH-3703. Its records go to T-TRH010; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-06 (TRH-3701 to TRH-3720): serial 84664208 is registered as T-TRH018; this file calls it TRH-3706. Its records go to T-TRH018; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-06 (TRH-3701 to TRH-3720): serial 84664414 is registered as T-TRH033; this file calls it TRH-3709. Its records go to T-TRH033; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-06 (TRH-3701 to TRH-3720): serial 84664447 is registered as T-TRH0160; this file calls it TRH-3711. Its records go to T-TRH0160; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-06 (TRH-3701 to TRH-3720): serial 84664699 is registered as T-TRH028; this file calls it TRH-3712. Its records go to T-TRH028; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-06 (TRH-3701 to TRH-3720): serial 84665908 is registered as T-TRH0232; this file calls it TRH-3713. Its records go to T-TRH0232; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-06 (TRH-3701 to TRH-3720): serial 84666861 is registered as T-TRH047; this file calls it TRH-3718. Its records go to T-TRH047; the registered ID is kept.
+OK      TRH-3701 to TRH-3720.xlsx: 0 instruments, 1 certificates, 120 readings
+          ! QATECH/BHIWANDI/07/26/PDL-06 is already recorded for a calibration on 08.07.2026; this file's is dated 09.07.2026 (TRH-3701 to TRH-3720). It is imported as “QATECH/BHIWANDI/07/26/PDL-06 (09.07.2026)” so these instruments keep their calibration. Check which number the lab meant.
+          ! QATECH/BHIWANDI/07/26/PDL-06 (09.07.2026) (TRH-3701 to TRH-3720): serial 84664007 is registered as 84734583; this file calls it TRH-3701. Its records go to 84734583; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-06 (09.07.2026) (TRH-3701 to TRH-3720): serial 84664083 is registered as T-TRH039; this file calls it TRH-3702. Its records go to T-TRH039; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-06 (09.07.2026) (TRH-3701 to TRH-3720): serial 84664116 is registered as T-TRH010; this file calls it TRH-3703. Its records go to T-TRH010; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-06 (09.07.2026) (TRH-3701 to TRH-3720): serial 84664208 is registered as T-TRH018; this file calls it TRH-3706. Its records go to T-TRH018; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-06 (09.07.2026) (TRH-3701 to TRH-3720): serial 84664414 is registered as T-TRH033; this file calls it TRH-3709. Its records go to T-TRH033; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-06 (09.07.2026) (TRH-3701 to TRH-3720): serial 84664447 is registered as T-TRH0160; this file calls it TRH-3711. Its records go to T-TRH0160; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-06 (09.07.2026) (TRH-3701 to TRH-3720): serial 84664699 is registered as T-TRH028; this file calls it TRH-3712. Its records go to T-TRH028; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-06 (09.07.2026) (TRH-3701 to TRH-3720): serial 84665908 is registered as T-TRH0232; this file calls it TRH-3713. Its records go to T-TRH0232; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-06 (09.07.2026) (TRH-3701 to TRH-3720): serial 84666861 is registered as T-TRH047; this file calls it TRH-3718. Its records go to T-TRH047; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-06 (09.07.2026): 20 of its 20 instruments read exactly what QATECH/BHIWANDI/07/26/PDL-06 reads, at every point. Check that these readings were measured, not copied from that sheet.
+OK      TRH-3721 to TRH-3740.xlsx: 9 instruments, 1 certificates, 120 readings
+          ! QATECH/BHIWANDI/07/26/PDL-07 (TRH-3721 to TRH-3740): serial 84666906 is registered as T-TRH082; this file calls it TRH-3723. Its records go to T-TRH082; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-07 (TRH-3721 to TRH-3740): serial 84666912 is registered as T-TRH026; this file calls it TRH-3724. Its records go to T-TRH026; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-07 (TRH-3721 to TRH-3740): serial 84666930 is registered as T-TRH090; this file calls it TRH-3725. Its records go to T-TRH090; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-07 (TRH-3721 to TRH-3740): serial 84666995 is registered as T-TRH048; this file calls it TRH-3727. Its records go to T-TRH048; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-07 (TRH-3721 to TRH-3740): serial 84667144 is registered as T-TRH002; this file calls it TRH-3729. Its records go to T-TRH002; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-07 (TRH-3721 to TRH-3740): serial 84667200 is registered as T-TRH007; this file calls it TRH-3730. Its records go to T-TRH007; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-07 (TRH-3721 to TRH-3740): serial 84673085 is registered as T-TRH008; this file calls it TRH-3734. Its records go to T-TRH008; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-07 (TRH-3721 to TRH-3740): serial 84673101 is registered as T-TRH034; this file calls it TRH-3736. Its records go to T-TRH034; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-07 (TRH-3721 to TRH-3740): serial 84673904 is registered as T-TRH099; this file calls it TRH-3738. Its records go to T-TRH099; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-07 (TRH-3721 to TRH-3740): serial 84674053 is registered as T-TRH012; this file calls it TRH-3739. Its records go to T-TRH012; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-07 (TRH-3721 to TRH-3740): serial 84704766 is registered as T-TRH0696; this file calls it TRH-3740. Its records go to T-TRH0696; the registered ID is kept.
+OK      TRH-3741 to TRH-3780.xlsx: 29 instruments, 2 certificates, 240 readings
+          ! QATECH/BHIWANDI/07/26/PDL-08 (TRH-3741 to TRH-3760): serial 84708552 is registered as T-TRH0662; this file calls it TRH-3743. Its records go to T-TRH0662; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-08 (TRH-3741 to TRH-3760): serial 84708560 is registered as T-TRH0183; this file calls it TRH-3744. Its records go to T-TRH0183; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-08 (TRH-3741 to TRH-3760): serial 84708607 is registered as T-TRH020; this file calls it TRH-3745. Its records go to T-TRH020; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-08 (TRH-3741 to TRH-3760): serial 84708674 is registered as T-TRH0701; this file calls it TRH-3750. Its records go to T-TRH0701; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-08 (TRH-3741 to TRH-3760): serial 84709631 is registered as T-TRH0747; this file calls it TRH-3756. Its records go to T-TRH0747; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-08 (TRH-3741 to TRH-3760): serial 84709783 is registered as T-TRH011; this file calls it TRH-3758. Its records go to T-TRH011; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-08 (TRH-3741 to TRH-3760): serial 84866311 is registered as T-TRH037; this file calls it TRH-3759. Its records go to T-TRH037; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-08 (TRH-3741 to TRH-3760): serial 84866342 is registered as T-TRH070; this file calls it TRH-3760. Its records go to T-TRH070; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-09 (TRH-3761 to TRH-3780): serial 84866384 is registered as T-TRH0751; this file calls it TRH-3761. Its records go to T-TRH0751; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-09 (TRH-3761 to TRH-3780): serial 84866409 is registered as T-TRH057; this file calls it TRH-3762. Its records go to T-TRH057; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-09 (TRH-3761 to TRH-3780): serial 84866637 is registered as T-TRH0673; this file calls it TRH-3775. Its records go to T-TRH0673; the registered ID is kept.
+OK      TRH-3781 to TRH-3800.xlsx: 14 instruments, 1 certificates, 120 readings
+          ! QATECH/BHIWANDI/07/26/PDL-10 (TRH-3781 to TRH-3800): serial 84866700 is registered as T-TRH073; this file calls it TRH-3782. Its records go to T-TRH073; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-10 (TRH-3781 to TRH-3800): serial 84866897 is registered as T-TRH035; this file calls it TRH-3793. Its records go to T-TRH035; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-10 (TRH-3781 to TRH-3800): serial 84866986 is registered as T-TRH092; this file calls it TRH-3794. Its records go to T-TRH092; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-10 (TRH-3781 to TRH-3800): serial 84867004 is registered as T-TRH036; this file calls it TRH-3795. Its records go to T-TRH036; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-10 (TRH-3781 to TRH-3800): serial 84867644 is registered as T-TRH004; this file calls it TRH-3799. Its records go to T-TRH004; the registered ID is kept.
+          ! QATECH/BHIWANDI/07/26/PDL-10 (TRH-3781 to TRH-3800): serial 84867687 is registered as T-TRH049; this file calls it TRH-3800. Its records go to T-TRH049; the registered ID is kept.

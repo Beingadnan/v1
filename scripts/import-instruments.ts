@@ -52,6 +52,7 @@ async function main(): Promise<void> {
       email: { type: "string" },
       // A client's own equipment IDs, left out: --not-ours "E ENG GEN TE-" (repeatable).
       "not-ours": { type: "string", multiple: true },
+      "local-storage": { type: "boolean" },
     },
   });
   if (!values.dir) {
@@ -61,7 +62,7 @@ async function main(): Promise<void> {
   }
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set.");
-  const token = process.env.BLOB_READ_WRITE_TOKEN?.trim();
+  const token = values["local-storage"] ? undefined : process.env.BLOB_READ_WRITE_TOKEN?.trim();
   const blobs: BlobStore = token
     ? new VercelBlobStore(token)
     : new LocalBlobStore(process.env.STORAGE_LOCAL_DIR || "./.data/storage");
