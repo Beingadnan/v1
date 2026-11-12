@@ -19,7 +19,8 @@ import { storeFile } from "@/lib/storage/store-file";
 export async function POST(request: NextRequest): Promise<NextResponse> {
   // Browsers always send Origin on cross-site POSTs; reject anything not from this app.
   const origin = request.headers.get("origin");
-  if (!origin || origin !== new URL(env.APP_URL).origin) {
+  const allowed = new Set([new URL(env.APP_URL).origin, request.nextUrl.origin]);
+  if (!origin || !allowed.has(origin)) {
     return NextResponse.json({ error: "Cross-site request refused." }, { status: 403 });
   }
 
