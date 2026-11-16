@@ -29,18 +29,7 @@ export function GatePassForm({
 }) {
   const { result, pending, onSubmit } = useFormAction(recordGatePassAction);
   return (
-    <form
-      onSubmit={onSubmit}
-      noValidate
-      className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4"
-    >
-      <div>
-        <h3 className="font-semibold">1. Client&apos;s gate pass</h3>
-        <p className="text-sm text-muted-foreground">
-          The number on the client&apos;s gate pass for QA Tech&apos;s instruments. The booking
-          opens once it is in.
-        </p>
-      </div>
+    <form onSubmit={onSubmit} noValidate className="flex flex-col gap-3">
       <input type="hidden" name="jobId" value={jobId} />
       <div className="grid gap-3 sm:grid-cols-2">
         <TextField
@@ -192,19 +181,16 @@ export function BookingPicker({ jobId, choices }: { jobId: string; choices: Book
         onSubmit(e);
         setPicked([]);
       }}
-      className="flex flex-col gap-4 rounded-lg border border-border bg-surface p-4"
+      className="flex flex-col gap-4"
     >
       <input type="hidden" name="jobId" value={jobId} />
       <input type="hidden" name="model" value={model.label === "No model" ? "" : model.label} />
       <input type="hidden" name="codes" value={picked.join("\n")} />
 
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h3 className="font-semibold">2. Book the loggers</h3>
-          <p className="text-sm text-muted-foreground">
-            Pick the model, then tick free loggers or type or scan them.
-          </p>
-        </div>
+        <p className="text-sm text-muted-foreground">
+          Pick the model, then tick free loggers, or type or scan them.
+        </p>
         <div className="w-full sm:w-auto sm:min-w-44 sm:text-right">
           <p className="text-sm font-medium">
             {have + picked.length} of {need} {picked.length ? "picked" : "booked"}
