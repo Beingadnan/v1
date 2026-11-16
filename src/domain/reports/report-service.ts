@@ -23,13 +23,14 @@ import { lockJob, setStatus } from "@/domain/jobs/job-service";
 import { JOB_STATUS_LABELS, type JobStatus } from "@/domain/jobs/types";
 import { jobLeads, notify } from "@/domain/notifications/notify";
 import { recordAudit } from "@/lib/audit";
+import { canMove, move } from "@/lib/state-machine";
 import type { BlobStore } from "@/lib/storage/blob-store";
 import { storeFile } from "@/lib/storage/store-file";
 
 import { ReportsError } from "./errors";
 import { syncJobToReports } from "./job-sync";
 import { buildReportPdf } from "./report-data";
-import { revLabel, unprintable, type ReportStatus } from "./types";
+import { REPORT_FLOW, REPORT_STATUSES, revLabel, unprintable, type ReportStatus } from "./types";
 
 const user = (actor: SessionUser) => ({ type: "user" as const, userId: actor.id });
 
@@ -255,15 +256,10 @@ export async function openComments(tx: Transaction | Database, studyId: string) 
     .orderBy(reportComments.createdAt);
 }
 
-/** Revisions a new frozen revision replaces. */
-const REPLACED: ReportStatus[] = [
-  "checking",
-  "checked",
-  "released",
-  "reviewed",
-  "signed",
-  "returned",
-];
+/** Revisions a new frozen revision replaces: every one that may move to Superseded. */
+const REPLACED: ReportStatus[] = REPORT_STATUSES.filter((s) =>
+  canMove(REPORT_FLOW, s, "superseded"),
+);
 
 export type SignOutcome<T> = ({ ok: true } & T) | { ok: false; message: string };
 
@@ -349,7 +345,7 @@ export async function freezeReport(
     await tx
       .update(studyReports)
       .set({
-        status: "checking",
+        status: move(REPORT_FLOW, r.status as ReportStatus, "checking"),
         runId: run.id,
         fileId: stored.file.id,
         sha256: stored.file.sha256,

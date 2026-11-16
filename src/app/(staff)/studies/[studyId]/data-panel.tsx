@@ -21,6 +21,7 @@ import {
   withdrawAction,
 } from "../data-actions";
 import { Sparkline } from "./sparkline";
+import { StudyPeriod } from "./study-period";
 
 const when = (d: Date | number | null) =>
   d === null
@@ -92,6 +93,11 @@ export function DataPanel({ data: d }: { data: StudyData }) {
   const canImport = d.can.import && !open;
   const canAccept = d.can.accept && !open;
   const current = d.files.filter((f) => !f.replaced);
+  const spans = current.filter((f) => f.first && f.last);
+  const dataFrom = spans.length
+    ? Math.min(...spans.map((f) => new Date(f.first!).getTime()))
+    : null;
+  const dataTo = spans.length ? Math.max(...spans.map((f) => new Date(f.last!).getTime())) : null;
   const history = d.files.filter((f) => f.replaced);
 
   const run = <T,>(
@@ -196,11 +202,23 @@ export function DataPanel({ data: d }: { data: StudyData }) {
               Confirm the data is complete
             </Button>
             {d.study.status !== "completed" ? (
-              <p className="text-xs text-muted-foreground">End the study in Times first.</p>
+              <p className="text-xs text-muted-foreground">
+                Set the study period below (or end the study in Times) first.
+              </p>
             ) : null}
           </div>
         ) : null}
       </section>
+
+      {current.length > 0 ? (
+        <StudyPeriod
+          studyId={d.study.id}
+          periods={d.periods}
+          dataFrom={dataFrom}
+          dataTo={dataTo}
+          canSet={canAccept}
+        />
+      ) : null}
 
       {/* Requests to the site */}
       {d.requests.some((r) => !r.closedAt) || canAccept ? (

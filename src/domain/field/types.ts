@@ -3,9 +3,19 @@
  * the phone screens.
  */
 import type { StudyCycle } from "@/domain/clients/study-defaults";
+import { machine } from "@/lib/state-machine";
 
 export const STUDY_STATUSES = ["planned", "in_progress", "completed"] as const;
 export type StudyStatus = (typeof STUDY_STATUSES)[number];
+/**
+ * A study's moves, all derived from its cycle events (studyStatusFrom): a start
+ * makes it running, every end makes it done, and voiding events takes it back.
+ */
+export const STUDY_FLOW = machine<StudyStatus>("study", STUDY_STATUSES, {
+  planned: ["in_progress", "completed"],
+  in_progress: ["planned", "completed"],
+  completed: ["in_progress", "planned"],
+});
 export const STUDY_STATUS_LABELS: Record<StudyStatus, string> = {
   planned: "Not started",
   in_progress: "Running",
@@ -105,3 +115,12 @@ export const PLAN_FEATURE_MARKS: Record<PlanFeatureKind, string> = {
   other: "*",
 };
 export type PlanFeature = { kind: PlanFeatureKind; label: string; x: number; y: number };
+
+export const OVERRIDE_STATUSES = ["requested", "approved", "rejected"] as const;
+export type OverrideStatus = (typeof OVERRIDE_STATUSES)[number];
+/** A request to override a pre/post-cal result is decided once, signed; the decision is final. */
+export const OVERRIDE_FLOW = machine<OverrideStatus>("override", OVERRIDE_STATUSES, {
+  requested: ["approved", "rejected"],
+  approved: [],
+  rejected: [],
+});

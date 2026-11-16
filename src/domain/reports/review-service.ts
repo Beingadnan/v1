@@ -30,6 +30,7 @@ import { lockJob } from "@/domain/jobs/job-service";
 import { JOB_STATUS_LABELS, type JobStatus } from "@/domain/jobs/types";
 import { jobLeads, notify } from "@/domain/notifications/notify";
 import { recordAudit } from "@/lib/audit";
+import { move } from "@/lib/state-machine";
 import type { BlobStore } from "@/lib/storage/blob-store";
 import { storeFile } from "@/lib/storage/store-file";
 
@@ -42,6 +43,7 @@ import {
   REPORT_STATUS_LABELS,
   revLabel,
   type CommentSide,
+  REPORT_FLOW,
   type ReportStatus,
 } from "./types";
 
@@ -196,7 +198,7 @@ export async function returnForRework(
     await tx
       .update(studyReports)
       .set({
-        status: "draft",
+        status: move(REPORT_FLOW, l.r.status as ReportStatus, "draft"),
         runId: null,
         fileId: null,
         sha256: null,
@@ -311,7 +313,10 @@ export async function checkReport(
     if (!signed.ok) return { ok: false as const, message: signed.message };
     await tx
       .update(studyReports)
-      .set({ status: "checked", checkedAt: new Date() })
+      .set({
+        status: move(REPORT_FLOW, l.r.status as ReportStatus, "checked"),
+        checkedAt: new Date(),
+      })
       .where(eq(studyReports.id, l.r.id));
     await recordAudit(tx, {
       organisationId: actor.organisationId,
@@ -370,7 +375,7 @@ export async function releaseReport(
     await tx
       .update(studyReports)
       .set({
-        status: "released",
+        status: move(REPORT_FLOW, l.r.status as ReportStatus, "released"),
         releasedAt: now,
         releasedByUserId: actor.id,
         releasedTo: chosen.map((p) => p.id),
@@ -441,7 +446,11 @@ export async function clientApprove(
     const now = new Date();
     await tx
       .update(studyReports)
-      .set({ status: "signed", signedAt: now, signedVia: "app" })
+      .set({
+        status: move(REPORT_FLOW, l.r.status as ReportStatus, "signed"),
+        signedAt: now,
+        signedVia: "app",
+      })
       .where(eq(studyReports.id, l.r.id));
     await tx.update(studies).set({ archivedAt: now }).where(eq(studies.id, l.study.id));
     await recordAudit(tx, {
@@ -492,7 +501,10 @@ export async function clientReturn(
     await addComments(tx, actor, l, v.comments, "client");
     await tx
       .update(studyReports)
-      .set({ status: "returned", returnedAt: new Date() })
+      .set({
+        status: move(REPORT_FLOW, l.r.status as ReportStatus, "returned"),
+        returnedAt: new Date(),
+      })
       .where(eq(studyReports.id, l.r.id));
     await recordAudit(tx, {
       organisationId: actor.organisationId,
@@ -598,7 +610,11 @@ export async function recordPaperSignoff(
     const now = new Date();
     await tx
       .update(studyReports)
-      .set({ status: "signed", signedAt: now, signedVia: "paper" })
+      .set({
+        status: move(REPORT_FLOW, l.r.status as ReportStatus, "signed"),
+        signedAt: now,
+        signedVia: "paper",
+      })
       .where(eq(studyReports.id, l.r.id));
     await tx.update(studies).set({ archivedAt: now }).where(eq(studies.id, l.study.id));
     await recordAudit(tx, {

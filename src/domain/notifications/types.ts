@@ -1,3 +1,5 @@
+import { machine } from "@/lib/state-machine";
+
 /** Notifications (phase 11): the vocabulary shared by the database checks, the services and the screens. */
 
 export const NOTIFICATION_KINDS = [
@@ -36,3 +38,9 @@ export const CAPA_KINDS = ["corrective", "preventive"] as const;
 export type CapaKind = (typeof CAPA_KINDS)[number];
 export const CAPA_STATUSES = ["open", "done", "verified"] as const;
 export type CapaStatus = (typeof CAPA_STATUSES)[number];
+/** A corrective action is done by its owner, then verified by someone else; verified is final. */
+export const CAPA_FLOW = machine<CapaStatus>("corrective action", CAPA_STATUSES, {
+  open: ["done"],
+  done: ["verified"],
+  verified: [],
+});

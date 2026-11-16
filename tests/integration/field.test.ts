@@ -7,7 +7,7 @@ import path from "node:path";
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { auditLog, jobInstruments, jobs, sites, users } from "@/db/schema";
+import { auditLog, jobInstruments, jobs, sites, studies, users } from "@/db/schema";
 import { ensureOrganisation } from "@/db/seed/ensure-organisation";
 import { hashPassword } from "@/domain/auth/password";
 import { ForbiddenError } from "@/domain/auth/permissions";
@@ -23,7 +23,7 @@ import {
   recordPrecal,
   removeLogger,
   saveLayout,
-  setRoomSize,
+  readLayoutSketch,
   voidEvent,
 } from "@/domain/field/field-service";
 import { decideOverride, overridesOf, requestOverride } from "@/domain/field/override-service";
@@ -37,6 +37,7 @@ import {
 import { autoBook, createJob, setReadiness } from "@/domain/jobs/job-service";
 import { getJob } from "@/domain/jobs/queries";
 import { LocalBlobStore } from "@/lib/storage/blob-store";
+import { storeFile } from "@/lib/storage/store-file";
 
 import { openTestDatabase } from "../support/test-db";
 
@@ -357,28 +358,126 @@ describe("phase 5: an engineer places 9 loggers for BE-WF-02 and records start a
     expect(offered.points[0]).toMatchObject({ x: expect.any(Number), ambient: false });
   });
 
-  it("records a room size measured on site when the equipment has none", async () => {
+  it("reads the site's sketch PDF once, picks this room by its ID and saves its shape", async () => {
     expect((await study(roomStudy)).equipment.dims).toEqual({
       lengthM: null,
       widthM: null,
       heightM: null,
     });
-    await expect(setRoomSize(db, engineer, roomStudy, "4 x 3", req)).rejects.toThrow("three");
-    await expect(setRoomSize(db, accounts, roomStudy, "4 x 3 x 2.5", req)).rejects.toBeInstanceOf(
-      ForbiddenError,
-    );
-    expect(await setRoomSize(db, engineer, roomStudy, "4000 x 3000 x 2500 mm", req)).toEqual({
-      lengthM: 4,
-      widthM: 3,
-      heightM: 2.5,
+    const blobs = new LocalBlobStore(await mkdtemp(path.join(tmpdir(), "qtech-sketch-")));
+    const pdf = new TextEncoder().encode("%PDF-1.4\n% scanned sketches\n");
+    const stored = await storeFile(db, blobs, {
+      organisationId: engineer.organisationId,
+      actor: { type: "user", userId: engineer.id },
+      fileName: "abb sketches.pdf",
+      bytes: pdf,
+      maxBytes: 1_000_000,
     });
-    const s = await study(roomStudy);
-    expect(s.equipment.dims).toEqual({ lengthM: 4, widthM: 3, heightM: 2.5 });
-    const [audit] = await db
-      .select()
-      .from(auditLog)
-      .where(and(eq(auditLog.action, "equipment.updated"), eq(auditLog.entityId, s.equipment.id)));
-    expect(audit?.summary).toContain("4 × 3 × 2.5 m");
+    if (!stored.ok) throw new Error(stored.message);
+    const sent: { mime: string; size: number }[] = [];
+    const room = (name: string, code: string, page: number) => ({
+      name,
+      code,
+      page,
+      kind: "room",
+      orientation: "horizontal",
+      length: 4,
+      width: 3,
+      height: 2.5,
+      doors: [{ wall: "front", along: 0.8 }],
+      objects: [
+        {
+          kind: "cupboard",
+          label: "Cupboard",
+          x: 0.05,
+          y: 0.6,
+          w: 0.2,
+          d: 0.3,
+          h: 0.8,
+          shelves: 3,
+        },
+        { kind: "pass_box", label: "Pass box", x: 0.9, y: 0.4, w: 0.1, d: 0.1, h: 0.4, shelves: 0 },
+      ],
+      sensors: [],
+    });
+    const reader = async (file: { bytes: Uint8Array; mime: string }) => {
+      sent.push({ mime: file.mime, size: file.bytes.byteLength });
+      return {
+        rooms: [
+          room("5-ML-05 Cooling Zone", "5-ML-05", 1),
+          room("Cold room BE-CR-01", "BE-CR-01", 2),
+        ],
+        notes: "",
+      };
+    };
+    await expect(
+      readLayoutSketch(db, blobs, reader, accounts, roomStudy, stored.file.id, req),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(
+      readLayoutSketch(db, blobs, null, engineer, roomStudy, stored.file.id, req),
+    ).rejects.toThrow("OPENAI_API_KEY");
+    await expect(
+      readLayoutSketch(
+        db,
+        blobs,
+        async () => ({ rooms: [] }),
+        engineer,
+        roomStudy,
+        stored.file.id,
+        req,
+      ),
+    ).rejects.toThrow("No room could be read");
+
+    const read = await readLayoutSketch(
+      db,
+      blobs,
+      reader,
+      engineer,
+      roomStudy,
+      stored.file.id,
+      req,
+    );
+    expect(sent).toEqual([{ mime: "application/pdf", size: pdf.byteLength }]);
+    expect(read.rooms.map((r) => r.code)).toEqual(["5-ML-05", "BE-CR-01"]);
+    expect(read.matched).toBe(1);
+    const mine = read.rooms[1]!;
+    // No loggers drawn: the study's 4 are spread by the template, to be moved.
+    expect(mine.points.filter((p) => !p.ambient)).toHaveLength(4);
+    expect(mine.warnings[0]).toContain("No loggers are drawn");
+    expect(mine.features).toEqual([
+      { kind: "door", label: "Door", x: 0.8, y: 0 },
+      { kind: "pass_box", label: "Pass box", x: 0.95, y: 0.45 },
+    ]);
+    expect(mine.shape.objects).toHaveLength(2);
+
+    // Read once: the next study the same PDF covers takes it from the stored reading.
+    await readLayoutSketch(db, blobs, null, engineer, freezerStudy, stored.file.id, req);
+    expect(sent).toHaveLength(1);
+    // Reading changes nothing; it is recorded because the file left the server.
+    expect((await study(roomStudy)).positions).toHaveLength(0);
+    const audits = await db.select().from(auditLog).where(eq(auditLog.action, "study.sketch_read"));
+    expect(audits).toHaveLength(1);
+    expect(audits[0]!.summary).toContain("2 rooms");
+
+    await saveLayout(
+      db,
+      engineer,
+      roomStudy,
+      {
+        points: mine.points,
+        features: mine.features,
+        shape: mine.shape,
+        sketchFileId: read.fileId,
+      },
+      req,
+    );
+    const [row] = await db
+      .select({ shape: studies.roomShape, file: studies.layoutSketchFileId })
+      .from(studies)
+      .where(eq(studies.id, roomStudy));
+    expect(row).toEqual({ shape: mine.shape, file: stored.file.id });
+    // The next tests start from an empty room.
+    await saveLayout(db, engineer, roomStudy, [], req);
   });
 
   it("places scanned loggers on the next empty position, refusing the wrong ones", async () => {
@@ -425,8 +524,34 @@ describe("phase 5: an engineer places 9 loggers for BE-WF-02 and records start a
 
   it("books a valid logger that wasn't booked, and keeps positions with loggers", async () => {
     const booked = await db.select().from(jobInstruments).where(eq(jobInstruments.jobId, jobId));
-    expect(booked.length).toBe(15);
+    // 9 + 4 needed, 13 booked: no spares, and no more than that.
+    expect(booked.length).toBe(13);
     const s = await study(roomStudy);
+    await expect(
+      placeLogger(
+        db,
+        engineer,
+        roomStudy,
+        { code: codes[15]!, positionId: s.positions[2]!.id },
+        req,
+      ),
+    ).rejects.toThrow(`${codes[15]} isn't booked on job`);
+    // An ambient position outside the room takes one more logger, booked on site.
+    const points = s.positions.map((p) => ({
+      label: p.label,
+      x: p.x,
+      y: p.y,
+      z: p.z,
+      note: p.note,
+      ambient: p.ambient,
+    }));
+    await saveLayout(
+      db,
+      engineer,
+      roomStudy,
+      [...points, { label: "AMB", x: 0, y: 0, z: 0.5, note: "Corridor", ambient: true }],
+      req,
+    );
     const placed = await placeLogger(
       db,
       engineer,
@@ -449,6 +574,7 @@ describe("phase 5: an engineer places 9 loggers for BE-WF-02 and records start a
     );
     await removeLogger(db, engineer, s.positions[2]!.id, req);
     expect((await study(roomStudy)).positions[2]!.instrumentId).toBeNull();
+    await saveLayout(db, engineer, roomStudy, points, req);
   });
 
   it("records start and end; the first start moves the job to Field Work; a resend changes nothing", async () => {
@@ -552,7 +678,7 @@ describe("phase 5: an engineer places 9 loggers for BE-WF-02 and records start a
         req,
       ),
     ).rejects.toThrow("3 positions have no logger (L-02, L-03, L-04).");
-    for (const c of [codes[16]!, codes[17]!, codes[18]!])
+    for (const c of [codes[10]!, codes[11]!, codes[12]!])
       await placeLogger(db, engineer, roomStudy, { code: c }, req);
     const t = (min: number) => new Date(Date.now() - min * 60_000);
     await recordEvent(

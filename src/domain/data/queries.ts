@@ -179,6 +179,13 @@ export async function getStudyData(db: Database, actor: SessionUser, studyId: st
       accept: can(actor, "data.accept"),
     },
     windows: ctx.windows,
+    /** Each cycle's recorded start and end (null: not recorded, the data's span is used). */
+    periods: ctx.cycles.map((c) => ({
+      cycle: c.cycle as string,
+      label: c.label,
+      start: c.startedAt,
+      end: c.endedAt,
+    })),
     files: allFiles.map(({ file, by, sha256, size }) => ({
       id: file.id,
       storedFileId: file.fileId,

@@ -18,12 +18,13 @@ import type { RequestInfo } from "@/domain/auth/policy";
 import type { SessionUser } from "@/domain/auth/session-service";
 import { isUuid, rethrowUnique } from "@/domain/clients/shared";
 import { recordAudit } from "@/lib/audit";
+import { move } from "@/lib/state-machine";
 import { shortList } from "@/lib/text";
 
 import { cleanDecimal, deviation, judge, toleranceAt } from "./calibration-math";
 import { InstrumentsError } from "./errors";
 import { externalCertificateSchema, type ExternalCertificateInput } from "./schemas";
-import { QUANTITIES } from "./types";
+import { CERTIFICATE_FLOW, QUANTITIES, type CertificateStatus } from "./types";
 import type { CertificateDates } from "./validity";
 
 const CERTIFICATE_UNIQUE = {
@@ -293,7 +294,11 @@ export async function cancelCertificate(
     if (cert.status === "cancelled") return;
     await tx
       .update(certificates)
-      .set({ status: "cancelled", cancelledReason: reason, updatedAt: new Date() })
+      .set({
+        status: move(CERTIFICATE_FLOW, cert.status as CertificateStatus, "cancelled"),
+        cancelledReason: reason,
+        updatedAt: new Date(),
+      })
       .where(eq(certificates.id, cert.id));
     await recordAudit(tx, {
       organisationId: actor.organisationId,

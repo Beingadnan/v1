@@ -1,10 +1,27 @@
+import { machine } from "@/lib/state-machine";
+
 /** Billing (phase 10): the vocabulary shared by the database checks, the services and the screens. */
 
 export const WCR_STATUSES = ["issued", "signed", "void"] as const;
 export type WcrStatus = (typeof WCR_STATUSES)[number];
+/** A WCR is signed by the client (in the app or on paper) or voided; both are final. */
+export const WCR_FLOW = machine<WcrStatus>("WCR", WCR_STATUSES, {
+  issued: ["signed", "void"],
+  signed: [],
+  void: [],
+});
 
 export const INVOICE_STATUSES = ["open", "cleared", "cancelled"] as const;
 export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
+/**
+ * An invoice clears when its payments reach the total and reopens when one is
+ * reversed; one with nothing paid against it can be cancelled, finally.
+ */
+export const INVOICE_FLOW = machine<InvoiceStatus>("invoice", INVOICE_STATUSES, {
+  open: ["cleared", "cancelled"],
+  cleared: ["open", "cancelled"],
+  cancelled: [],
+});
 
 export const PAYMENT_MODES = ["neft", "rtgs", "imps", "upi", "cheque", "cash", "other"] as const;
 export type PaymentMode = (typeof PAYMENT_MODES)[number];

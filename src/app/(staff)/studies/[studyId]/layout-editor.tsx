@@ -11,9 +11,11 @@ import {
   describe,
   describeRoom,
   label as labelFor,
+  sizeOf,
   workingZ,
   type Dimensions,
   type LayoutPoint,
+  type Shape,
 } from "@/domain/field/layout";
 import {
   PLAN_FEATURE_KINDS,
@@ -27,7 +29,9 @@ import { cn } from "@/lib/utils";
 import { saveLayoutAction, templateAction } from "../actions";
 import { BoxDrawing } from "./box-drawing";
 import { Layout3D } from "./layout-3d";
+import { LayoutDiagram } from "./layout-diagram";
 import { PlanDrawing } from "./plan-drawing";
+import { SketchUpload } from "./sketch-upload";
 
 type Point = LayoutPoint & { placed?: boolean; uid: string };
 const withUid = (p: LayoutPoint & { placed?: boolean }): Point => ({
@@ -65,13 +69,14 @@ const clamp = (v: number) => Math.round(Math.min(1, Math.max(0, v)) * 1000) / 10
  */
 export function LayoutEditor({
   studyId,
-  dims,
+  dims: givenDims,
   initial,
   loggerCount,
   readOnly,
   previous = null,
   room = false,
   initialFeatures = [],
+  canReadSketch = false,
 }: {
   studyId: string;
   dims: Dimensions;
@@ -88,7 +93,13 @@ export function LayoutEditor({
   room?: boolean;
   /** Doors, pass boxes, LAFs… already marked on the plan. */
   initialFeatures?: PlanFeature[];
+  /** The server can read a sketch photo (an OpenAI key is set). */
+  canReadSketch?: boolean;
 }) {
+  // The shape read from a sketch draws the box until it's saved.
+  const [shape, setShape] = useState<Shape | null>(givenDims.shape ?? null);
+  const [sketchFileId, setSketchFileId] = useState<string | null>(null);
+  const dims: Dimensions = { ...givenDims, shape };
   const router = useRouter();
   const LEVELS = room ? roomLevels(dims.heightM) : BOX_LEVELS;
   const levelOf = (z: number) =>
@@ -102,7 +113,7 @@ export function LayoutEditor({
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [dirty, setDirty] = useState(false);
   const [busy, start] = useTransition();
-  const [show3d, setShow3d] = useState(false);
+  const [view, setView] = useState<"diagram" | "report" | "3d">("diagram");
   const [marks, setMarks] = useState<Mark[]>(() => initialFeatures.map(markWithUid));
   const [markKind, setMarkKind] = useState<PlanFeatureKind>("door");
   const plan = useRef<SVGSVGElement>(null);
@@ -128,7 +139,8 @@ export function LayoutEditor({
 
   // Plan: length across, width up the screen (front of the equipment at the bottom).
   const PW = 320;
-  const ratio = dims.lengthM && dims.widthM ? dims.widthM / dims.lengthM : 1;
+  const size = sizeOf(dims);
+  const ratio = size.W / size.L;
   const PH = Math.round(Math.min(420, Math.max(140, PW * ratio)));
   // A margin round the plan for the wall names, so loggers on a wall never hide them.
   const PAD = 18;
@@ -170,7 +182,19 @@ export function LayoutEditor({
     });
   }
 
+  // One logger per position: the study's loggers are the most positions inside
+  // (one ambient outside comes on top).
+  const inside = points.filter((p) => !p.ambient).length;
+  // No logger count on the study yet: nothing to stop at.
+  const full = loggerCount > 0 && inside >= loggerCount;
   function add(ambient = false) {
+    if (full && !ambient) {
+      setMessage({
+        ok: false,
+        text: `This study has ${loggerCount} loggers, so ${loggerCount} positions inside at most. Remove one first, or raise the number of loggers on the study.`,
+      });
+      return;
+    }
     const used = new Set(points.map((p) => p.label.toLowerCase()));
     let n = points.length + 1;
     while (used.has(labelFor(n).toLowerCase())) n++;
@@ -213,6 +237,8 @@ export function LayoutEditor({
           ambient,
         })),
         features: marks.map(({ kind, label, x, y }) => ({ kind, label, x, y })),
+        ...(shape ? { shape } : {}),
+        ...(sketchFileId ? { sketchFileId } : {}),
       });
       setMessage(
         r.ok
@@ -236,6 +262,25 @@ export function LayoutEditor({
 
   return (
     <div className="flex flex-col gap-4">
+      {canReadSketch && !readOnly ? (
+        <SketchUpload
+          studyId={studyId}
+          dims={dims}
+          onUse={(read) => {
+            change(read.points.map(withUid));
+            setMarks(read.features.map(markWithUid));
+            setShape(read.shape);
+            setSketchFileId(read.fileId);
+            setSelected(null);
+            setLevel(levelOf(read.points.find((p) => !p.ambient)?.z ?? LEVELS[0]!.z));
+            setView("diagram");
+            setMessage({
+              ok: true,
+              text: `${read.points.length} positions from the sketch. Check them, then save.`,
+            });
+          }}
+        />
+      ) : null}
       <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-2">
         <div
           role="tablist"
@@ -244,26 +289,31 @@ export function LayoutEditor({
         >
           {(
             [
-              [false, room ? "Floor plan" : "As on the report"],
-              [true, "3D view"],
+              ["diagram", "Diagram"],
+              ["report", room ? "Floor plan" : "As on the report"],
+              ["3d", "3D view"],
             ] as const
-          ).map(([three, name]) => (
+          ).map(([key, name]) => (
             <button
-              key={name}
+              key={key}
               type="button"
               role="tab"
-              aria-selected={show3d === three}
-              onClick={() => setShow3d(three)}
+              aria-selected={view === key}
+              onClick={() => setView(key)}
               className={cn(
                 "px-3 py-1.5 text-sm",
-                show3d === three ? "bg-primary text-primary-foreground" : "bg-surface",
+                view === key ? "bg-primary text-primary-foreground" : "bg-surface",
               )}
             >
               {name}
             </button>
           ))}
         </div>
-        {show3d ? (
+        {view === "diagram" ? (
+          <div className="overflow-hidden rounded-md border border-border">
+            <LayoutDiagram dims={dims} points={points} features={marks} className="h-auto w-full" />
+          </div>
+        ) : view === "3d" ? (
           <Layout3D
             dims={dims}
             points={points.map((p) => ({ ...p, filled: p.placed }))}
@@ -317,7 +367,7 @@ export function LayoutEditor({
             <Wand2 aria-hidden="true" />
             {points.length ? "Start again from template" : `Fill ${loggerCount} positions`}
           </Button>
-          <Button type="button" variant="ghost" onClick={() => add()}>
+          <Button type="button" variant="ghost" onClick={() => add()} disabled={full}>
             <Plus aria-hidden="true" />
             Add position
           </Button>
@@ -325,6 +375,9 @@ export function LayoutEditor({
             <Plus aria-hidden="true" />
             Ambient
           </Button>
+          <span className="text-sm text-muted-foreground">
+            {inside} of {loggerCount} positions
+          </span>
         </div>
       ) : null}
 

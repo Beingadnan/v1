@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { Database, Transaction } from "@/db/client-factory";
 import { accountTokens, clientCompanies, users, type User } from "@/db/schema";
 import { recordAudit } from "@/lib/audit";
+import { machine, move } from "@/lib/state-machine";
 
 import { checkCredentials } from "./credentials";
 import { checkPasswordStrength, hashPassword } from "./password";
@@ -16,6 +17,21 @@ import { revokeAllSessions, type SessionUser } from "./session-service";
 import { generateToken, hashToken, isWellFormedToken } from "./tokens";
 
 /** A business rule refused the request; the message is safe to show to the person. */
+export const USER_STATUSES = ["invited", "active", "deactivated"] as const;
+export type UserStatus = (typeof USER_STATUSES)[number];
+/**
+ * An account's moves (ADR 0022): invited until the person sets a password;
+ * deactivated and back, to active if they had a password, else invited for a
+ * new link. Setting a new password keeps an active account active.
+ */
+export const USER_FLOW = machine<UserStatus>("user account", USER_STATUSES, {
+  invited: ["active", "deactivated"],
+  active: ["invited", "deactivated"],
+  deactivated: ["active", "invited"],
+});
+const next = (from: string, to: UserStatus): UserStatus =>
+  from === to ? to : move(USER_FLOW, from as UserStatus, to);
+
 export class AccountError extends Error {
   constructor(message: string) {
     super(message);
@@ -308,7 +324,7 @@ export async function setPasswordWithToken(
       .update(users)
       .set({
         passwordHash: await hashPassword(input.password),
-        status: "active",
+        status: next(user.status, "active"),
         failedLoginCount: 0,
         lockedUntil: null,
         passwordChangedAt: sql`now()`,
@@ -391,13 +407,19 @@ export async function setUserActive(
       if (target.status !== "deactivated") return;
       // Someone who never set a password goes back to "invited" and needs a new link.
       const status = target.passwordHash ? "active" : "invited";
-      await tx.update(users).set({ status }).where(eq(users.id, target.id));
+      await tx
+        .update(users)
+        .set({ status: next(target.status, status) })
+        .where(eq(users.id, target.id));
     } else {
       if (target.status === "deactivated") return;
       if (target.role === "admin" && target.status === "active" && adminCount <= 1) {
         throw new AccountError("Keep at least one active admin.");
       }
-      await tx.update(users).set({ status: "deactivated" }).where(eq(users.id, target.id));
+      await tx
+        .update(users)
+        .set({ status: next(target.status, "deactivated") })
+        .where(eq(users.id, target.id));
       await revokeAllSessions(tx, target.id);
       await tx
         .update(accountTokens)
@@ -490,7 +512,10 @@ export async function bootstrapAdmin(
       await tx
         .update(users)
         .set({
-          status: status === "deactivated" ? "invited" : status,
+          status: next(
+            existing.status,
+            status === "deactivated" ? "invited" : (status as UserStatus),
+          ),
           lockedUntil: null,
           failedLoginCount: 0,
         })

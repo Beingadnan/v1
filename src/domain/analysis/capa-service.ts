@@ -19,8 +19,14 @@ import type { RequestInfo } from "@/domain/auth/policy";
 import type { SessionUser } from "@/domain/auth/session-service";
 import { isUuid } from "@/domain/clients/shared";
 import { notify } from "@/domain/notifications/notify";
-import { CAPA_KINDS, type CapaKind, type CapaStatus } from "@/domain/notifications/types";
+import {
+  CAPA_FLOW,
+  CAPA_KINDS,
+  type CapaKind,
+  type CapaStatus,
+} from "@/domain/notifications/types";
 import { recordAudit } from "@/lib/audit";
+import { move } from "@/lib/state-machine";
 
 import { AnalysisError } from "./errors";
 import { DEVIATION_DECISION_LABELS, type DeviationDecision } from "./types";
@@ -132,7 +138,11 @@ export async function completeCapa(
     if (c.status !== "open") throw new AnalysisError("That action is already done.");
     await tx
       .update(capas)
-      .set({ status: "done", doneNote: text, doneAt: new Date() })
+      .set({
+        status: move(CAPA_FLOW, c.status as CapaStatus, "done"),
+        doneNote: text,
+        doneAt: new Date(),
+      })
       .where(eq(capas.id, c.id));
     await recordAudit(tx, {
       organisationId: actor.organisationId,
@@ -171,7 +181,7 @@ export async function verifyCapa(
     await tx
       .update(capas)
       .set({
-        status: "verified",
+        status: move(CAPA_FLOW, c.status as CapaStatus, "verified"),
         effectivenessNote: text,
         verifiedByUserId: actor.id,
         verifiedAt: new Date(),

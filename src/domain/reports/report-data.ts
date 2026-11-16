@@ -306,6 +306,7 @@ export async function reportData(
         lengthM: n(row.equipment.lengthM),
         widthM: n(row.equipment.widthM),
         heightM: n(row.equipment.heightM),
+        shape: study.roomShape,
       },
     },
     study: {

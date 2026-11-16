@@ -381,15 +381,15 @@ describe("phase 4 exit test: a Watson job with 2 freezers", () => {
   });
 
   it("books loggers in one click, skipping ones that would run out", async () => {
-    // Five loggers per freezer: 10 + 1 spare.
-    for (const s of (await state(jobId)).studies) {
+    // Five loggers in one freezer, six in the other: 11, and no spares on top.
+    for (const [i, s] of (await state(jobId)).studies.entries()) {
       await updateStudy(
         db,
         leader,
         s.id,
         {
           workType: "temperature_mapping",
-          loggerCount: "5",
+          loggerCount: i === 0 ? "5" : "6",
           cycles: ["empty"],
           season: "",
           durationHours: "24",
@@ -564,7 +564,6 @@ describe("clashes, holds and repeat visits", () => {
       "T-01",
       "T-02",
       "T-03",
-      "T-04",
     ]);
     await expect(changeStatus(db, leader, jobId, "resume", "", req)).rejects.toThrow(
       "isn't possible",
@@ -668,13 +667,14 @@ describe("clashes, holds and repeat visits", () => {
       req,
     );
     const booked = await autoBook(db, leader, big.id, req, { loggers: true });
-    expect(booked.booked).toHaveLength(60);
+    // Exactly the 54 the study needs, no spares.
+    expect(booked.booked).toHaveLength(54);
     expect(booked.short).toEqual([]);
     const [entry] = await db
       .select({ summary: auditLog.summary })
       .from(auditLog)
       .where(and(eq(auditLog.entityId, big.id), eq(auditLog.action, "job.instruments_booked")));
-    expect(entry!.summary).toMatch(/ and 52 more for job /);
+    expect(entry!.summary).toMatch(/ and 46 more for job /);
   });
 
   it("books an SSPRT for °C and the RH indicator for %RH, not the RH indicator for both", async () => {

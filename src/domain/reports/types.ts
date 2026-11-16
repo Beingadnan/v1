@@ -1,3 +1,5 @@
+import { machine } from "@/lib/state-machine";
+
 /** Reports: the vocabulary shared by the database checks, the services and the screens. */
 
 /**
@@ -25,6 +27,24 @@ export const REPORT_STATUSES = [
   "superseded",
 ] as const;
 export type ReportStatus = (typeof REPORT_STATUSES)[number];
+
+/**
+ * A report revision's moves (ADR 0022). Draft is frozen for checking; the
+ * checker returns it to draft or checks it; checked is released to the client
+ * or signed on paper; the client signs or returns it; a new frozen revision
+ * supersedes the one before. "Reviewed" is from the four-signature flow (Fix
+ * 5.1 dropped it): nothing leads to it now, but older revisions may be in it.
+ */
+export const REPORT_FLOW = machine<ReportStatus>("report", REPORT_STATUSES, {
+  draft: ["checking"],
+  checking: ["draft", "checked", "superseded"],
+  checked: ["released", "signed", "superseded"],
+  released: ["signed", "returned", "superseded"],
+  reviewed: ["signed", "returned", "superseded"],
+  signed: ["superseded"],
+  returned: ["superseded"],
+  superseded: [],
+});
 export const REPORT_STATUS_LABELS: Record<ReportStatus, string> = {
   draft: "Draft",
   checking: "With the checker",

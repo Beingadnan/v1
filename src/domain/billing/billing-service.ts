@@ -14,9 +14,19 @@ import { lockJob, setStatus } from "@/domain/jobs/job-service";
 import { JOB_STATUS_LABELS, type JobStatus } from "@/domain/jobs/types";
 import { revLabel } from "@/domain/reports/types";
 import { recordAudit } from "@/lib/audit";
+import { move } from "@/lib/state-machine";
 
 import { BillingError } from "./errors";
-import { INVOICE_NUMBER, PAYMENT_MODES, balanceOf, financialYear, paise, rupees } from "./types";
+import {
+  INVOICE_FLOW,
+  INVOICE_NUMBER,
+  PAYMENT_MODES,
+  balanceOf,
+  financialYear,
+  paise,
+  rupees,
+  type InvoiceStatus,
+} from "./types";
 
 const user = (actor: SessionUser) => ({ type: "user" as const, userId: actor.id });
 const todayIst = () =>
@@ -209,7 +219,10 @@ export async function cancelInvoice(
     }
     await tx
       .update(invoices)
-      .set({ status: "cancelled", cancelReason: why })
+      .set({
+        status: move(INVOICE_FLOW, inv.status as InvoiceStatus, "cancelled"),
+        cancelReason: why,
+      })
       .where(eq(invoices.id, inv.id));
     await recordAudit(tx, {
       organisationId: actor.organisationId,
@@ -314,7 +327,10 @@ export async function recordPayment(
     if (left === 0) {
       await tx
         .update(invoices)
-        .set({ status: "cleared", clearedAt: new Date() })
+        .set({
+          status: move(INVOICE_FLOW, inv.status as InvoiceStatus, "cleared"),
+          clearedAt: new Date(),
+        })
         .where(eq(invoices.id, inv.id));
       await recordAudit(tx, {
         organisationId: actor.organisationId,
@@ -374,7 +390,7 @@ export async function reversePayment(
     if (inv.status === "cleared") {
       await tx
         .update(invoices)
-        .set({ status: "open", clearedAt: null })
+        .set({ status: move(INVOICE_FLOW, inv.status as InvoiceStatus, "open"), clearedAt: null })
         .where(eq(invoices.id, inv.id));
     }
     await recordAudit(tx, {

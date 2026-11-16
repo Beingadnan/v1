@@ -15,9 +15,9 @@ import {
   instruments,
   jobInstruments,
   jobReadiness,
+  jobs,
   jobStatusHistory,
   jobTeam,
-  jobs,
   organisationSettings,
   sites,
   storedFiles,
@@ -34,12 +34,19 @@ import { isUuid, rethrowUnique, toNumeric } from "@/domain/clients/shared";
 import { certificatesOf } from "@/domain/instruments/certificate-service";
 import { TYPE_MEASURES, type InstrumentType } from "@/domain/instruments/types";
 import { allocateNumber } from "@/domain/numbering/allocate";
+import { move } from "@/lib/state-machine";
 import { recordAudit } from "@/lib/audit";
 import { shortList } from "@/lib/text";
 
-import { INSTRUMENT_FOR, parseCodes, pickInstruments, sparesFor, type Candidate } from "./booking";
+import { INSTRUMENT_FOR, parseCodes, pickInstruments, type Candidate } from "./booking";
 import { JobsError } from "./errors";
-import { computeReadiness, needsMasters, validThrough, type ReadinessInput } from "./readiness";
+import {
+  computeReadiness,
+  loggersFor,
+  needsMasters,
+  validThrough,
+  type ReadinessInput,
+} from "./readiness";
 import {
   jobHeaderSchema,
   jobSchema,
@@ -67,6 +74,7 @@ import {
   type JobStatus,
   type OrderType,
   type Transition,
+  JOB_FLOW,
 } from "./types";
 
 const user = (actor: SessionUser) => ({ type: "user" as const, userId: actor.id });
@@ -143,6 +151,7 @@ export async function readinessInputFor(
         .select({
           workType: studies.workType,
           loggerCount: studies.loggerCount,
+          positions: sql<number>`(select count(*)::int from study_positions sp where sp.study_id = "studies"."id")`,
           preCalRequired: studies.preCalRequired,
           postCalRequired: studies.postCalRequired,
           durationHours: studies.durationHours,
@@ -203,6 +212,7 @@ export async function readinessInputFor(
     studies: studyRows.map((s) => ({
       workType: s.workType as ReadinessInput["studies"][number]["workType"],
       loggerCount: s.loggerCount,
+      positions: s.positions,
       preCalRequired: s.preCalRequired,
       postCalRequired: s.postCalRequired,
       durationHours: s.durationHours,
@@ -235,7 +245,7 @@ export async function setStatus(
   const from = status(job);
   await tx
     .update(jobs)
-    .set({ status: to, updatedAt: new Date(), ...extra })
+    .set({ status: move(JOB_FLOW, from, to), updatedAt: new Date(), ...extra })
     .where(eq(jobs.id, job.id));
   await tx.insert(jobStatusHistory).values({
     organisationId: actor.organisationId,
@@ -1171,7 +1181,7 @@ export type AutoBookResult = {
 /**
  * Books the masters pre/post-calibration needs. QA Tech chooses its loggers
  * by hand (Nov 2026), so the screens no longer pick loggers; `loggers: true`
- * still books what the studies need plus spares, for seeding demo data.
+ * still books what the studies need, for seeding demo data.
  */
 export async function autoBook(
   db: Database,
@@ -1192,12 +1202,13 @@ export async function autoBook(
     const need = new Map<string, number>();
     for (const s of input.studies) {
       const type = INSTRUMENT_FOR[s.workType];
-      if (type && options.loggers) need.set(type, (need.get(type) ?? 0) + s.loggerCount);
+      if (type && options.loggers) need.set(type, (need.get(type) ?? 0) + loggersFor(s));
     }
     const result: AutoBookResult = { booked: [], short: [], skipped: [], masters: [] };
     for (const [type, count] of need) {
       const have = input.booked.filter((b) => b.type === type && b.tier !== "master").length;
-      const want = count + sparesFor(count) - have;
+      // Exactly what the studies need: no spares on top (QA Tech, Nov 2026).
+      const want = count - have;
       if (want <= 0) continue;
       const pool = await candidates(tx, actor, job, { types: [type] });
       const pick = pickInstruments({
@@ -1330,14 +1341,22 @@ export async function bookByCodes(
       if (!hit) result.notFound.push(code);
       else if (!ids.includes(hit.id)) ids.push(hit.id);
     }
-    const existing = new Set(
-      (
-        await tx
-          .select({ id: jobInstruments.instrumentId })
-          .from(jobInstruments)
-          .where(eq(jobInstruments.jobId, job.id))
-      ).map((r) => r.id),
-    );
+    const [onJob, input] = await Promise.all([
+      tx
+        .select({ id: jobInstruments.instrumentId, type: instruments.type })
+        .from(jobInstruments)
+        .innerJoin(instruments, eq(instruments.id, jobInstruments.instrumentId))
+        .where(eq(jobInstruments.jobId, job.id)),
+      readinessInputFor(tx, actor.organisationId, job),
+    ]);
+    const existing = new Set(onJob.map((r) => r.id));
+    // No more loggers than the studies need (QA Tech, Nov 2026): 16 needed, 16 booked.
+    const room = new Map<string, number>();
+    for (const st of input.studies) {
+      const type = INSTRUMENT_FOR[st.workType];
+      if (type) room.set(type, (room.get(type) ?? 0) + loggersFor(st));
+    }
+    for (const r of onJob) if (room.has(r.type)) room.set(r.type, room.get(r.type)! - 1);
     const pool = await candidates(tx, actor, job, { ids });
     const ok: string[] = [];
     for (const c of pool) {
@@ -1358,8 +1377,19 @@ export async function bookByCodes(
         result.refused.push({ code: c.code, reason: valid.reason.replace(`${c.code} `, "") });
         continue;
       }
+      if (c.tier !== "master" && room.has(c.type) && room.get(c.type)! <= 0) {
+        const needs = input.studies
+          .filter((st) => INSTRUMENT_FOR[st.workType] === c.type)
+          .reduce((n, st) => n + loggersFor(st), 0);
+        result.refused.push({
+          code: c.code,
+          reason: `not booked: the studies need ${needs} and ${needs} are already booked. Remove one first, or raise the number of loggers on the study.`,
+        });
+        continue;
+      }
       ok.push(c.id);
       result.booked.push(c.code);
+      if (room.has(c.type)) room.set(c.type, room.get(c.type)! - 1);
     }
     await insertBookings(tx, actor, job.id, ok);
     if (ok.length > 0) {
@@ -1487,7 +1517,7 @@ export async function bookingChoices(
   const needed = new Map<string, number>();
   for (const s of input.studies) {
     const type = INSTRUMENT_FOR[s.workType];
-    if (type) needed.set(type, (needed.get(type) ?? 0) + s.loggerCount);
+    if (type) needed.set(type, (needed.get(type) ?? 0) + loggersFor(s));
   }
   const types = [...needed.keys()];
   if (types.length === 0) return { needs: [], models: [] };

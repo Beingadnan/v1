@@ -11,8 +11,9 @@ import {
   removeDataFile,
   requestData,
   setChannelMatch,
-  withdrawAcceptance,
+  setStudyPeriod,
   type AddResult,
+  withdrawAcceptance,
 } from "@/domain/data/data-service";
 import { runAction, type ActionResult } from "@/lib/action-result";
 import { SESSION_ENDED, userForAction } from "@/lib/auth/dal";
@@ -97,5 +98,16 @@ export async function removeFileAction(studyId: string, dataFileId: string, reas
   if (!actor) return { ok: false as const, error: SESSION_ENDED };
   return act(studyId, async () =>
     removeDataFile(db, actor, studyId, dataFileId, reason, await getRequestInfo()),
+  );
+}
+
+export async function studyPeriodAction(
+  studyId: string,
+  input: { cycle: string; start: string; end: string; reason: string },
+) {
+  const actor = await userForAction();
+  if (!actor) return { ok: false as const, error: SESSION_ENDED };
+  return act(studyId, async () =>
+    setStudyPeriod(db, actor, studyId, input, await getRequestInfo()),
   );
 }

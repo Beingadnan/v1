@@ -3,6 +3,10 @@
 import { spawn } from "node:child_process";
 import { cpSync, existsSync } from "node:fs";
 
+// The standalone server runs from .next/standalone and doesn't see .env.local there.
+// Values already set in the shell win.
+if (existsSync(".env.local")) process.loadEnvFile(".env.local");
+
 if (!existsSync(".next/standalone/server.js")) {
   console.error("No standalone build found. Run `npm run build` first.");
   process.exit(1);

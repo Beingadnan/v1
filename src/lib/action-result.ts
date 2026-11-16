@@ -13,6 +13,7 @@ import { InstrumentsError } from "@/domain/instruments/errors";
 import { DataError } from "@/domain/data/errors";
 import { FieldError } from "@/domain/field/errors";
 import { JobsError } from "@/domain/jobs/errors";
+import { IllegalMove } from "@/lib/state-machine";
 
 /** What a form's server action returns: a message for the person, or success data. */
 export type ActionResult<T = void> =
@@ -52,6 +53,16 @@ export async function runAction<T>(
       error instanceof BillingError
     ) {
       return { ok: false, error: error.message };
+    }
+    if (error instanceof IllegalMove) {
+      // A move the declared flow doesn't allow (ADR 0022): logged, and said plainly.
+      console.error(
+        JSON.stringify({ level: "error", msg: "illegal status move", error: error.message }),
+      );
+      return {
+        ok: false,
+        error: `${error.message} Refresh the page; if it happens again, tell the admin.`,
+      };
     }
     if (error instanceof ForbiddenError) {
       return { ok: false, error: "Your role doesn't allow this." };

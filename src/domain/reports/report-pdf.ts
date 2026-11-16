@@ -10,6 +10,7 @@ import {
   mm,
   projector,
   spreadLabels,
+  type Dimensions,
   type Point,
 } from "@/domain/field/layout";
 import { drawPlan } from "@/domain/field/plan-pdf";
@@ -48,7 +49,7 @@ export type ReportData = {
     model: string;
     serialNo: string;
     department: string;
-    dims: { lengthM: number | null; widthM: number | null; heightM: number | null };
+    dims: Dimensions;
     /** "Room" (QA Tech's WH013) or "Area" for a store; "Equipment" when left out. */
     noun?: "Room" | "Area" | "Equipment";
     /** A room: drawn as a floor plan with a table of locations, not as a box. */
@@ -886,9 +887,10 @@ class Builder {
           .stroke();
         doc.text(ascii(text), q.x + dx, q.y + dy + 2.5, { width: 56, align: "center" });
       };
-      sizeTag({ x: 0.5, y: 1, z: 1 }, `L-${mm(dims.lengthM)}`, -28, -20);
-      sizeTag({ x: 1, y: 1, z: 0.5 }, `H ${mm(dims.heightM)}`, 10, -6);
-      sizeTag({ x: 0, y: 0.5, z: 1 }, `W-${mm(dims.widthM)}`, -62, -6);
+      // Sizes only when measured; a sketch gives the shape, not the size.
+      if (dims.lengthM !== null) sizeTag({ x: 0.5, y: 1, z: 1 }, `L-${mm(dims.lengthM)}`, -28, -20);
+      if (dims.heightM !== null) sizeTag({ x: 1, y: 1, z: 0.5 }, `H ${mm(dims.heightM)}`, 10, -6);
+      if (dims.widthM !== null) sizeTag({ x: 0, y: 0.5, z: 1 }, `W-${mm(dims.widthM)}`, -62, -6);
       const inside = d.positions.filter((p) => !p.ambient);
       const labels = spreadLabels(
         inside.map((p) => ({ ...at(p), label: p.label, id: p.id })),

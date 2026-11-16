@@ -47,7 +47,7 @@ test("phase 5 exit test: on a phone, an engineer places 9 loggers for the freeze
   // A scanner gun fires three labels back to back, one of them unreadable
   // junk: none is merged with the next or dropped, and the refusal stays on
   // screen.
-  await page.getByRole("link", { name: /^Loggers/ }).click();
+  await page.getByRole("link", { name: /^Next: put a logger at each position/ }).click();
   // The server is slowed down, as it is on a site's mobile data.
   const slow = async (route: import("@playwright/test").Route) => {
     if (route.request().method() === "POST") await new Promise((r) => setTimeout(r, 1500));
@@ -75,7 +75,7 @@ test("phase 5 exit test: on a phone, an engineer places 9 loggers for the freeze
     timeout: 30_000,
   });
   await page.getByRole("button", { name: "Stop camera" }).click();
-  await expect(page.getByText("9 of 9")).toBeVisible();
+  await expect(page.getByText("9 of 9", { exact: true })).toBeVisible();
 
   // Times: start, then end (it asks first: the 24 h study has just begun).
   await page.getByRole("link", { name: /^Times/ }).click();

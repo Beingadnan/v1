@@ -37,7 +37,7 @@ import {
   recordPrecal,
   saveLayout,
 } from "@/domain/field/field-service";
-import { autoBook, createJob, setReadiness } from "@/domain/jobs/job-service";
+import { autoBook, bookByCodes, createJob, setReadiness } from "@/domain/jobs/job-service";
 import { getJob } from "@/domain/jobs/queries";
 import type { BlobStore } from "@/lib/storage/blob-store";
 import { storeFile } from "@/lib/storage/store-file";
@@ -272,6 +272,8 @@ export async function seedDataJob(
   for (const key of ["site_access", "previous_report"]) {
     await setReadiness(db, lead, job.id, { key, state: "ready", note: "" }, req);
   }
+  // This fixture's own loggers first; auto-booking adds the masters.
+  await bookByCodes(db, lead, job.id, loggers.map((l) => l.code).join("\n"), req);
   await autoBook(db, lead, job.id, req, { loggers: true });
   const studyId = (await getJob(db, lead, job.id))!.studies[0]!.id;
   await saveLayout(db, engineer, studyId, await layoutTemplate(db, engineer, studyId), req);
@@ -402,6 +404,8 @@ export async function seedAnalysisJob(
   for (const key of ["site_access", "previous_report"]) {
     await setReadiness(db, lead, job.id, { key, state: "ready", note: "" }, req);
   }
+  // This fixture's own loggers first; auto-booking adds the masters.
+  await bookByCodes(db, lead, job.id, loggers.map((l) => l.code).join("\n"), req);
   await autoBook(db, lead, job.id, req, { loggers: true });
   const studyId = (await getJob(db, lead, job.id))!.studies[0]!.id;
   await saveLayout(db, engineer, studyId, await layoutTemplate(db, engineer, studyId), req);

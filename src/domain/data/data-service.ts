@@ -25,10 +25,12 @@ import { assertCan } from "@/domain/auth/permissions";
 import type { RequestInfo } from "@/domain/auth/policy";
 import type { SessionUser } from "@/domain/auth/session-service";
 import { isUuid } from "@/domain/clients/shared";
-import { cycleProgress, cyclesOf } from "@/domain/field/field-service";
+import { cycleProgress, cyclesOf, studyStatusFrom } from "@/domain/field/field-service";
+import { STUDY_FLOW, type StudyStatus } from "@/domain/field/types";
 import { lockJob, setStatus } from "@/domain/jobs/job-service";
 import { JOB_STATUS_LABELS, type JobStatus } from "@/domain/jobs/types";
 import { recordAudit } from "@/lib/audit";
+import { machine, move } from "@/lib/state-machine";
 import { formatDateTime } from "@/lib/format";
 import type { BlobStore } from "@/lib/storage/blob-store";
 import { shortList } from "@/lib/text";
@@ -43,7 +45,19 @@ const user = (actor: SessionUser) => ({ type: "user" as const, userId: actor.id 
 /** Job statuses in which data can be uploaded and checked. */
 const DATA_OPEN: readonly JobStatus[] = ["field_work", "data_issue", "data_received", "analysis"];
 
-export type DataStatus = "none" | "issues" | "checked" | "received";
+export const DATA_STATUSES = ["none", "issues", "checked", "received"] as const;
+export type DataStatus = (typeof DATA_STATUSES)[number];
+/**
+ * A study's data (ADR 0022): every upload or acceptance rechecks it to none,
+ * issues or checked; only checked data is confirmed received; any change after
+ * that takes the confirmation back.
+ */
+export const DATA_FLOW = machine<DataStatus>("study's data", DATA_STATUSES, {
+  none: ["issues", "checked"],
+  issues: ["none", "checked"],
+  checked: ["none", "issues", "received"],
+  received: ["none", "issues", "checked"],
+});
 
 type Loaded = { study: Study; job: Job; code: string };
 
@@ -206,7 +220,14 @@ async function recheck(tx: Transaction, actor: SessionUser, l: Loaded, request?:
     ctx.files.length === 0 ? "none" : open.length > 0 ? "issues" : "checked";
   await tx
     .update(studies)
-    .set({ dataStatus: status, dataReceivedAt: null, dataReceivedByUserId: null })
+    .set({
+      dataStatus:
+        status === l.study.dataStatus
+          ? status
+          : move(DATA_FLOW, l.study.dataStatus as DataStatus, status),
+      dataReceivedAt: null,
+      dataReceivedByUserId: null,
+    })
     .where(eq(studies.id, l.study.id));
   l.study = { ...l.study, dataStatus: status, dataReceivedAt: null, dataReceivedByUserId: null };
   await syncJob(tx, actor, l.job, request);
@@ -606,6 +627,133 @@ export async function setChannelMatch(
   });
 }
 
+// ---------------------------------------------------------------- study period
+
+/** "2026-08-01T11:30" in India time → the instant. */
+const fromIst = (text: string): Date | null => {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(text)) return null;
+  const d = new Date(`${text}:00+05:30`);
+  return Number.isNaN(d.getTime()) ? null : d;
+};
+
+/**
+ * Sets when a cycle ran, typed after the data is in (QA Tech, Nov 2026): "read
+ * the study from 01.08.2026 11:30 to 02.08.2026 11:30". The cycle's recorded
+ * start and end are struck out with the reason and the typed ones recorded,
+ * so the readings between them are what the checks and the analysis use.
+ * Door and power marks inside stay. Team leader or manager.
+ */
+export async function setStudyPeriod(
+  db: Database,
+  actor: SessionUser,
+  studyId: string,
+  input: { cycle: string; start: string; end: string; reason: string },
+  request?: RequestInfo,
+) {
+  assertCan(actor, "data.accept");
+  const start = fromIst(input.start);
+  const end = fromIst(input.end);
+  if (!start || !end) throw new DataError("Enter the start and the end as a date and a time.");
+  if (end <= start) throw new DataError("The end must be after the start.");
+  if (end.getTime() - start.getTime() > 60 * 86_400_000) {
+    throw new DataError("That is more than 60 days: check the dates.");
+  }
+  const reason = input.reason.trim().slice(0, 300);
+  return db.transaction(async (tx) => {
+    const l = await load(tx, actor, studyId);
+    assertOpen(l, "Setting the study period");
+    const thermal = l.study.workType === "thermal_validation";
+    const cycles = cyclesOf(l.study);
+    if (!cycles.includes(input.cycle as (typeof cycles)[number])) {
+      throw new DataError("That cycle isn't part of this study.");
+    }
+    const events = await tx
+      .select()
+      .from(studyEvents)
+      .where(and(eq(studyEvents.studyId, l.study.id), eq(studyEvents.voided, false)));
+    // Another cycle's period can't overlap this one: one condition at a time.
+    const others = cycleProgress(cycles, events, thermal).filter(
+      (c) => c.cycle !== input.cycle && c.startedAt,
+    );
+    const clash = others.find(
+      (c) => start < (c.endedAt ?? new Date(8.64e15)) && end > (c.startedAt as Date),
+    );
+    if (clash) {
+      throw new DataError(
+        `${clash.label} ran ${formatDateTime(clash.startedAt!)}${clash.endedAt ? ` to ${formatDateTime(clash.endedAt)}` : ""}; the periods can't overlap.`,
+      );
+    }
+    const old = events.filter(
+      (e) => e.cycle === input.cycle && (e.kind === "start" || e.kind === "end"),
+    );
+    const was = cycleProgress(cycles, events, thermal).find((c) => c.cycle === input.cycle)!;
+    if (old.length > 0 && !reason) {
+      throw new DataError("Say why the times change, e.g. “logger clocks started at 11:30”.");
+    }
+    if (old.length > 0) {
+      await tx
+        .update(studyEvents)
+        .set({ voided: true })
+        .where(
+          inArray(
+            studyEvents.id,
+            old.map((e) => e.id),
+          ),
+        );
+    }
+    const note = reason
+      ? `Study period set from the data: ${reason}`
+      : "Study period set from the data";
+    await tx.insert(studyEvents).values([
+      {
+        id: crypto.randomUUID(),
+        organisationId: actor.organisationId,
+        studyId: l.study.id,
+        cycle: input.cycle,
+        kind: "start",
+        at: start,
+        note,
+        byUserId: actor.id,
+      },
+      {
+        id: crypto.randomUUID(),
+        organisationId: actor.organisationId,
+        studyId: l.study.id,
+        cycle: input.cycle,
+        kind: "end",
+        at: end,
+        note,
+        byUserId: actor.id,
+      },
+    ]);
+    // The status follows the events, as on site: done only when every cycle has ended.
+    const now = studyStatusFrom(
+      l.study,
+      await tx.select().from(studyEvents).where(eq(studyEvents.studyId, l.study.id)),
+    );
+    if (now !== l.study.status) {
+      await tx
+        .update(studies)
+        .set({ status: move(STUDY_FLOW, l.study.status as StudyStatus, now) })
+        .where(eq(studies.id, l.study.id));
+      l.study = { ...l.study, status: now };
+    }
+    await recordAudit(tx, {
+      organisationId: actor.organisationId,
+      actor: user(actor),
+      action: "study.period_set",
+      entityType: "study",
+      entityId: l.study.id,
+      summary: `${actor.name} set ${was.label.toLowerCase()} of ${l.code} (job ${l.job.number}) to ${formatDateTime(start)} – ${formatDateTime(end)}${was.startedAt ? `, was ${formatDateTime(was.startedAt)} – ${was.endedAt ? formatDateTime(was.endedAt) : "not ended"}` : ""}${reason ? `: ${reason}` : ""}`,
+      before: { start: was.startedAt, end: was.endedAt },
+      after: { start, end, reason },
+      request,
+    });
+    const r = await recheck(tx, actor, l, request);
+    return { status: r.status, blockers: r.open.length };
+  });
+}
+
 // ---------------------------------------------------------------- decisions
 
 /** Go on despite a problem, with a reason (team leader or manager). */
@@ -827,7 +975,11 @@ export async function markReceived(
     if (req) throw new DataError("A request for data is still open. Close it first.");
     await tx
       .update(studies)
-      .set({ dataStatus: "received", dataReceivedAt: new Date(), dataReceivedByUserId: actor.id })
+      .set({
+        dataStatus: move(DATA_FLOW, r.status, "received"),
+        dataReceivedAt: new Date(),
+        dataReceivedByUserId: actor.id,
+      })
       .where(eq(studies.id, l.study.id));
     await recordAudit(tx, {
       organisationId: actor.organisationId,

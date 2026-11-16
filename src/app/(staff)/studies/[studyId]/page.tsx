@@ -12,6 +12,7 @@ import { getStudyReport } from "@/domain/reports/queries";
 import { getFieldStudy } from "@/domain/field/queries";
 import { STUDY_STATUS_LABELS } from "@/domain/field/types";
 import { WORK_TYPE_LABELS, type WorkType } from "@/domain/jobs/types";
+import { sketchReader } from "@/lib/ai";
 import { requirePermission } from "@/lib/auth/dal";
 import { cn } from "@/lib/utils";
 
@@ -19,7 +20,6 @@ import { AnalysisPanel } from "./analysis-panel";
 import { ReportPanel } from "./report-panel";
 import { DataPanel } from "./data-panel";
 import { LayoutEditor } from "./layout-editor";
-import { RoomSize } from "./room-size";
 import { ShowActiveTab } from "./show-active-tab";
 import { LoggerPanel } from "./logger-panel";
 import { PrecalPanel } from "./precal-panel";
@@ -206,15 +206,10 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
 
       {tab === "layout" ? (
         <div className="flex flex-col gap-4">
-          <RoomSize
-            studyId={studyId}
-            dims={s.equipment.dims}
-            readOnly={!canWork || !layoutOpen || done}
-          />
           <LayoutEditor
             key={studyId}
             studyId={studyId}
-            dims={s.equipment.dims}
+            dims={{ ...s.equipment.dims, shape: s.study.roomShape }}
             loggerCount={s.study.loggerCount}
             readOnly={!canWork || !layoutOpen || done}
             initial={s.positions.map((p) => ({
@@ -229,6 +224,7 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
             previous={s.positions.length === 0 ? s.previousLayout : null}
             room={s.equipment.type === "room"}
             initialFeatures={s.study.planFeatures}
+            canReadSketch={sketchReader !== null}
           />
           {s.positions.length > 0 ? (
             <section id="loggers" aria-labelledby="loggers-h" className="flex flex-col gap-3">

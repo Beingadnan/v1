@@ -39,7 +39,9 @@ import {
   recordPrecal,
   saveLayout,
 } from "@/domain/field/field-service";
+import { INSTRUMENT_FOR } from "@/domain/jobs/booking";
 import { autoBook, createJob, setReadiness } from "@/domain/jobs/job-service";
+import type { WorkType } from "@/domain/jobs/types";
 import { getJob } from "@/domain/jobs/queries";
 import { createReport, freezeReport } from "@/domain/reports/report-service";
 import { checkReport, clientApprove, releaseReport } from "@/domain/reports/review-service";
@@ -465,15 +467,19 @@ async function seedJob(c: Ctx, plan: Plan, n: number) {
   const detail = (await getJob(db, p.lead.user, jobId))!;
   const loggers = detail.booked.filter((b) => b.tier !== "master");
   const masters = await postCalMasters(c, detail.booked);
-  let next = 0;
+  // Each study takes the next booked loggers of the type its work needs.
+  const used = new Set<string>();
   const from = ist(`${plan.start}T09:50:00`);
   const to = ist(`${addDays(plan.start, 2)}T12:10:00`);
   for (const s of detail.studies) {
     const kind = kindOf(c, s.equipment.id);
     const tpl = await layoutTemplate(db, p.engineer.user, s.id);
     await saveLayout(db, p.engineer.user, s.id, tpl, req);
-    const mine = loggers.slice(next, next + tpl.length);
-    next += tpl.length;
+    const type = INSTRUMENT_FOR[s.workType as WorkType];
+    const mine = loggers
+      .filter((l) => !used.has(l.code) && (!type || l.type === type))
+      .slice(0, tpl.filter((t) => !t.ambient).length);
+    for (const l of mine) used.add(l.code);
     for (const l of mine) await placeLogger(db, p.engineer.user, s.id, { code: l.code }, req);
     const ev = (cycle: string, k: string, at: string) =>
       recordEvent(

@@ -127,8 +127,12 @@ export function BookingPicker({ jobId, choices }: { jobId: string; choices: Book
     );
   }
 
-  const need = choices.needs.reduce((n, x) => n + x.needed, 0);
-  const have = choices.needs.reduce((n, x) => n + x.booked, 0);
+  // What this model's kind of logger is needed for: 16 needed means 16 at most.
+  const needOf = choices.needs.find((n) => n.type === model.type);
+  const need = needOf?.needed ?? choices.needs.reduce((n, x) => n + x.needed, 0);
+  const have = needOf?.booked ?? choices.needs.reduce((n, x) => n + x.booked, 0);
+  const full = need > 0 && have + picked.length >= need;
+  const fullNote = `The studies need ${need} and ${need} are ${have >= need ? "booked" : "booked or ticked"}. Untick one first, or raise the number of loggers on the study.`;
   const counts: Record<LoggerState | "all", number> = {
     free: model.free.length,
     booked: model.booked,
@@ -147,8 +151,15 @@ export function BookingPicker({ jobId, choices }: { jobId: string; choices: Book
   const freeLeft = model.free.filter((f) => !picked.includes(f.code));
 
   const toggle = (code: string) => {
-    setPicked(picked.includes(code) ? picked.filter((c) => c !== code) : [...picked, code]);
-    setNote(null);
+    if (picked.includes(code)) {
+      setPicked(picked.filter((c) => c !== code));
+      setNote(null);
+    } else if (full) {
+      setNote(fullNote);
+    } else {
+      setPicked([...picked, code]);
+      setNote(null);
+    }
   };
 
   const add = () => {
@@ -165,6 +176,8 @@ export function BookingPicker({ jobId, choices }: { jobId: string; choices: Book
       setNote(`${hit.l.code} (serial ${hit.l.serialNo || "-"}) can't be booked: ${hit.l.where}.`);
     } else if (picked.includes(hit.l.code)) {
       setNote(`${hit.l.code} is already in the list.`);
+    } else if (full) {
+      setNote(fullNote);
     } else {
       setPicked([...picked, hit.l.code]);
       setNote(null);
@@ -259,16 +272,26 @@ export function BookingPicker({ jobId, choices }: { jobId: string; choices: Book
           name="pasted"
           label="IDs or serials, or a range like T-TRH001 – T-TRH024"
           multiline
-          onChange={(e) =>
-            setPicked(
-              e.currentTarget.value
-                .split(/[\n,;]+/)
-                .map((x) => x.trim())
-                .filter(Boolean),
-            )
-          }
+          onChange={(e) => {
+            const all = e.currentTarget.value
+              .split(/[\n,;]+/)
+              .map((x) => x.trim())
+              .filter(Boolean);
+            setPicked(all);
+            setNote(
+              need > 0 && have + all.length > need
+                ? `${have + all.length - need} more than the ${need} needed: only the first ${Math.max(0, need - have)} will be booked.`
+                : null,
+            );
+          }}
         />
-      ) : (
+      ) : null}
+      {paste && note ? (
+        <p role="alert" className="rounded-md bg-attention-soft px-3 py-2 text-sm text-attention">
+          {note}
+        </p>
+      ) : null}
+      {paste ? null : (
         <div className="flex flex-col gap-1">
           <label htmlFor="logger-typed" className="sr-only">
             Type or scan an ID or serial
@@ -317,6 +340,12 @@ export function BookingPicker({ jobId, choices }: { jobId: string; choices: Book
 
       {!paste ? (
         <div className="overflow-hidden rounded-md border border-border">
+          {full && show === "free" ? (
+            <p className="border-b border-border bg-pass-soft px-3 py-2 text-sm text-pass">
+              All {need} needed are {have >= need ? "booked" : "booked or ticked"}. Untick one to
+              swap it.
+            </p>
+          ) : null}
           {stillNeeded > 0 && freeLeft.length > 0 && show === "free" && !query ? (
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-surface-muted px-3 py-2 text-sm">
               <span>{stillNeeded} more needed.</span>
@@ -345,7 +374,9 @@ export function BookingPicker({ jobId, choices }: { jobId: string; choices: Book
                     <label
                       className={cn(
                         "grid grid-cols-[1.25rem_minmax(6rem,auto)_1fr] items-center gap-x-3 gap-y-0.5 px-3 py-2 text-sm sm:grid-cols-[1.25rem_8rem_7rem_1fr_6rem]",
-                        free ? "cursor-pointer hover:bg-surface-muted" : "opacity-90",
+                        free && (on || !full)
+                          ? "cursor-pointer hover:bg-surface-muted"
+                          : "opacity-90",
                         on && "bg-pass-soft",
                       )}
                     >
@@ -353,7 +384,7 @@ export function BookingPicker({ jobId, choices }: { jobId: string; choices: Book
                         type="checkbox"
                         className="size-4 accent-primary"
                         checked={on || l.state === "booked"}
-                        disabled={!free}
+                        disabled={!free || (full && !on)}
                         onChange={() => toggle(l.code)}
                         aria-label={`Book ${l.code}`}
                       />

@@ -91,7 +91,7 @@ test("phase 6 exit test: the team leader uploads FE-WF-03's data, a 30-min gap s
 
   // The job is now in Data issue.
   await page
-    .getByRole("link", { name: /E2E|QT\/J/ })
+    .getByRole("link", { name: /E2E|QT\/\d/ })
     .first()
     .click();
   await expect(page.getByText("Data issue").first()).toBeVisible();

@@ -11,7 +11,8 @@ import {
   recordPrecal,
   removeLogger,
   saveLayout,
-  setRoomSize,
+  readLayoutSketch,
+  type ReadSketch,
   voidEvent,
   type PlaceResult,
 } from "@/domain/field/field-service";
@@ -22,6 +23,8 @@ import type { StudyStatus } from "@/domain/field/types";
 import { runAction, type ActionResult } from "@/lib/action-result";
 import { SESSION_ENDED, userForAction } from "@/lib/auth/dal";
 import { getRequestInfo } from "@/lib/request-info";
+import { sketchReader } from "@/lib/ai";
+import { blobStore } from "@/lib/storage";
 
 /**
  * Server actions for field work. They take plain objects (not forms) because
@@ -53,18 +56,17 @@ export async function saveLayoutAction(
   return result;
 }
 
-export async function roomSizeAction(
+export async function readSketchAction(
   studyId: string,
-  text: string,
-): Promise<ActionResult<{ lengthM: number; widthM: number; heightM: number }>> {
+  fileId: string,
+): Promise<ActionResult<ReadSketch>> {
   const actor = await userForAction();
   if (!actor) return { ok: false, error: SESSION_ENDED };
-  const result = await runAction(
-    async () => setRoomSize(db, actor, studyId, text, await getRequestInfo()),
-    "Size saved.",
+  return runAction(
+    async () =>
+      readLayoutSketch(db, blobStore, sketchReader, actor, studyId, fileId, await getRequestInfo()),
+    "Sketch read.",
   );
-  if (result.ok) refresh(studyId);
-  return result;
 }
 
 export async function placeAction(

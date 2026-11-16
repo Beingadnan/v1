@@ -15,8 +15,10 @@ import { signRecordTx } from "@/domain/auth/signature-service";
 import { isUuid } from "@/domain/clients/shared";
 import { byRole, notify } from "@/domain/notifications/notify";
 import { recordAudit } from "@/lib/audit";
+import { move } from "@/lib/state-machine";
 
 import { FieldError } from "./errors";
+import { OVERRIDE_FLOW, type OverrideStatus } from "./types";
 
 /**
  * Overriding a pre- or post-calibration result (QA Tech, Nov 2026). The
@@ -190,7 +192,7 @@ export async function decideOverride(
     await tx
       .update(precalOverrides)
       .set({
-        status,
+        status: move(OVERRIDE_FLOW, o.status as OverrideStatus, status),
         decidedByUserId: actor.id,
         decidedAt: new Date(),
         signatureId,

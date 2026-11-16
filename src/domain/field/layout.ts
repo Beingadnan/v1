@@ -9,7 +9,48 @@ import { roomWalls, suggestLoggerCount } from "@/domain/clients/study-defaults";
 
 export type Point = { x: number; y: number; z: number };
 export type LayoutPoint = Point & { label: string; note: string; ambient: boolean };
-export type Dimensions = { lengthM: number | null; widthM: number | null; heightM: number | null };
+/** Something drawn inside the room on the sketch: footprint and height as fractions. */
+export type ShapeObject = {
+  kind: string;
+  label: string;
+  x: number;
+  y: number;
+  w: number;
+  d: number;
+  h: number;
+  shelves: number;
+};
+/**
+ * The shape as drawn on the engineer's sketch: proportions in any unit (or
+ * metres), standing up or lying flat, with what stands in it. Draws the box
+ * when the measured size isn't known.
+ */
+export type Shape = {
+  length: number;
+  width: number;
+  height: number;
+  orientation?: "horizontal" | "vertical";
+  objects?: ShapeObject[];
+};
+export type Dimensions = {
+  lengthM: number | null;
+  widthM: number | null;
+  heightM: number | null;
+  shape?: Shape | null;
+};
+
+/**
+ * The sizes a drawing uses: the measured ones when all three are known,
+ * otherwise the sketch's proportions, otherwise a cube.
+ */
+export function sizeOf(dims?: Dimensions | null): { L: number; W: number; H: number } {
+  if (dims && dims.lengthM && dims.widthM && dims.heightM)
+    return { L: dims.lengthM, W: dims.widthM, H: dims.heightM };
+  const s = dims?.shape;
+  if (s && s.length > 0 && s.width > 0 && s.height > 0)
+    return { L: s.length, W: s.width, H: s.height };
+  return { L: dims?.lengthM ?? 1, W: dims?.widthM ?? 1, H: dims?.heightM ?? 1 };
+}
 
 /** Sensors sit just inside the walls, as placed on site. */
 const IN = 0.1;
@@ -115,8 +156,7 @@ const wallName = (n: number) => `wall-${n}`;
  * A count other than the suggested one is shared by wall length.
  */
 function roomLayout(count: number, dims?: Dimensions): LayoutPoint[] {
-  const L = dims?.lengthM ?? 1;
-  const W = dims?.widthM ?? 1;
+  const { L, W } = sizeOf(dims);
   const z = workingZ(dims?.heightM ?? null);
   // One in the centre from five loggers on (or the only one); the rest on the walls.
   const onWalls = count === 1 ? 0 : count >= 5 ? count - 1 : count;
@@ -238,10 +278,8 @@ export function projector(
   dims: Dimensions,
   frame: { width: number; height: number; margin: number },
 ) {
-  // Unknown sizes draw as a cube.
-  const L = dims.lengthM ?? 1;
-  const W = dims.widthM ?? 1;
-  const H = dims.heightM ?? 1;
+  // Unknown sizes draw as the sketch's shape, or a cube.
+  const { L, W, H } = sizeOf(dims);
   // The depth is drawn shortened (at most half the length and height), so a
   // back corner never lands on a front one, as when drawn by hand.
   const depth = Math.min(W * 0.35, L * 0.5, H * 0.5);
@@ -270,8 +308,7 @@ export function planProjector(
   dims: Dimensions,
   frame: { width: number; height: number; margin: number },
 ) {
-  const L = dims.lengthM ?? 1;
-  const W = dims.widthM ?? 1;
+  const { L, W } = sizeOf(dims);
   const scale = Math.min(
     (frame.width - 2 * frame.margin) / L,
     (frame.height - 2 * frame.margin) / W,
@@ -298,9 +335,7 @@ export function orbitProjector(
   view: { yaw: number; pitch: number },
   frame: { width: number; height: number; margin: number },
 ) {
-  const L = dims.lengthM ?? 1;
-  const W = dims.widthM ?? 1;
-  const H = dims.heightM ?? 1;
+  const { L, W, H } = sizeOf(dims);
   const a = (view.yaw * Math.PI) / 180;
   const e = (Math.max(0, Math.min(90, view.pitch)) * Math.PI) / 180;
   const radius = Math.sqrt(L * L + W * W + H * H) / 2;

@@ -98,6 +98,17 @@ const envSchema = z.object({
     .trim()
     .optional()
     .transform((v) => v || undefined),
+  /**
+   * Reads the field engineer's layout sketch (photo) into positions (ADR 0021).
+   * Optional: without a key the Layout tab has no "Read a sketch" button.
+   */
+  OPENAI_API_KEY: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => v || undefined),
+  /** The OpenAI model for sketches: a small, cheap one with vision. */
+  OPENAI_SKETCH_MODEL: z.string().trim().min(1).default("gpt-5-mini"),
   /** The scheduler sends this as a bearer token to /api/cron/digest; unset turns the route off. */
   CRON_SECRET: z
     .string()

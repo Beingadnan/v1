@@ -16,6 +16,7 @@ import {
   studyPrecal,
   deviations,
   storedFiles,
+  layoutSketchReadings,
   type Job,
   type Study,
 } from "@/db/schema";
@@ -27,7 +28,7 @@ import { todayInIndia } from "@/domain/clients/requalification";
 import { STUDY_CYCLE_LABELS, type StudyCycle } from "@/domain/clients/study-defaults";
 import { certificatesOf } from "@/domain/instruments/certificate-service";
 import type { AccuracySpec } from "@/domain/instruments/calibration-math";
-import { computeReadiness, validThrough } from "@/domain/jobs/readiness";
+import { computeReadiness, loggersFor, validThrough } from "@/domain/jobs/readiness";
 import {
   busyInstruments,
   lockBookings,
@@ -35,17 +36,27 @@ import {
   readinessInputFor,
   setStatus,
 } from "@/domain/jobs/job-service";
-import { JOB_STATUS_LABELS, type JobStatus } from "@/domain/jobs/types";
+import { INSTRUMENT_FOR } from "@/domain/jobs/booking";
+import { JOB_STATUS_LABELS, type JobStatus, type WorkType } from "@/domain/jobs/types";
 import { recordAudit } from "@/lib/audit";
+import { move } from "@/lib/state-machine";
 import { formatDateTime } from "@/lib/format";
 import type { BlobStore } from "@/lib/storage/blob-store";
 import { storeFile } from "@/lib/storage/store-file";
 import { shortList } from "@/lib/text";
+import { SketchReadError, type SketchReader } from "@/lib/ai/sketch-reader";
 
 import { recheckIfData } from "@/domain/data/data-service";
 
 import { FieldError } from "./errors";
-import { parseRoomSize, templateLayout } from "./layout";
+import { templateLayout } from "./layout";
+import {
+  layoutFromRoom,
+  matchRoom,
+  sketchReadingSchema,
+  type SketchLayout,
+  type SketchReading,
+} from "./sketch";
 import { evaluatePrecal } from "./precal";
 import { openDeviationTx } from "@/domain/analysis/deviation-open";
 import {
@@ -56,6 +67,7 @@ import {
   type CycleKey,
   type EventKind,
   STUDY_STATUS_LABELS,
+  STUDY_FLOW,
   type StudyStatus,
 } from "./types";
 import { effectiveResult } from "./override-service";
@@ -140,10 +152,46 @@ const featuresSchema = z
   )
   .max(50, "At most 50 marks on the plan.");
 
-/** The positions alone (as before), or the positions with the plan's marks. */
+const unit = z.coerce.number().min(0).max(1);
+const shapeSchema = z.object({
+  length: z.coerce.number().positive().max(1000),
+  width: z.coerce.number().positive().max(1000),
+  height: z.coerce.number().positive().max(1000),
+  orientation: z.enum(["horizontal", "vertical"]).optional(),
+  objects: z
+    .array(
+      z.object({
+        kind: z.string().max(30),
+        label: z.string().max(40),
+        x: unit,
+        y: unit,
+        w: unit,
+        d: unit,
+        h: unit,
+        shelves: z.coerce.number().int().min(0).max(20),
+      }),
+    )
+    .max(40)
+    .optional(),
+});
+
+/**
+ * The positions alone (as before), or with the plan's marks, and with the
+ * shape and photo of the sketch they were read from.
+ */
 const saveSchema = z.union([
-  layoutSchema.transform((points) => ({ points, features: null })),
-  z.object({ points: layoutSchema, features: featuresSchema }),
+  layoutSchema.transform((points) => ({
+    points,
+    features: null,
+    shape: undefined,
+    sketchFileId: undefined,
+  })),
+  z.object({
+    points: layoutSchema,
+    features: featuresSchema,
+    shape: shapeSchema.optional(),
+    sketchFileId: z.string().uuid().optional(),
+  }),
 ]);
 
 /**
@@ -158,12 +206,20 @@ export async function saveLayout(
   request?: RequestInfo,
 ): Promise<{ count: number }> {
   assertCan(actor, "field.perform");
-  const { points, features } = saveSchema.parse(input);
+  const { points, features, shape, sketchFileId } = saveSchema.parse(input);
   return db.transaction(async (tx) => {
     const { study, job, equipment: e } = await loadStudy(tx, actor, studyId);
     assertJob(job, LAYOUT_OK, "Changing the layout");
     if (study.status === "completed")
       throw new FieldError(`The ${e.code} study is done; its layout is fixed.`);
+    // One logger per position: no more positions inside than the study's loggers
+    // (an ambient one outside comes on top).
+    const inside = points.filter((p) => !p.ambient).length;
+    if (study.loggerCount > 0 && inside > study.loggerCount) {
+      throw new FieldError(
+        `The ${e.code} study has ${study.loggerCount} loggers, so ${study.loggerCount} positions inside at most; this layout has ${inside}. Remove ${inside - study.loggerCount}, or raise the number of loggers on the study.`,
+      );
+    }
     const current = await tx
       .select()
       .from(studyPositions)
@@ -200,6 +256,24 @@ export async function saveLayout(
     if (features) {
       await tx.update(studies).set({ planFeatures: features }).where(eq(studies.id, study.id));
     }
+    if (sketchFileId) {
+      const [file] = await tx
+        .select({ id: storedFiles.id })
+        .from(storedFiles)
+        .where(
+          and(
+            eq(storedFiles.id, sketchFileId),
+            eq(storedFiles.organisationId, actor.organisationId),
+          ),
+        );
+      if (!file) throw new FieldError("That sketch was not uploaded. Upload it again.");
+    }
+    if (shape) {
+      await tx
+        .update(studies)
+        .set({ roomShape: shape, ...(sketchFileId ? { layoutSketchFileId: sketchFileId } : {}) })
+        .where(eq(studies.id, study.id));
+    }
     const marks = features?.length
       ? `, ${features.length} mark${features.length === 1 ? "" : "s"} on the plan`
       : "";
@@ -213,56 +287,17 @@ export async function saveLayout(
       before: {
         positions: current.map(({ label, x, y, z, ambient }) => ({ label, x, y, z, ambient })),
         features: study.planFeatures,
+        shape: study.roomShape,
       },
-      after: { positions: points, features: features ?? study.planFeatures },
+      after: {
+        positions: points,
+        features: features ?? study.planFeatures,
+        shape: shape ?? study.roomShape,
+        ...(sketchFileId ? { sketchFileId } : {}),
+      },
       request,
     });
     return { count: points.length };
-  });
-}
-
-/**
- * Records the room's size on the equipment when it wasn't known (or was
- * wrong), from what the engineer measured on site. The WHO grid and FT-12
- * use it. Typed as "3.36 x 6.4 x 2.4 m", in mm, cm or m.
- */
-export async function setRoomSize(
-  db: Database,
-  actor: SessionUser,
-  studyId: string,
-  text: string,
-  request?: RequestInfo,
-): Promise<{ lengthM: number; widthM: number; heightM: number }> {
-  assertCan(actor, "field.perform");
-  const size = parseRoomSize(typeof text === "string" ? text : "");
-  if (!size.ok) throw new FieldError(size.error);
-  return db.transaction(async (tx) => {
-    const { study, job, equipment: e } = await loadStudy(tx, actor, studyId);
-    assertJob(job, LAYOUT_OK, "Changing the size");
-    if (study.status === "completed")
-      throw new FieldError(`The ${e.code} study is done; its size is fixed.`);
-    const { lengthM, widthM, heightM } = size;
-    await tx
-      .update(equipment)
-      .set({
-        lengthM: String(lengthM),
-        widthM: String(widthM),
-        heightM: String(heightM),
-        updatedAt: new Date(),
-      })
-      .where(and(eq(equipment.id, e.id), eq(equipment.organisationId, actor.organisationId)));
-    await recordAudit(tx, {
-      organisationId: actor.organisationId,
-      actor: user(actor),
-      action: "equipment.updated",
-      entityType: "equipment",
-      entityId: e.id,
-      summary: `${actor.name} recorded the size of ${e.code} on site (job ${job.number}): ${lengthM} × ${widthM} × ${heightM} m`,
-      before: { lengthM: e.lengthM, widthM: e.widthM, heightM: e.heightM },
-      after: { lengthM, widthM, heightM },
-      request,
-    });
-    return { lengthM, widthM, heightM };
   });
 }
 
@@ -274,11 +309,136 @@ export async function layoutTemplate(db: Database, actor: SessionUser, studyId: 
     const n = (v: string | null) => (v === null ? null : Number(v));
     return templateLayout(
       study.loggerCount,
-      { lengthM: n(e.lengthM), widthM: n(e.widthM), heightM: n(e.heightM) },
+      {
+        lengthM: n(e.lengthM),
+        widthM: n(e.widthM),
+        heightM: n(e.heightM),
+        shape: study.roomShape,
+      },
       { room: e.type === "room" },
     );
   });
 }
+
+export type SketchRoomLayout = SketchLayout & {
+  index: number;
+  name: string;
+  code: string;
+  page: number;
+};
+/** Every room read from the file, and which is this study's equipment (null: ask). */
+export type ReadSketch = {
+  fileId: string;
+  rooms: SketchRoomLayout[];
+  matched: number | null;
+  notes: string;
+};
+
+/**
+ * Reads the engineer's layout sketches (a photo, or the scanned PDF of a
+ * site's rooms, already uploaded) into each drawn room's positions, plan
+ * marks and shape, and says which room is this study's equipment, for the
+ * engineer to check and save (ADR 0021). Nothing in the study changes here.
+ * A file is sent to the reader (OpenAI) once and its reading kept, so every
+ * study the same PDF covers reuses it; the read is in the audit trail.
+ */
+export async function readLayoutSketch(
+  db: Database,
+  blobs: BlobStore,
+  reader: SketchReader | null,
+  actor: SessionUser,
+  studyId: string,
+  fileId: string,
+  request?: RequestInfo,
+): Promise<ReadSketch> {
+  assertCan(actor, "field.perform");
+  if (!isUuid(fileId)) throw new FieldError("That sketch was not uploaded. Upload it again.");
+  const { study, job, e, file, cached } = await db.transaction(async (tx) => {
+    const { study, job, equipment: e } = await loadStudy(tx, actor, studyId);
+    assertJob(job, LAYOUT_OK, "Changing the layout");
+    if (study.status === "completed")
+      throw new FieldError(`The ${e.code} study is done; its layout is fixed.`);
+    const [file] = await tx
+      .select()
+      .from(storedFiles)
+      .where(and(eq(storedFiles.id, fileId), eq(storedFiles.organisationId, actor.organisationId)));
+    if (!file) throw new FieldError("That sketch was not uploaded. Upload it again.");
+    if (!SKETCH_TYPES[file.fileType])
+      throw new FieldError("The sketch must be a photo (JPEG or PNG) or a scanned PDF.");
+    const [cached] = await tx
+      .select({ reading: layoutSketchReadings.reading })
+      .from(layoutSketchReadings)
+      .where(eq(layoutSketchReadings.fileId, file.id));
+    return { study, job, e, file, cached };
+  });
+
+  let reading: SketchReading;
+  if (cached) {
+    reading = cached.reading;
+  } else {
+    if (!reader) {
+      throw new FieldError(
+        "Reading sketches isn't set up on this server: add OPENAI_API_KEY to its settings.",
+      );
+    }
+    const bytes = await blobs.get(file.storageKey);
+    let raw: unknown;
+    try {
+      raw = await reader({ bytes: new Uint8Array(bytes), mime: SKETCH_TYPES[file.fileType]! });
+    } catch (error) {
+      if (error instanceof SketchReadError) throw new FieldError(error.message);
+      throw error;
+    }
+    const parsed = sketchReadingSchema.safeParse(raw);
+    if (!parsed.success || parsed.data.rooms.length === 0) {
+      throw new FieldError(
+        "No room could be read from the sketch. Scan it straight and in focus, and try again.",
+      );
+    }
+    reading = parsed.data;
+    await db.transaction(async (tx) => {
+      await tx
+        .insert(layoutSketchReadings)
+        .values({
+          fileId: file.id,
+          organisationId: actor.organisationId,
+          model: reader.model ?? "unknown",
+          reading,
+        })
+        .onConflictDoNothing();
+      await recordAudit(tx, {
+        organisationId: actor.organisationId,
+        actor: user(actor),
+        action: "study.sketch_read",
+        entityType: "study",
+        entityId: study.id,
+        summary: `${actor.name} had the layout sketches ${file.firstFileName} read for ${e.code} on job ${job.number}: ${reading.rooms.length} rooms`,
+        after: { fileId: file.id, model: reader.model, rooms: reading.rooms.length },
+        request,
+      });
+    });
+  }
+  const rooms = reading.rooms.map((room, index) => ({
+    ...layoutFromRoom(room, study.loggerCount),
+    index,
+    name: room.name,
+    code: room.code,
+    page: room.page,
+  }));
+  return {
+    fileId: file.id,
+    rooms,
+    matched: matchRoom(reading.rooms, { code: e.code, name: e.name }),
+    notes: reading.notes,
+  };
+}
+
+/** The files a sketch can be, with the type the reader is told. */
+const SKETCH_TYPES: Record<string, string | undefined> = {
+  jpeg: "image/jpeg",
+  png: "image/png",
+  pdf: "application/pdf",
+};
 
 // ---------------------------------------------------------------- loggers
 
@@ -413,6 +573,34 @@ export async function placeLogger(
       .from(jobInstruments)
       .where(and(eq(jobInstruments.jobId, job.id), eq(jobInstruments.instrumentId, inst.id)));
     if (!booking) {
+      // Booked on site only while the job still needs loggers of this kind (16 needed,
+      // 16 booked: place one of those, or remove a booking first).
+      const [onJob, needs] = await Promise.all([
+        tx
+          .select({ type: instruments.type })
+          .from(jobInstruments)
+          .innerJoin(instruments, eq(instruments.id, jobInstruments.instrumentId))
+          .where(eq(jobInstruments.jobId, job.id)),
+        tx
+          .select({
+            workType: studies.workType,
+            loggerCount: studies.loggerCount,
+            positions: sql<number>`(select count(*)::int from study_positions sp where sp.study_id = "studies"."id")`,
+          })
+          .from(studies)
+          .where(eq(studies.jobId, job.id)),
+      ]);
+      const counts = {
+        booked: onJob.filter((r) => r.type === inst.type).length,
+        needed: needs
+          .filter((n) => INSTRUMENT_FOR[n.workType as WorkType] === inst.type)
+          .reduce((t, n) => t + loggersFor(n), 0),
+      };
+      if (counts.needed > 0 && counts.booked >= counts.needed) {
+        throw new FieldError(
+          `${inst.code} isn't booked on job ${job.number}, and its ${counts.needed} loggers are already booked. Place one of the booked loggers, or ask the team leader to swap the booking.`,
+        );
+      }
       await tx.insert(jobInstruments).values({
         organisationId: actor.organisationId,
         jobId: job.id,
@@ -528,7 +716,15 @@ export function cycleProgress<E extends { cycle: string; kind: string; at: Date;
   });
 }
 
-function statusFrom(progress: ReturnType<typeof cycleProgress>): StudyStatus {
+/**
+ * A study's status is derived from its cycle events, never set by hand: done
+ * when every cycle has ended, running once one has started (ADR 0022).
+ */
+export function studyStatusFrom(
+  study: Pick<Study, "workType"> & Parameters<typeof cyclesOf>[0],
+  events: { cycle: string; kind: string; at: Date; voided: boolean }[],
+): StudyStatus {
+  const progress = cycleProgress(cyclesOf(study), events, study.workType === "thermal_validation");
   if (progress.every((c) => c.done)) return "completed";
   if (progress.some((c) => c.startedAt)) return "in_progress";
   return "planned";
@@ -544,11 +740,12 @@ async function syncStudyStatus(
     .select()
     .from(studyEvents)
     .where(eq(studyEvents.studyId, loaded.study.id));
-  const status = statusFrom(
-    cycleProgress(cyclesOf(loaded.study), events, loaded.study.workType === "thermal_validation"),
-  );
+  const status = studyStatusFrom(loaded.study, events);
   if (status === loaded.study.status) return status;
-  await tx.update(studies).set({ status }).where(eq(studies.id, loaded.study.id));
+  await tx
+    .update(studies)
+    .set({ status: move(STUDY_FLOW, loaded.study.status as StudyStatus, status) })
+    .where(eq(studies.id, loaded.study.id));
   await recordAudit(tx, {
     organisationId: actor.organisationId,
     actor: user(actor),

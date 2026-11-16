@@ -1,3 +1,5 @@
+import { machine } from "@/lib/state-machine";
+
 /**
  * Jobs: the vocabulary shared by the database checks, the services and the
  * screens. Statuses follow QA Tech's flow (plan document, confirmed 28 Oct 2026).
@@ -204,6 +206,44 @@ export const READINESS_INFO: Record<
     hint: "For a requalification: the last report, to compare against. Found by itself when it is in QTech.",
   },
 };
+
+const live = (except: JobStatus[] = []) =>
+  JOB_STATUSES.filter((s) => !FINISHED.includes(s) && !except.includes(s));
+const REPORTING: JobStatus[] = [
+  "report_draft",
+  "rework",
+  "checked",
+  "sent_to_client",
+  "client_signed",
+];
+const MONEY: JobStatus[] = ["wcr_signed", "invoiced", "paid"];
+const others = (list: JobStatus[], s: JobStatus) => list.filter((x) => x !== s);
+
+/**
+ * Every move a job's status may make (ADR 0022): what readiness, the data,
+ * the analysis, the reports, the WCR and the money move it to by themselves,
+ * and hold, resume, cancel, close and reopen. Any live job can be held or
+ * cancelled; a held job resumes where it was.
+ */
+export const JOB_FLOW = machine<JobStatus>("job", JOB_STATUSES, {
+  created: ["ready", "on_hold", "cancelled"],
+  ready: ["created", "field_work", "on_hold", "cancelled"],
+  field_work: ["data_issue", "data_received", "on_hold", "cancelled"],
+  data_issue: ["field_work", "data_received", "on_hold", "cancelled"],
+  data_received: ["field_work", "data_issue", "analysis", "on_hold", "cancelled"],
+  analysis: ["field_work", "data_issue", "report_draft", "on_hold", "cancelled"],
+  report_draft: [...others(REPORTING, "report_draft"), ...MONEY, "on_hold", "cancelled"],
+  rework: [...others(REPORTING, "rework"), ...MONEY, "on_hold", "cancelled"],
+  checked: [...others(REPORTING, "checked"), ...MONEY, "on_hold", "cancelled"],
+  sent_to_client: [...others(REPORTING, "sent_to_client"), ...MONEY, "on_hold", "cancelled"],
+  client_signed: [...others(REPORTING, "client_signed"), ...MONEY, "on_hold", "cancelled"],
+  wcr_signed: ["invoiced", "paid", "on_hold", "cancelled"],
+  invoiced: ["wcr_signed", "paid", "on_hold", "cancelled"],
+  paid: ["wcr_signed", "invoiced", "closed", "on_hold", "cancelled"],
+  closed: ["paid"],
+  on_hold: [...live(["on_hold"]), "cancelled"],
+  cancelled: [],
+});
 
 export type Transition = "start_field_work" | "hold" | "resume" | "cancel";
 

@@ -39,6 +39,9 @@ import {
 import { istStamp } from "@/domain/reports/signed-copy";
 import { revLabel, type ReportStatus } from "@/domain/reports/types";
 import { recordAudit } from "@/lib/audit";
+import { move } from "@/lib/state-machine";
+
+import { WCR_FLOW, type WcrStatus } from "./types";
 import type { BlobStore } from "@/lib/storage/blob-store";
 import { storeFile } from "@/lib/storage/store-file";
 
@@ -328,7 +331,11 @@ export async function voidWcr(
     }
     await tx
       .update(jobWcrs)
-      .set({ status: "void", voidReason: why, voidedAt: new Date() })
+      .set({
+        status: move(WCR_FLOW, w.status as WcrStatus, "void"),
+        voidReason: why,
+        voidedAt: new Date(),
+      })
       .where(eq(jobWcrs.id, w.id));
     await recordAudit(tx, {
       organisationId: actor.organisationId,
@@ -367,7 +374,7 @@ export async function acceptWcr(
     await tx
       .update(jobWcrs)
       .set({
-        status: "signed",
+        status: move(WCR_FLOW, w.status as WcrStatus, "signed"),
         signedVia: "app",
         signedAt: new Date(),
         signatureId: signed.signature.id,
@@ -429,7 +436,7 @@ export async function recordWcrPaper(
     await tx
       .update(jobWcrs)
       .set({
-        status: "signed",
+        status: move(WCR_FLOW, w.status as WcrStatus, "signed"),
         signedVia: "paper",
         signedAt: new Date(),
         paperFileId: f.id,

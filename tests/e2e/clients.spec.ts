@@ -71,11 +71,14 @@ test("phase 2 exit test: Watson Pharma → Seawoods → BA → BE-WF-02 with −
     .getByRole("navigation", { name: "Breadcrumb" })
     .getByRole("link", { name: "BA" })
     .click();
+  // Inside the BA folder of Seawoods, as in Windows Explorer.
+  const address = page.getByRole("region", { name: "Client folders and files" });
+  await expect(address.getByRole("navigation", { name: "Breadcrumb" })).toContainText(
+    /Seawoods.*BA/,
+  );
   const row = page.getByRole("row", { name: /BE-WF-02/ });
-  await expect(row).toContainText("Seawoods");
-  await expect(row).toContainText("BA");
+  await expect(row).toContainText("Walk-in freezer");
   await expect(row).toContainText("−30 to −15 °C");
-  await expect(row).toContainText("9");
   await expect(row).toContainText("22 May 2027");
 
   // Found from the list by equipment ID.

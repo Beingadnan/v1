@@ -25,6 +25,7 @@ import {
   removeDataFile,
   requestData,
   setChannelMatch,
+  setStudyPeriod,
   withdrawAcceptance,
 } from "@/domain/data/data-service";
 import { getStudyData } from "@/domain/data/queries";
@@ -550,5 +551,42 @@ describe("phase 6: logger data in, checked, and confirmed", () => {
     expect(
       (await db.select().from(studyDataFiles).where(eq(studyDataFiles.studyId, studyId))).length,
     ).toBe(5);
+  });
+
+  it("sets the study period typed after the upload: old times struck out, data read for the new period", async () => {
+    const istText = (ms: number) => {
+      const d = new Date(ms + 330 * MIN);
+      return d.toISOString().slice(0, 16);
+    };
+    const from = start.getTime() + 30 * MIN;
+    const to = end.getTime() - 30 * MIN;
+    const input = { cycle: "routine", start: istText(from), end: istText(to), reason: "" };
+    // Field engineers record times on site; the period from the data is the team leader's.
+    await expect(setStudyPeriod(db, engineer, studyId, input, req)).rejects.toBeInstanceOf(
+      ForbiddenError,
+    );
+    await expect(setStudyPeriod(db, leader, studyId, input, req)).rejects.toThrow(
+      "Say why the times change",
+    );
+    await expect(
+      setStudyPeriod(db, leader, studyId, { ...input, end: input.start, reason: "x" }, req),
+    ).rejects.toThrow("The end must be after the start.");
+    await setStudyPeriod(
+      db,
+      leader,
+      studyId,
+      { ...input, reason: "loggers started 30 min after the Start tap" },
+      req,
+    );
+    const d = await data();
+    const p = d.periods.find((x) => x.cycle === "routine")!;
+    expect(p.start!.getTime()).toBe(from);
+    expect(p.end!.getTime()).toBe(to);
+    expect(d.windows[0]).toMatchObject({ start: from, end: to });
+    const [audit] = await db
+      .select({ summary: auditLog.summary })
+      .from(auditLog)
+      .where(and(eq(auditLog.entityId, studyId), eq(auditLog.action, "study.period_set")));
+    expect(audit!.summary).toContain("loggers started 30 min after the Start tap");
   });
 });

@@ -30,13 +30,21 @@ import { isUuid } from "@/domain/clients/shared";
 import { nextDueDate, todayInIndia } from "@/domain/clients/requalification";
 import { allocateNumber } from "@/domain/numbering/allocate";
 import { recordAudit } from "@/lib/audit";
+import { move } from "@/lib/state-machine";
 import { shortList } from "@/lib/text";
 
 import { cleanDecimal, deviation, type AccuracySpec } from "./calibration-math";
 import { certificatesOf, evaluate, lockInstruments } from "./certificate-service";
 import { InstrumentsError } from "./errors";
 import { calibrationHeaderSchema, pointSchema, type Loose } from "./schemas";
-import { INSTRUMENT_TYPE_INFO, TYPE_MEASURES, type InstrumentType, type Quantity } from "./types";
+import {
+  CERTIFICATE_FLOW,
+  INSTRUMENT_TYPE_INFO,
+  TYPE_MEASURES,
+  type CertificateStatus,
+  type InstrumentType,
+  type Quantity,
+} from "./types";
 import { usableOn } from "./validity";
 
 /** Most loggers QA Tech calibrates in one batch (two FT-05 pages of 10). */
@@ -584,8 +592,8 @@ export async function certificateSignatures(
 const STEPS: Record<
   "submit" | "check" | "approve",
   {
-    from: string;
-    to: string;
+    from: CertificateStatus;
+    to: CertificateStatus;
     meaning: SignatureMeaning;
     action: Action;
     audit: "certificate.submitted" | "certificate.checked" | "certificate.issued";
@@ -673,7 +681,7 @@ export async function signCalibrationStep(
     await tx
       .update(certificates)
       .set({
-        status: step.to,
+        status: move(CERTIFICATE_FLOW, cert.status as CertificateStatus, step.to),
         updatedAt: new Date(),
         ...(input.step === "submit" ? { preparedByName: actor.name } : {}),
         ...(input.step === "approve" ? { issuedOn: today } : {}),
@@ -762,7 +770,10 @@ export async function returnCalibration(
     assertCan(actor, cert.status === "checking" ? "calibration.check" : "calibration.approve");
     await tx
       .update(certificates)
-      .set({ status: "draft", updatedAt: new Date() })
+      .set({
+        status: move(CERTIFICATE_FLOW, cert.status as CertificateStatus, "draft"),
+        updatedAt: new Date(),
+      })
       .where(eq(certificates.id, cert.id));
     await recordAudit(tx, {
       organisationId: actor.organisationId,

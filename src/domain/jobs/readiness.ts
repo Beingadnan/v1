@@ -42,6 +42,8 @@ export type ReadinessInput = {
   studies: {
     workType: WorkType;
     loggerCount: number;
+    /** Positions laid out (an ambient one can be over the logger count); read for booking. */
+    positions?: number;
     /** Optional in older callers; pre-calibration needs a master like post-calibration. */
     preCalRequired?: boolean;
     postCalRequired: boolean;
@@ -138,6 +140,13 @@ function listFew(reasons: string[]): string {
     ? reasons.join("; ")
     : `${reasons.slice(0, 3).join("; ")} and ${reasons.length - 3} more`;
 }
+
+/**
+ * How many loggers a study takes: its logger count, or its laid-out positions when an
+ * ambient position adds one (QA Tech, Nov 2026: 16 needed means 16 booked at most).
+ */
+export const loggersFor = (s: { loggerCount: number; positions?: number }) =>
+  Math.max(s.loggerCount, s.positions ?? 0);
 
 export function computeReadiness(input: ReadinessInput): {
   items: ReadinessItem[];

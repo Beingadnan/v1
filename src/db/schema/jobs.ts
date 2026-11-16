@@ -28,6 +28,8 @@ import {
   TEAM_ROLES,
   WORK_TYPES,
 } from "@/domain/jobs/types";
+import type { Shape } from "@/domain/field/layout";
+import type { SketchReading } from "@/domain/field/sketch";
 import type { PlanFeature } from "@/domain/field/types";
 
 import { clientCompanies, clientSites, equipment } from "./clients";
@@ -232,6 +234,12 @@ export const studies = pgTable(
     loggerCount: integer("logger_count").notNull().default(0),
     /** Doors, pass boxes, LAFs, ducts… marked on the floor plan (QA Tech, Nov 2026). */
     planFeatures: jsonb("plan_features").$type<PlanFeature[]>().notNull().default([]),
+    /** The shape read from the engineer's layout sketch: proportions, standing or lying, racks. */
+    roomShape: jsonb("room_shape").$type<Shape>(),
+    /** The photo of that sketch, kept with the study. */
+    layoutSketchFileId: uuid("layout_sketch_file_id").references(() => storedFiles.id, {
+      onDelete: "restrict",
+    }),
     intervalMinutes: integer("interval_minutes"),
     durationHours: integer("duration_hours"),
     /**
@@ -390,3 +398,20 @@ export const jobStatusHistory = pgTable(
 export type Job = typeof jobs.$inferSelect;
 export type Study = typeof studies.$inferSelect;
 export type RateCard = typeof rateCards.$inferSelect;
+
+/**
+ * A sketch file as the vision model read it, once per file: every study the
+ * same PDF covers takes its room from here without paying for another read
+ * (ADR 0021).
+ */
+export const layoutSketchReadings = pgTable("layout_sketch_readings", {
+  fileId: uuid("file_id")
+    .primaryKey()
+    .references(() => storedFiles.id, { onDelete: "restrict" }),
+  organisationId: uuid("organisation_id")
+    .notNull()
+    .references(() => organisations.id),
+  model: text("model").notNull(),
+  reading: jsonb("reading").$type<SketchReading>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});

@@ -1,3 +1,5 @@
+import { machine } from "@/lib/state-machine";
+
 /**
  * Instruments QA Tech owns: the working fleet (data loggers, sensors) used on
  * client sites, and the master standards used to calibrate them.
@@ -74,6 +76,27 @@ export const INSTRUMENT_TYPE_INFO: Record<
 
 export const INSTRUMENT_TIERS = ["working", "master"] as const;
 export type InstrumentTier = (typeof INSTRUMENT_TIERS)[number];
+
+export const CERTIFICATE_STATUSES = [
+  "draft",
+  "checking",
+  "approving",
+  "issued",
+  "cancelled",
+] as const;
+export type CertificateStatus = (typeof CERTIFICATE_STATUSES)[number];
+/**
+ * A calibration certificate (ADR 0022): signed done by, checked by and
+ * approved by in turn; a checker or approver can send it back to draft; any
+ * certificate can be cancelled with a reason, and cancelled is final.
+ */
+export const CERTIFICATE_FLOW = machine<CertificateStatus>("certificate", CERTIFICATE_STATUSES, {
+  draft: ["checking", "cancelled"],
+  checking: ["approving", "draft", "cancelled"],
+  approving: ["issued", "draft", "cancelled"],
+  issued: ["cancelled"],
+  cancelled: [],
+});
 
 export const INSTRUMENT_STATUSES = ["active", "out_of_service", "retired", "lost"] as const;
 export type InstrumentStatus = (typeof INSTRUMENT_STATUSES)[number];

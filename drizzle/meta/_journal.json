@@ -190,6 +190,20 @@
       "when": 1794318300990,
       "tag": "0026_plan_features",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1794527748165,
+      "tag": "0027_layout_sketch",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1794754137887,
+      "tag": "0028_sketch_readings",
+      "breakpoints": true
     }
   ]
 }

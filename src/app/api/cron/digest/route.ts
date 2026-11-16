@@ -8,8 +8,8 @@ import { env } from "@/lib/env";
 import { emailSender } from "@/lib/mail";
 
 /**
- * POST /api/cron/digest — sends waiting alert emails and the daily digest.
- * Called once a day by the host's scheduler with
+ * POST (or GET, as Vercel Cron calls it) /api/cron/digest — sends waiting alert
+ * emails and the daily digest. Called once a day by the host's scheduler with
  * "Authorization: Bearer <CRON_SECRET>"; off while CRON_SECRET is unset.
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
@@ -22,3 +22,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const result = await dailyDigest(db, emailSender, env.APP_URL);
   return NextResponse.json(result);
 }
+
+/** Vercel Cron calls with GET and the same bearer secret (vercel.json). */
+export const GET = POST;
