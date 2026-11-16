@@ -1,4 +1,4 @@
-import { ChevronLeft, FileText } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, FileText } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -27,10 +27,12 @@ import { TimesPanel } from "./times-panel";
 
 export const metadata = { title: "Study" };
 
+/** The study's steps, in the order QA Tech does them; each is a tab. */
 const TABS = [
-  { key: "layout", label: "Layout" },
+  { key: "layout", label: "Positions" },
+  { key: "loggers", label: "Loggers" },
   { key: "precal", label: "Pre-cal" },
-  { key: "times", label: "Times" },
+  { key: "times", label: "Start & end" },
   { key: "data", label: "Data" },
   { key: "postcal", label: "Post-cal" },
   { key: "analysis", label: "Analysis" },
@@ -69,21 +71,6 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
   const tabs = TABS.filter(
     (t) => (t.key !== "precal" || s.precalNeeded) && (t.key !== "postcal" || s.postcalNeeded),
   );
-  // Open where the work is: positions and their loggers first, then the times.
-  const suggested: Tab =
-    s.positions.length === 0
-      ? "layout"
-      : placed < s.positions.length && !done
-        ? "layout"
-        : done
-          ? s.study.analysisApprovedAt
-            ? "report"
-            : s.study.dataStatus === "received"
-              ? "analysis"
-              : "data"
-          : "times";
-  const tab: Tab = named && tabs.some((t) => t.key === named) ? named : suggested;
-  const { data, analysis, report } = early ?? (await tabData(actor, studyId, tab));
   const preRows = s.precal.filter((r) => r.phase === "pre");
   const overrideProps = {
     overrides: s.overrides,
@@ -101,12 +88,88 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
     "report_draft",
     "rework",
   ].includes(s.job.status);
-  const DATA_MARK: Record<string, string> = {
-    none: "—",
-    issues: "!",
-    checked: "?",
-    received: "✓",
+  const preDone = new Set(preRows.map((r) => r.instrumentId)).size;
+  const postDone = new Set(postRows.map((r) => r.instrumentId)).size;
+  // What each step has done, and so the first step still to do.
+  const doneStep: Record<Tab, boolean> = {
+    layout: s.positions.length > 0,
+    loggers: s.positions.length > 0 && placed === s.positions.length,
+    precal: placed > 0 && preDone >= placed,
+    times: s.cycles.length > 0 && s.cycles.every((c) => c.done),
+    data: s.study.dataStatus === "received",
+    postcal: placed > 0 && postDone >= placed,
+    analysis: !!s.study.analysisApprovedAt,
+    report: [
+      "checked",
+      "sent_to_client",
+      "client_signed",
+      "wcr_signed",
+      "invoiced",
+      "paid",
+      "closed",
+    ].includes(s.job.status),
   };
+  // A checked or signed report ends the study: nothing earlier is left to do.
+  const current: Tab = doneStep.report
+    ? "report"
+    : (tabs.find((t) => !doneStep[t.key])?.key ?? "report");
+  const tab: Tab = named && tabs.some((t) => t.key === named) ? named : current;
+  const { data, analysis, report } = early ?? (await tabData(actor, studyId, tab));
+  const stepLabel = (k: Tab) => TABS.find((t) => t.key === k)!.label;
+
+  // The one thing to do now, in plain words.
+  const waitingForJob =
+    s.job.status === "created" && ["loggers", "precal", "times"].includes(current);
+  const NEXT: Record<Tab, { title: string; text: string }> = {
+    layout: {
+      title: "Lay out the positions",
+      text: "Read the engineer's sketch, start from the template, or add positions on the drawing. Then save.",
+    },
+    loggers: {
+      title: "Put a logger at each position",
+      text: `Scan or type each logger's ID. ${placed} of ${s.positions.length} placed.`,
+    },
+    precal: {
+      title: "Record the pre-calibration",
+      text: `Compare each logger with the master before the study starts. ${preDone} of ${placed} done.`,
+    },
+    times: {
+      title: "Start and end the study",
+      text: "Tap Start when the loggers start recording, and End when the study is over.",
+    },
+    data: {
+      title: s.study.dataStatus === "issues" ? "Fix the data problems" : "Upload the logger data",
+      text:
+        s.study.dataStatus === "issues"
+          ? "The uploaded data has gaps or errors: accept each with a reason, or upload again."
+          : s.study.dataStatus === "checked"
+            ? "The data is checked: set the study period if needed, then confirm it is received."
+            : "Upload the loggers' export, set the study period, then confirm it is received.",
+    },
+    postcal: {
+      title: "Record the post-calibration",
+      text: `Compare each logger with the master after the study. ${postDone} of ${placed} done.`,
+    },
+    analysis: {
+      title: "Check and approve the analysis",
+      text: "Review the results against the limits, then approve them for the report.",
+    },
+    report: doneStep.report
+      ? {
+          title: "Study complete",
+          text: "The report is checked. It goes to the client from the job.",
+        }
+      : {
+          title: "Prepare the report",
+          text: "Draft the report, then sign it and send it for checking.",
+        },
+  };
+  const next = waitingForJob
+    ? {
+        title: "Waiting for the job to be ready",
+        text: "Loggers can be placed once the job has its gate pass and booked loggers.",
+      }
+    : NEXT[current];
 
   return (
     <div
@@ -129,80 +192,113 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
           Job {s.job.number}
         </Link>
       )}
-      <header className="flex flex-col gap-1">
-        <div className="flex flex-wrap items-center gap-2">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-col gap-1">
           <h1 className="text-xl font-semibold">
             {s.equipment.code}{" "}
-            <span className="font-normal text-muted-foreground">{s.equipment.name}</span>
+            <span className="font-normal text-muted-foreground">{s.equipment.name}</span>{" "}
+            <StatusBadge tone={done ? "pass" : s.status === "in_progress" ? "info" : "neutral"}>
+              {STUDY_STATUS_LABELS[s.status]}
+            </StatusBadge>
           </h1>
-          <StatusBadge tone={done ? "pass" : s.status === "in_progress" ? "info" : "neutral"}>
-            {STUDY_STATUS_LABELS[s.status]}
-          </StatusBadge>
+          <p className="text-sm text-muted-foreground">
+            {WORK_TYPE_LABELS[s.study.workType as WorkType] ?? s.study.workType} ·{" "}
+            {s.study.loggerCount} loggers
+            {s.study.durationHours ? ` · ${s.study.durationHours} h` : ""} · {s.companyName},{" "}
+            {s.siteName} ·{" "}
+            <Link href={`/jobs/${s.job.id}`} className="text-primary hover:underline">
+              {s.job.number}
+            </Link>
+          </p>
         </div>
-        <p className="text-sm text-muted-foreground">
-          {s.companyName} · {s.siteName}
-          {s.equipment.department ? ` · ${s.equipment.department}` : ""} ·{" "}
-          <Link href={`/jobs/${s.job.id}`} className="text-primary hover:underline">
-            {s.job.number}
-          </Link>
-        </p>
-        <p className="text-sm text-muted-foreground">
-          {WORK_TYPE_LABELS[s.study.workType as WorkType] ?? s.study.workType} ·{" "}
-          {s.study.loggerCount} loggers
-          {s.study.durationHours ? ` · ${s.study.durationHours} h` : ""}
-          {s.study.intervalMinutes ? ` · every ${s.study.intervalMinutes} min` : ""}
-        </p>
-        <p className="font-mono text-xs break-all text-muted-foreground">{s.study.reportNumber}</p>
+        <a
+          href={`/studies/${studyId}/ft12`}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex min-h-9 items-center gap-2 rounded-md border border-border px-3 text-sm hover:border-primary"
+        >
+          <FileText className="size-4" aria-hidden="true" />
+          Sensor location sheet (FT-12)
+        </a>
       </header>
 
-      {!onSite && !["data", "postcal", "analysis", "report"].includes(tab) ? (
-        <p className="rounded-md bg-attention-soft px-3 py-2 text-sm text-attention">
-          {s.job.status === "created"
-            ? "The job isn't ready for field work yet: the layout can be prepared, but loggers and times wait until it is Ready."
-            : "Field work on this job is closed: layout, loggers and times can be viewed, not changed."}
-        </p>
-      ) : null}
-
       <ShowActiveTab />
-      <nav aria-label="Study steps" className="-mx-4 flex gap-1 overflow-x-auto px-4">
-        {tabs.map((t) => {
-          const count =
-            t.key === "layout"
-              ? // Positions with a logger, of all positions.
-                `${placed}/${s.positions.length}`
-              : t.key === "data"
-                ? (DATA_MARK[s.study.dataStatus] ?? "")
-                : t.key === "precal"
-                  ? preRows.length
-                  : t.key === "postcal"
-                    ? `${new Set(postRows.map((r) => r.instrumentId)).size}/${placed}`
-                    : t.key === "analysis"
-                      ? s.study.analysisApprovedAt
-                        ? "✓"
-                        : ""
-                      : t.key === "report"
-                        ? ""
-                        : `${s.cycles.filter((c) => c.done).length}/${s.cycles.length}`;
+      <nav aria-label="Study steps" className="-mx-4 flex gap-1 overflow-x-auto px-4 pb-1">
+        {tabs.map((t, i) => {
+          const isDone = doneStep[t.key];
+          const isCurrent = t.key === current && !(t.key === "report" && doneStep.report);
           return (
             <Link
               key={t.key}
               href={`/studies/${studyId}?tab=${t.key}`}
               aria-current={tab === t.key ? "page" : undefined}
               className={cn(
-                "flex min-h-11 shrink-0 items-center gap-1.5 rounded-md px-3 text-sm",
-                tab === t.key ? "bg-primary text-primary-foreground" : "bg-surface-muted",
+                "flex min-h-10 shrink-0 items-center gap-1.5 rounded-full border px-3 text-sm",
+                tab === t.key
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : isCurrent
+                    ? "border-primary text-primary"
+                    : "border-border text-muted-foreground hover:border-primary",
               )}
             >
+              {isDone ? (
+                <Check
+                  className={cn("size-3.5", tab === t.key ? "" : "text-pass")}
+                  aria-hidden="true"
+                />
+              ) : (
+                <span className="text-xs" aria-hidden="true">
+                  {i + 1}
+                </span>
+              )}
               {t.label}
-              <span
-                className={cn("text-xs", tab === t.key ? "opacity-80" : "text-muted-foreground")}
-              >
-                {count}
-              </span>
+              {isDone ? <span className="sr-only"> (done)</span> : null}
+              {t.key === "data" && s.study.dataStatus === "issues" ? (
+                <span className="size-2 rounded-full bg-fail" aria-label="problems" />
+              ) : null}
             </Link>
           );
         })}
       </nav>
+
+      <section
+        aria-labelledby="next"
+        className="flex flex-wrap items-center justify-between gap-3 rounded-lg border-2 border-primary/40 bg-surface p-4"
+      >
+        <div className="min-w-0">
+          <p className="text-xs font-semibold tracking-wide text-primary uppercase">
+            What to do now
+          </p>
+          <h2 id="next" className="text-lg font-semibold">
+            {next.title}
+          </h2>
+          <p className="text-sm text-muted-foreground">{next.text}</p>
+        </div>
+        {waitingForJob ? (
+          <Link
+            href={`/jobs/${s.job.id}`}
+            className="inline-flex min-h-10 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground"
+          >
+            Open the job
+          </Link>
+        ) : tab !== current ? (
+          <Link
+            href={`/studies/${studyId}?tab=${current}`}
+            className="inline-flex min-h-10 items-center gap-1 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground"
+          >
+            Go to {stepLabel(current)}
+            <ChevronRight className="size-4" aria-hidden="true" />
+          </Link>
+        ) : null}
+      </section>
+
+      {!onSite && ["layout", "loggers", "precal", "times"].includes(tab) && !waitingForJob ? (
+        <p className="rounded-md bg-attention-soft px-3 py-2 text-sm text-attention">
+          {s.job.status === "created"
+            ? "Positions can be prepared now; loggers and times wait until the job is Ready."
+            : "Field work on this job is closed: this step can be viewed, not changed."}
+        </p>
+      ) : null}
 
       {tab === "layout" ? (
         <div className="flex flex-col gap-4">
@@ -226,29 +322,27 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
             initialFeatures={s.study.planFeatures}
             canReadSketch={sketchReader !== null}
           />
-          {s.positions.length > 0 ? (
-            <section id="loggers" aria-labelledby="loggers-h" className="flex flex-col gap-3">
-              <h2 id="loggers-h" className="font-semibold">
-                Logger at each position
-              </h2>
-              <LoggerPanel
-                studyId={studyId}
-                readOnly={!canWork || !onSite || done}
-                spare={s.spare}
-                positions={s.positions.map((p) => ({
-                  id: p.id,
-                  label: p.label,
-                  note: p.note,
-                  ambient: p.ambient,
-                  instrumentId: p.instrumentId,
-                  code: p.code,
-                  serialNo: p.serialNo,
-                  due: p.certificate?.validUntil ?? null,
-                }))}
-              />
-            </section>
-          ) : null}
         </div>
+      ) : tab === "loggers" ? (
+        s.positions.length > 0 ? (
+          <LoggerPanel
+            studyId={studyId}
+            readOnly={!canWork || !onSite || done}
+            spare={s.spare}
+            positions={s.positions.map((p) => ({
+              id: p.id,
+              label: p.label,
+              note: p.note,
+              ambient: p.ambient,
+              instrumentId: p.instrumentId,
+              code: p.code,
+              serialNo: p.serialNo,
+              due: p.certificate?.validUntil ?? null,
+            }))}
+          />
+        ) : (
+          <p className="text-sm text-muted-foreground">Lay out the positions first.</p>
+        )
       ) : tab === "precal" ? (
         <PrecalPanel
           studyId={studyId}
@@ -297,16 +391,6 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
           <DataPanel data={data} />
         ) : null
       ) : null}
-
-      <a
-        href={`/studies/${studyId}/ft12`}
-        target="_blank"
-        rel="noreferrer"
-        className="inline-flex min-h-11 w-fit items-center gap-2 rounded-md border border-border px-4 text-sm hover:border-primary"
-      >
-        <FileText className="size-4" aria-hidden="true" />
-        Sensor location sheet (FT-12)
-      </a>
     </div>
   );
 }

@@ -16,6 +16,14 @@ import {
   attachCertificateFile,
   createExternalCertificate,
 } from "@/domain/instruments/certificate-service";
+import {
+  checkCertificateUpload,
+  readCertificateUpload,
+  saveCertificateUploads,
+  type UploadDraft,
+  type UploadResult,
+  type UploadRow,
+} from "@/domain/instruments/certificate-upload-service";
 import { InstrumentsError } from "@/domain/instruments/errors";
 import {
   applyInstrumentImport,
@@ -31,6 +39,7 @@ import {
 } from "@/domain/instruments/instrument-service";
 import { resolveInstrumentList } from "@/domain/instruments/queries";
 import { runAction, type ActionResult } from "@/lib/action-result";
+import { certificateReader } from "@/lib/ai";
 import { requireUser, SESSION_ENDED, userForAction } from "@/lib/auth/dal";
 import { getRequestInfo } from "@/lib/request-info";
 import { blobStore } from "@/lib/storage";
@@ -401,5 +410,37 @@ export async function attachCertificateFileAction(
     "Certificate PDF attached.",
   );
   if (result.ok) refresh(`/instruments/certificates/${certificateId}`, "/instruments/certificates");
+  return result;
+}
+
+/** Reads one uploaded certificate scan into rows to check (ADR 0024). */
+export async function readCertificateUploadAction(
+  fileId: string,
+): Promise<ActionResult<UploadRow[]>> {
+  const actor = await userForAction();
+  if (!actor) return { ok: false, error: SESSION_ENDED };
+  return runAction(async () =>
+    readCertificateUpload(db, blobStore, certificateReader, actor, fileId, await getRequestInfo()),
+  );
+}
+
+/** Re-matches a row after the person edits it. */
+export async function checkCertificateUploadAction(
+  draft: UploadDraft,
+): Promise<ActionResult<Omit<UploadRow, "key" | "source" | "notes">>> {
+  const actor = await userForAction();
+  if (!actor) return { ok: false, error: SESSION_ENDED };
+  return runAction(async () => checkCertificateUpload(db, actor, draft));
+}
+
+export async function saveCertificateUploadsAction(
+  drafts: (UploadDraft & { key: string })[],
+): Promise<ActionResult<UploadResult[]>> {
+  const actor = await userForAction();
+  if (!actor) return { ok: false, error: SESSION_ENDED };
+  const result = await runAction(async () =>
+    saveCertificateUploads(db, actor, drafts, await getRequestInfo()),
+  );
+  if (result.ok) refresh("/instruments/certificates");
   return result;
 }

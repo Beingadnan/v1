@@ -1,4 +1,4 @@
-import { ChevronLeft, FileText, GitBranch } from "lucide-react";
+import { ChevronLeft, Download, FileText, FileUp, GitBranch } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -142,6 +142,12 @@ export default async function InstrumentPage({
                 instrumentId={instrument.id}
                 instrumentCode={instrument.code}
               />
+              <Button asChild>
+                <Link href={`/instruments/certificates/upload?instrument=${instrument.id}`}>
+                  <FileUp aria-hidden="true" />
+                  Upload certificate
+                </Link>
+              </Button>
             </div>
           ) : undefined
         }
@@ -175,33 +181,6 @@ export default async function InstrumentPage({
         </div>
       </section>
 
-      <section aria-labelledby="trace" className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <h2 id="trace" className="flex items-center gap-2 text-lg font-semibold">
-            <GitBranch className="size-5" aria-hidden="true" />
-            Traceability
-          </h2>
-          <form className="flex items-end gap-2">
-            <label className="flex flex-col gap-1 text-sm">
-              <span>On the date</span>
-              <Input type="date" name="on" defaultValue={date} className="w-44" />
-            </label>
-            <Button type="submit" variant="secondary">
-              Show
-            </Button>
-          </form>
-        </div>
-        <p className="text-sm text-muted-foreground">
-          The certificate that covered this instrument on the date, the masters used to calibrate
-          it, and the masters&apos; own certificates on that calibration day.
-        </p>
-        {chain ? (
-          <ul>
-            <TraceTree node={chain} />
-          </ul>
-        ) : null}
-      </section>
-
       <section aria-labelledby="history" className="flex flex-col gap-3">
         <h2 id="history" className="flex items-center gap-2 text-lg font-semibold">
           <FileText className="size-5" aria-hidden="true" />
@@ -218,6 +197,7 @@ export default async function InstrumentPage({
                 <TableHead>Due</TableHead>
                 <TableHead>Result</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>Scan</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -253,11 +233,53 @@ export default async function InstrumentPage({
                       {CERTIFICATE_STATUS[c.status]?.label ?? c.status}
                     </StatusBadge>
                   </TableCell>
+                  <TableCell>
+                    {c.fileId || c.kind === "internal" ? (
+                      <a
+                        href={`/instruments/certificates/${c.id}/pdf`}
+                        className="inline-flex items-center gap-1 text-primary hover:underline"
+                      >
+                        <Download className="size-3.5" aria-hidden="true" />
+                        PDF
+                      </a>
+                    ) : c.status === "cancelled" ? (
+                      "—"
+                    ) : (
+                      <StatusBadge tone="attention">Missing</StatusBadge>
+                    )}
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         )}
+      </section>
+
+      <section aria-labelledby="trace" className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <h2 id="trace" className="flex items-center gap-2 text-lg font-semibold">
+            <GitBranch className="size-5" aria-hidden="true" />
+            Traceability
+          </h2>
+          <form className="flex items-end gap-2">
+            <label className="flex flex-col gap-1 text-sm">
+              <span>On the date</span>
+              <Input type="date" name="on" defaultValue={date} className="w-44" />
+            </label>
+            <Button type="submit" variant="secondary">
+              Show
+            </Button>
+          </form>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          The certificate that covered this instrument on the date, the masters used to calibrate
+          it, and the masters&apos; own certificates on that calibration day.
+        </p>
+        {chain ? (
+          <ul>
+            <TraceTree node={chain} />
+          </ul>
+        ) : null}
       </section>
 
       {instrument.usedAsMaster.length > 0 ? (

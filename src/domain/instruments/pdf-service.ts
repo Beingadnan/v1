@@ -33,14 +33,27 @@ export async function certificatePdf(
   blobs: BlobStore,
   actor: SessionUser,
   certificateId: string,
-): Promise<{ bytes: Uint8Array; fileName: string } | null> {
+): Promise<{ bytes: Uint8Array; fileName: string; contentType?: string } | null> {
   const cert = await getCertificate(db, actor, certificateId);
   if (!cert) return null;
   const fileName = `${cert.number.replace(/[\\/:*?"<>|]+/g, "-")}.pdf`;
   // A cancelled QA Tech certificate is re-rendered so it carries the CANCELLED mark.
   if (cert.fileId && !(cert.kind === "internal" && cert.status === "cancelled")) {
     const stored = await storedBytes(db, blobs, actor.organisationId, cert.fileId);
-    if (stored) return { bytes: stored.bytes, fileName };
+    if (stored) {
+      // A scan attached as a photo is served as the photo it is.
+      const photo = stored.file.fileType === "png" || stored.file.fileType === "jpeg";
+      return photo
+        ? {
+            bytes: stored.bytes,
+            fileName: fileName.replace(
+              /\.pdf$/,
+              `.${stored.file.fileType === "png" ? "png" : "jpg"}`,
+            ),
+            contentType: `image/${stored.file.fileType}`,
+          }
+        : { bytes: stored.bytes, fileName };
+    }
   }
   if (cert.kind !== "internal") return null;
 

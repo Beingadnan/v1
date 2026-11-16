@@ -230,3 +230,45 @@ export async function companyStudies(db: Database, actor: SessionUser, companyId
     )
     .orderBy(desc(jobs.plannedStart), asc(studies.position));
 }
+
+/**
+ * The client's signed reports, the company folder (ADR 0023): every study whose
+ * report the client signed, with where it sits (site, department, equipment)
+ * and when it was signed (India date). A study joins here once signed.
+ */
+export async function companyArchive(db: Database, actor: SessionUser, companyId: string) {
+  assertCan(actor, "clients.view");
+  if (!isUuid(companyId)) return [];
+  const rows = await db
+    .select({
+      studyId: studies.id,
+      reportId: studyReports.id,
+      rev: studyReports.rev,
+      reportNumber: studies.reportNumber,
+      workType: studies.workType,
+      signedAt: studyReports.signedAt,
+      signedVia: studyReports.signedVia,
+      siteId: equipment.siteId,
+      departmentId: equipment.departmentId,
+      equipmentId: equipment.id,
+      jobId: jobs.id,
+      jobNumber: jobs.number,
+    })
+    .from(studyReports)
+    .innerJoin(studies, eq(studies.id, studyReports.studyId))
+    .innerJoin(jobs, eq(jobs.id, studies.jobId))
+    .innerJoin(equipment, eq(equipment.id, studies.equipmentId))
+    .where(
+      and(
+        eq(equipment.companyId, companyId),
+        eq(studyReports.organisationId, actor.organisationId),
+        eq(studyReports.status, "signed"),
+      ),
+    )
+    .orderBy(desc(studyReports.signedAt));
+  const ist = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(d);
+  return rows.map((r) => {
+    const on = ist(r.signedAt ?? new Date(0));
+    return { ...r, signedOn: on, year: on.slice(0, 4), month: on.slice(5, 7) };
+  });
+}

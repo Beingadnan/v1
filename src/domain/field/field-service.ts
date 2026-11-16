@@ -378,7 +378,7 @@ export async function readLayoutSketch(
   } else {
     if (!reader) {
       throw new FieldError(
-        "Reading sketches isn't set up on this server: add OPENAI_API_KEY to its settings.",
+        "Reading sketches isn't set up on this server: add ANTHROPIC_API_KEY (or OPENAI_API_KEY) to its settings.",
       );
     }
     const bytes = await blobs.get(file.storageKey);

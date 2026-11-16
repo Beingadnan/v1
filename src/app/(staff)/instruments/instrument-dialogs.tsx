@@ -1,6 +1,6 @@
 "use client";
 
-import { FileUp, Layers, Pencil, Plus, Trash2 } from "lucide-react";
+import { Layers, PenLine, Pencil, Plus, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -401,7 +401,7 @@ export function BulkAddButton(props: { models: ModelOption[]; sites: Option[] })
     <FormDialog
       wide
       trigger={(open) => (
-        <Button onClick={open}>
+        <Button variant="secondary" onClick={open}>
           <Layers aria-hidden="true" />
           Add a batch
         </Button>
@@ -804,9 +804,9 @@ export function ExternalCertificateButton(props: { instrumentId: string; instrum
     <FormDialog
       wide
       trigger={(open) => (
-        <Button onClick={open}>
-          <FileUp aria-hidden="true" />
-          Record outside-lab certificate
+        <Button variant="secondary" onClick={open}>
+          <PenLine aria-hidden="true" />
+          Enter without a scan
         </Button>
       )}
     >

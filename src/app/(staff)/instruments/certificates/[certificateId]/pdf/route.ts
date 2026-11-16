@@ -18,7 +18,7 @@ export async function GET(
   const ascii = pdf.fileName.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "");
   return new Response(new Uint8Array(pdf.bytes), {
     headers: {
-      "Content-Type": "application/pdf",
+      "Content-Type": pdf.contentType ?? "application/pdf",
       "Content-Disposition": `inline; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(pdf.fileName)}`,
       "Cache-Control": "private, no-store",
       "X-Content-Type-Options": "nosniff",

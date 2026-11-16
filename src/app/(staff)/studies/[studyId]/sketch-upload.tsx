@@ -1,6 +1,6 @@
 "use client";
 
-import { Camera, Check, X } from "lucide-react";
+import { Check, Upload, X } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -25,7 +25,10 @@ export function SketchUpload({
   studyId,
   dims,
   onUse,
+  configured,
 }: {
+  /** False when no OpenAI key is set: say so, but still allow a file read before. */
+  configured: boolean;
   studyId: string;
   dims: Dimensions;
   onUse: (layout: UseSketch) => void;
@@ -78,25 +81,31 @@ export function SketchUpload({
     read?.points.filter((p) => !p.ambient && levelOfZ(p.z) === level).length ?? 0;
 
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-3">
+    <div className="flex flex-col gap-3 rounded-lg border-2 border-dashed border-primary/40 bg-surface p-4">
+      <div className="flex flex-col gap-1">
+        <h3 className="font-semibold">Upload the layout sketch</h3>
+        <p className="text-sm text-muted-foreground">
+          The scanned PDF or a photo of the rooms drawn on site. Each room is read into a diagram
+          with its doors and what stands inside; this equipment&apos;s room is picked by its ID.
+        </p>
+      </div>
+      {!configured ? (
+        <p className="rounded-md bg-attention-soft px-3 py-2 text-sm text-attention">
+          Sketch reading isn&apos;t switched on: add <code>ANTHROPIC_API_KEY</code> (Claude) or{" "}
+          <code>OPENAI_API_KEY</code> to <code>.env.local</code> and restart the app. A PDF already
+          read still works.
+        </p>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          variant="secondary"
-          disabled={stage !== "idle"}
-          onClick={() => input.current?.click()}
-        >
-          <Camera aria-hidden="true" />
+        <Button type="button" disabled={stage !== "idle"} onClick={() => input.current?.click()}>
+          <Upload aria-hidden="true" />
           {stage === "uploading"
             ? "Uploading…"
             : stage === "reading"
               ? "Reading the sketch…"
-              : "Read a sketch"}
+              : "Upload sketch (PDF or photo)"}
         </Button>
-        <span className="text-sm text-muted-foreground">
-          Scanned PDF or photo of the rooms drawn on site. The room with this equipment&apos;s ID is
-          picked; read once per file.
-        </span>
+        <span className="text-xs text-muted-foreground">Or lay out the positions below.</span>
         <input
           ref={input}
           type="file"

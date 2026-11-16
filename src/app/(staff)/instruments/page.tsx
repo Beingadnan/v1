@@ -1,4 +1,4 @@
-import { AlertTriangle, Download, Gauge, Search } from "lucide-react";
+import { AlertTriangle, Download, FileUp, Gauge, Search } from "lucide-react";
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
@@ -90,6 +90,12 @@ export default async function InstrumentsPage({ searchParams }: PageProps<"/inst
             <div className="flex flex-wrap gap-2">
               <AddInstrumentButton models={options.models} sites={options.sites} />
               <BulkAddButton models={options.models} sites={options.sites} />
+              <Button asChild>
+                <Link href="/instruments/certificates/upload">
+                  <FileUp aria-hidden="true" />
+                  Upload certificates
+                </Link>
+              </Button>
             </div>
           ) : undefined
         }

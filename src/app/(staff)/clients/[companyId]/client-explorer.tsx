@@ -2,10 +2,12 @@ import {
   ArrowUp,
   Building2,
   ChevronRight,
+  ClipboardList,
+  Clock,
   FileText,
   Folder,
   FolderOpen,
-  HardDrive,
+  MapPin,
   Refrigerator,
 } from "lucide-react";
 import Link from "next/link";
@@ -19,17 +21,50 @@ import { cn } from "@/lib/utils";
 
 import { statusTone } from "../../jobs/display";
 
-/** Where the client page is: the company, a site, a department, a year in it. */
-export type Place = { site?: string; dept?: string; year?: string };
+/**
+ * Where the client page is (ADR 0023). Each site holds its signed reports by
+ * year (year → month → department → equipment → reports), its equipment list
+ * (→ department → equipment) and the studies in progress.
+ */
+export type Place = {
+  site?: string;
+  year?: string;
+  month?: string;
+  /** The department inside a month of reports ("none" for equipment in none). */
+  adept?: string;
+  eq?: string;
+  /** The equipment list, and a department in it. */
+  equipment?: boolean;
+  dept?: string;
+  open?: boolean;
+};
 
 export function placeHref(companyId: string, p: Place): string {
   const q = new URLSearchParams();
-  if (p.site) q.set("site", p.site);
+  for (const k of ["site", "year", "month", "adept", "eq"] as const) {
+    if (p[k]) q.set(k, p[k]!);
+  }
+  if (p.equipment || p.dept) q.set("view", "equipment");
   if (p.dept) q.set("dept", p.dept);
-  if (p.year) q.set("year", p.year);
+  if (p.open) q.set("open", "1");
   const s = q.toString();
   return `/clients/${companyId}${s ? `?${s}` : ""}`;
 }
+
+export const MONTH_NAMES = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
 
 export type TreeSite = {
   id: string;
@@ -37,22 +72,34 @@ export type TreeSite = {
   active: boolean;
   equipment: number;
   overdue: number;
-  departments: {
-    id: string;
-    name: string;
-    active: boolean;
-    equipment: number;
-    overdue: number;
-    years: string[];
-  }[];
+  departments: { id: string; name: string; active: boolean; equipment: number; overdue: number }[];
+  /** Signed reports by year, newest first, with their months. */
+  years: { year: string; months: string[] }[];
+  /** Studies not yet signed. */
+  open: number;
 };
 
-/** A folder as Windows draws it: yellow, open when it's the one shown. */
-function FolderIcon({ open, className }: { open?: boolean; className?: string }) {
-  const Icon = open ? FolderOpen : Folder;
+/** The three kinds of folder, each with its own look so they're never mixed up. */
+export type FolderKind = "reports" | "equipment" | "progress";
+const KIND: Record<FolderKind, { icon: typeof Folder; tone: string }> = {
+  reports: { icon: Folder, tone: "fill-amber-300 text-amber-500" },
+  equipment: { icon: ClipboardList, tone: "text-sky-600" },
+  progress: { icon: Clock, tone: "text-orange-500" },
+};
+
+function FolderIcon({
+  open,
+  kind = "reports",
+  className,
+}: {
+  open?: boolean;
+  kind?: FolderKind;
+  className?: string;
+}) {
+  const Icon = kind === "reports" && open ? FolderOpen : KIND[kind].icon;
   return (
     <Icon
-      className={cn("shrink-0 fill-amber-300 text-amber-500", className)}
+      className={cn("shrink-0", KIND[kind].tone, className)}
       strokeWidth={1.5}
       aria-hidden="true"
     />
@@ -70,9 +117,9 @@ function OverdueDot({ n }: { n: number }) {
 }
 
 /**
- * The navigation pane: every folder of the client, opened down to where you
- * are, each openable on its own (▸) without leaving the page, as in Windows
- * Explorer. Plain links, so every folder has its own address.
+ * The navigation pane, as in Windows Explorer: the client, its sites, and in
+ * each site its report years (with months), its equipment list (with
+ * departments) and what is in progress. Only the open path is unfolded.
  */
 export function ClientTree({
   companyId,
@@ -87,102 +134,140 @@ export function ClientTree({
 }) {
   const row = (here: boolean, inactive = false) =>
     cn(
-      "flex min-w-0 flex-1 items-center gap-1.5 rounded px-1.5 py-1 text-sm hover:bg-primary/10",
-      here ? "bg-primary/15 font-semibold text-foreground" : "text-foreground",
+      "flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-primary/10",
+      here && "bg-primary/15 font-semibold",
       inactive && "text-muted-foreground",
     );
-  const twisty =
-    "flex size-5 shrink-0 cursor-pointer list-none items-center justify-center rounded text-muted-foreground hover:bg-muted [&::-webkit-details-marker]:hidden";
+  const caret = (open: boolean, show = true) => (
+    <ChevronRight
+      className={cn(
+        "size-3.5 shrink-0 text-muted-foreground",
+        open && "rotate-90",
+        !show && "invisible",
+      )}
+      aria-hidden="true"
+    />
+  );
+  const nest = "ml-4 flex flex-col gap-px border-l border-border/70 pl-1.5";
+  const onEquipment = !!place.equipment || !!place.dept;
   return (
-    <nav aria-label="Client folders" className="flex flex-col text-sm">
-      <div className="flex items-center gap-0.5">
-        <span className="size-5 shrink-0" />
-        <Link
-          href={placeHref(companyId, {})}
-          className={row(!place.site)}
-          aria-current={!place.site ? "page" : undefined}
-        >
-          <Building2 className="size-4 shrink-0 text-primary" aria-hidden="true" />
-          <span className="truncate">{companyName}</span>
-        </Link>
-      </div>
-      <ul className="ml-2.5 flex flex-col border-l border-dotted border-border pl-1">
+    <nav aria-label="Client folders" className="flex flex-col gap-px text-sm">
+      <Link
+        href={placeHref(companyId, {})}
+        className={row(!place.site)}
+        aria-current={!place.site ? "page" : undefined}
+      >
+        <Building2 className="size-4 shrink-0 text-primary" aria-hidden="true" />
+        <span className="truncate">{companyName}</span>
+      </Link>
+      <div className={nest}>
         {sites.map((s) => {
-          const onPath = place.site === s.id;
+          const onSite = place.site === s.id;
+          const siteHere = onSite && !place.year && !onEquipment && !place.open;
           return (
-            <li key={s.id}>
-              <details open={onPath} className="group/site">
-                <summary className="flex items-center gap-0.5 [&::-webkit-details-marker]:hidden">
-                  <span className={twisty} aria-hidden="true">
-                    <ChevronRight className="size-3.5 transition-transform group-open/site:rotate-90" />
-                  </span>
-                  <Link
-                    href={placeHref(companyId, { site: s.id })}
-                    className={row(onPath && !place.dept, !s.active)}
-                    aria-current={onPath && !place.dept ? "page" : undefined}
-                  >
-                    <HardDrive
-                      className="size-4 shrink-0 text-muted-foreground"
-                      aria-hidden="true"
-                    />
-                    <span className="truncate">{s.name}</span>
-                    <OverdueDot n={s.overdue} />
-                  </Link>
-                </summary>
-                <ul className="ml-2.5 flex flex-col border-l border-dotted border-border pl-1">
-                  {s.departments.length === 0 ? (
-                    <li className="py-1 pl-6 text-xs text-muted-foreground">Empty</li>
-                  ) : null}
-                  {s.departments.map((d) => {
-                    const here = onPath && place.dept === d.id;
+            <div key={s.id} className="flex flex-col gap-px">
+              <Link
+                href={placeHref(companyId, { site: s.id })}
+                className={row(siteHere, !s.active)}
+                aria-current={siteHere ? "page" : undefined}
+              >
+                {caret(onSite)}
+                <MapPin className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                <span className="truncate">{s.name}</span>
+                <OverdueDot n={s.overdue} />
+              </Link>
+              {onSite ? (
+                <div className={nest}>
+                  {s.years.map((y) => {
+                    const yearOpen = place.year === y.year;
                     return (
-                      <li key={d.id}>
-                        <details open={here} className="group/dept">
-                          <summary className="flex items-center gap-0.5 [&::-webkit-details-marker]:hidden">
-                            <span
-                              className={cn(twisty, d.years.length === 0 && "invisible")}
-                              aria-hidden="true"
-                            >
-                              <ChevronRight className="size-3.5 transition-transform group-open/dept:rotate-90" />
-                            </span>
-                            <Link
-                              href={placeHref(companyId, { site: s.id, dept: d.id })}
-                              className={row(here && !place.year, !d.active)}
-                              aria-current={here && !place.year ? "page" : undefined}
-                            >
-                              <FolderIcon open={here} className="size-4" />
-                              <span className="truncate">{d.name}</span>
-                              <OverdueDot n={d.overdue} />
-                            </Link>
-                          </summary>
-                          <ul className="ml-2.5 flex flex-col border-l border-dotted border-border pl-1">
-                            {d.years.map((y) => {
-                              const yearHere = here && place.year === y;
+                      <div key={y.year} className="flex flex-col gap-px">
+                        <Link
+                          href={placeHref(companyId, { site: s.id, year: y.year })}
+                          className={row(yearOpen && !place.month)}
+                          aria-current={yearOpen && !place.month ? "page" : undefined}
+                        >
+                          {caret(yearOpen)}
+                          <FolderIcon open={yearOpen} className="size-4" />
+                          <span className="tabular">{y.year}</span>
+                        </Link>
+                        {yearOpen ? (
+                          <div className={nest}>
+                            {y.months.map((m) => {
+                              const here = place.month === m;
                               return (
-                                <li key={y} className="flex items-center gap-0.5">
-                                  <span className="size-5 shrink-0" />
-                                  <Link
-                                    href={placeHref(companyId, { site: s.id, dept: d.id, year: y })}
-                                    className={row(yearHere)}
-                                    aria-current={yearHere ? "page" : undefined}
-                                  >
-                                    <FolderIcon open={yearHere} className="size-4" />
-                                    <span className="tabular">{y}</span>
-                                  </Link>
-                                </li>
+                                <Link
+                                  key={m}
+                                  href={placeHref(companyId, {
+                                    site: s.id,
+                                    year: y.year,
+                                    month: m,
+                                  })}
+                                  className={row(here && !place.adept)}
+                                  aria-current={here && !place.adept ? "page" : undefined}
+                                >
+                                  {caret(false, false)}
+                                  <FolderIcon open={here} className="size-4" />
+                                  {MONTH_NAMES[Number(m) - 1]}
+                                </Link>
                               );
                             })}
-                          </ul>
-                        </details>
-                      </li>
+                          </div>
+                        ) : null}
+                      </div>
                     );
                   })}
-                </ul>
-              </details>
-            </li>
+                  <Link
+                    href={placeHref(companyId, { site: s.id, equipment: true })}
+                    className={row(onEquipment && !place.dept)}
+                    aria-current={onEquipment && !place.dept ? "page" : undefined}
+                  >
+                    {caret(onEquipment, s.departments.length > 0)}
+                    <FolderIcon kind="equipment" className="size-4" />
+                    <span className="truncate">Equipment</span>
+                    <span className="tabular ml-auto text-xs text-muted-foreground">
+                      {s.equipment}
+                    </span>
+                  </Link>
+                  {onEquipment && s.departments.length ? (
+                    <div className={nest}>
+                      {s.departments.map((d) => (
+                        <Link
+                          key={d.id}
+                          href={placeHref(companyId, { site: s.id, dept: d.id })}
+                          className={row(place.dept === d.id, !d.active)}
+                          aria-current={place.dept === d.id ? "page" : undefined}
+                        >
+                          {caret(false, false)}
+                          <span className="truncate">{d.name}</span>
+                          <OverdueDot n={d.overdue} />
+                          <span className="tabular ml-auto text-xs text-muted-foreground">
+                            {d.equipment}
+                          </span>
+                        </Link>
+                      ))}
+                    </div>
+                  ) : null}
+                  {s.open ? (
+                    <Link
+                      href={placeHref(companyId, { site: s.id, open: true })}
+                      className={row(!!place.open)}
+                      aria-current={place.open ? "page" : undefined}
+                    >
+                      {caret(false, false)}
+                      <FolderIcon kind="progress" className="size-4" />
+                      <span className="truncate">In progress</span>
+                      <span className="tabular ml-auto text-xs text-muted-foreground">
+                        {s.open}
+                      </span>
+                    </Link>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
           );
         })}
-      </ul>
+      </div>
     </nav>
   );
 }
@@ -276,12 +361,14 @@ export function FolderTile({
   facts,
   overdue = 0,
   inactive,
+  kind = "reports",
 }: {
   href: string;
   title: string;
   facts: string[];
   overdue?: number;
   inactive?: boolean;
+  kind?: FolderKind;
 }) {
   return (
     <Link
@@ -292,7 +379,7 @@ export function FolderTile({
       )}
     >
       <span className="relative">
-        <FolderIcon className="size-14" />
+        <FolderIcon kind={kind} className="size-14" />
         {overdue > 0 ? (
           <span className="absolute -top-0.5 -right-1 rounded-full bg-fail px-1.5 text-[10px] font-semibold text-white">
             {overdue}
@@ -439,6 +526,67 @@ export function StudyFiles({
               {JOB_STATUS_LABELS[s.jobStatus as JobStatus] ?? s.jobStatus}
             </StatusBadge>
           </span>,
+        ],
+      }))}
+    />
+  );
+}
+
+/** A signed report as a file: its number and revision, the work, when it was signed, the job. */
+export function ReportFiles({
+  rows,
+}: {
+  rows: {
+    studyId: string;
+    reportId: string;
+    reportNumber: string;
+    rev: number;
+    workType: string;
+    signedOn: string;
+    signedVia: string | null;
+    jobId: string;
+    jobNumber: string;
+  }[];
+}) {
+  return (
+    <DetailsList
+      columns={["Report", "Work", "Signed", "Job", ""]}
+      rows={rows.map((r) => ({
+        key: r.reportId,
+        icon: "report" as const,
+        name: (
+          <span>
+            <Link
+              href={`/studies/${r.studyId}?tab=report`}
+              className="font-medium text-primary hover:underline"
+            >
+              {r.reportNumber}
+            </Link>
+            <span className="block text-xs text-muted-foreground">
+              Rev {String(r.rev).padStart(2, "0")}
+            </span>
+          </span>
+        ),
+        cells: [
+          r.workType in WORK_TYPE_LABELS
+            ? WORK_TYPE_LABELS[r.workType as keyof typeof WORK_TYPE_LABELS]
+            : r.workType,
+          <span key="s" className="tabular whitespace-nowrap">
+            {formatDate(r.signedOn)}
+            {r.signedVia === "paper" ? " (paper)" : ""}
+          </span>,
+          <Link key="j" href={`/jobs/${r.jobId}`} className="text-primary hover:underline">
+            {r.jobNumber}
+          </Link>,
+          <a
+            key="p"
+            href={`/studies/${r.studyId}/report/${r.reportId}`}
+            target="_blank"
+            rel="noreferrer"
+            className="text-primary hover:underline"
+          >
+            PDF
+          </a>,
         ],
       }))}
     />

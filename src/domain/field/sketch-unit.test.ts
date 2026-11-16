@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { openAiSketchReader, SketchReadError } from "@/lib/ai/sketch-reader";
+import { claudeSketchReader, openAiSketchReader, SketchReadError } from "@/lib/ai/sketch-reader";
 
 import {
+  cleanLabel,
   layoutFromRoom,
   matchRoom,
   normaliseLabel,
@@ -123,13 +124,49 @@ describe("layout sketches", () => {
     expect(matchRoom(rooms, { code: "ABT-5-ML-05", name: "x" })).toBe(0);
     expect(matchRoom(rooms, { code: "MP-1", name: "Media Prep. Room" })).toBe(3);
     expect(matchRoom(rooms, { code: "Z-1", name: "Store" })).toBeNull();
+    // Abbott, Nov 2026: the model read the handwritten 5-ML-05 as S-ML-05.
+    expect(
+      matchRoom([...rooms, { name: "Cooling Zone", code: "S-ML-05" }].slice(1), {
+        code: "5-ML-05",
+        name: "Cooling Zone",
+      }),
+    ).toBe(3);
     expect(matchRoom([rooms[0]!], { code: "Z-1", name: "Store" })).toBe(0);
   });
 
-  it("refuses a reading that isn't a layout", () => {
-    expect(sketchReadingSchema.safeParse({ rooms: [{ kind: "room" }] }).success).toBe(false);
-    expect(sketchReadingSchema.safeParse(reading([room({ length: -1 })])).success).toBe(false);
-    expect(sketchReadingSchema.safeParse(reading()).success).toBe(true);
+  it("brings a model's slips into range instead of throwing the reading away", () => {
+    const r = sketchReadingSchema.parse({
+      rooms: [
+        {
+          kind: "ROOM",
+          length: -1,
+          page: "2",
+          doors: [{ wall: "north", along: 1.2 }],
+          objects: [
+            {
+              kind: "sofa",
+              label: "x".repeat(60),
+              x: -0.1,
+              y: 0.5,
+              w: 2,
+              d: 0.2,
+              h: 0.5,
+              shelves: 3.6,
+            },
+          ],
+        },
+      ],
+    });
+    expect(r.rooms[0]).toMatchObject({
+      kind: "room",
+      length: 0,
+      page: 2,
+      doors: [{ wall: "front", along: 1 }],
+      objects: [{ kind: "other", x: 0, w: 1, shelves: 4 }],
+      sensors: [],
+    });
+    expect(r.rooms[0]!.objects[0]!.label).toHaveLength(40);
+    expect(sketchReadingSchema.parse({ nonsense: true })).toEqual({ rooms: [], notes: "" });
   });
 
   it("asks OpenAI once with the photo and a strict schema", async () => {
@@ -174,5 +211,88 @@ describe("layout sketches", () => {
     await expect(
       failing(429)({ bytes: new Uint8Array(), mime: "image/png" }),
     ).rejects.toBeInstanceOf(SketchReadError);
+  });
+
+  it("asks Claude once with the PDF as a document and the schema as a forced tool", async () => {
+    const calls: { url: string; headers: Record<string, string>; body: Record<string, unknown> }[] =
+      [];
+    const reader = claudeSketchReader({
+      apiKey: "test-key",
+      model: "claude-haiku-5-5",
+      fetch: (async (url: string, init: RequestInit) => {
+        calls.push({
+          url,
+          headers: init.headers as Record<string, string>,
+          body: JSON.parse(String(init.body)),
+        });
+        return new Response(
+          JSON.stringify({
+            stop_reason: "tool_use",
+            content: [{ type: "tool_use", name: "layout_sketch", input: reading() }],
+          }),
+          { status: 200 },
+        );
+      }) as unknown as typeof fetch,
+    });
+    expect(await reader({ bytes: new Uint8Array([1, 2]), mime: "application/pdf" })).toEqual(
+      reading(),
+    );
+    expect(reader.model).toBe("claude-haiku-5-5");
+    expect(calls[0]!.url).toBe("https://api.anthropic.com/v1/messages");
+    expect(calls[0]!.headers["x-api-key"]).toBe("test-key");
+    expect(calls[0]!.body).toMatchObject({
+      model: "claude-haiku-5-5",
+      tool_choice: { type: "tool", name: "layout_sketch" },
+      messages: [
+        {
+          content: [
+            {
+              type: "document",
+              source: { type: "base64", media_type: "application/pdf", data: "AQI=" },
+            },
+            { type: "text", text: "Read these layout sketches." },
+          ],
+        },
+      ],
+    });
+    const refused = claudeSketchReader({
+      apiKey: "k",
+      model: "claude-haiku-5-5",
+      fetch: (async () =>
+        new Response(JSON.stringify({ error: { message: "invalid x-api-key" } }), {
+          status: 401,
+        })) as unknown as typeof fetch,
+    });
+    await expect(refused({ bytes: new Uint8Array(), mime: "image/png" })).rejects.toThrow(
+      "ANTHROPIC_API_KEY",
+    );
+  });
+
+  it("keeps rooms lying down and labels to the words written", () => {
+    const out = layoutFromRoom(
+      room({
+        orientation: "vertical",
+        length: 0.25,
+        width: 0.25,
+        height: 0.6,
+        objects: [
+          {
+            kind: "cupboard",
+            label: "cupboard (tall, back centre)",
+            x: 0.4,
+            y: 0.9,
+            w: 0.2,
+            d: 0.1,
+            h: 0.8,
+            shelves: 0,
+          },
+        ],
+      }),
+      4,
+    );
+    expect(out.shape.orientation).toBe("horizontal");
+    expect(out.shape.height).toBeLessThanOrEqual(Math.max(out.shape.length, out.shape.width));
+    expect(out.shape.objects![0]!.label).toBe("Cupboard");
+    expect(cleanLabel("LAF (left wall, two units)")).toBe("LAF");
   });
 });

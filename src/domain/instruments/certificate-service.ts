@@ -107,6 +107,11 @@ export async function createExternalCertificate(
     instrumentIds: string[];
     fileId?: string | null;
     results?: z.input<typeof resultRowSchema>[];
+    /**
+     * "imported" for one of QA Tech's own certificates made outside QTech
+     * (a scan uploaded in bulk, ADR 0024); an outside lab's otherwise.
+     */
+    kind?: "external" | "imported";
   },
   request: RequestInfo,
 ): Promise<Certificate> {
@@ -143,7 +148,7 @@ export async function createExternalCertificate(
         .values({
           ...values,
           organisationId: actor.organisationId,
-          kind: "external",
+          kind: input.kind ?? "external",
           status: "issued",
           fileId: input.fileId ?? null,
           equipmentName: covered[0]?.equipmentName ?? "",

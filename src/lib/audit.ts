@@ -72,6 +72,7 @@ export const AUDIT_ACTIONS = [
   "job.study_removed",
   "study.layout_saved",
   "study.sketch_read",
+  "certificate.scan_read",
   "study.logger_placed",
   "study.logger_removed",
   "study.event_recorded",

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNull, ne, or, sql } from "drizzle-orm";
 
 import type { DbExecutor } from "@/db/client-factory";
 import { reads } from "@/db/reads";
@@ -334,7 +334,14 @@ async function traceNode(
 export async function listCertificates(
   db: DbExecutor,
   actor: SessionUser,
-  filter: { q?: string; status?: string; kind?: string } = {},
+  filter: {
+    q?: string;
+    status?: string;
+    kind?: string;
+    /** Outside-lab and imported certificates whose scan isn't on file. */
+    missingScan?: boolean;
+    page?: number;
+  } = {},
 ) {
   assertCan(actor, "instruments.view");
   const q = filter.q?.trim();
@@ -350,6 +357,7 @@ export async function listCertificates(
       calibratedOn: certificates.calibratedOn,
       validUntil: certificates.validUntil,
       performedByName: certificates.performedByName,
+      hasFile: sql<boolean>`${certificates.fileId} is not null`,
       count: sql<number>`(select count(*)::int from ${certificateItems} where ${certificateItems.certificateId} = ${certificates.id})`,
     })
     .from(certificates)
@@ -366,10 +374,30 @@ export async function listCertificates(
           : undefined,
         filter.status ? eq(certificates.status, filter.status) : undefined,
         filter.kind ? eq(certificates.kind, filter.kind) : undefined,
+        filter.missingScan ? missingScan : undefined,
       ),
     )
     .orderBy(desc(certificates.calibratedOn), desc(certificates.createdAt))
-    .limit(500);
+    .limit(CERTIFICATE_PAGE + 1)
+    .offset(Math.max(0, (filter.page ?? 1) - 1) * CERTIFICATE_PAGE);
+}
+
+export const CERTIFICATE_PAGE = 100;
+
+const missingScan = and(
+  inArray(certificates.kind, ["external", "imported"]),
+  isNull(certificates.fileId),
+  ne(certificates.status, "cancelled"),
+);
+
+/** How many outside-lab and imported certificates have no scan on file. */
+export async function countMissingScans(db: DbExecutor, actor: SessionUser): Promise<number> {
+  assertCan(actor, "instruments.view");
+  const [row] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(certificates)
+    .where(and(eq(certificates.organisationId, actor.organisationId), missingScan));
+  return row?.n ?? 0;
 }
 
 /** Everything on a certificate, in print order. */

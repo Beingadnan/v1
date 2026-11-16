@@ -20,7 +20,7 @@ import { db } from "@/db/client";
 import { can } from "@/domain/auth/permissions";
 import { isRole, ROLE_LABELS } from "@/domain/auth/roles";
 import { EQUIPMENT_TYPE_INFO, isEquipmentType } from "@/domain/clients/equipment-types";
-import { companyStudies, getCompany } from "@/domain/clients/queries";
+import { companyArchive, companyStudies, getCompany } from "@/domain/clients/queries";
 import { listContracts } from "@/domain/jobs/contract-service";
 import { formatInr } from "@/domain/jobs/pricing";
 import { ORDER_TYPE_SHORT } from "@/domain/jobs/types";
@@ -44,7 +44,9 @@ import {
   ExplorerWindow,
   FolderGrid,
   FolderTile,
+  MONTH_NAMES,
   placeHref,
+  ReportFiles,
   StudyFiles,
   type Place,
   type TreeSite,
@@ -138,8 +140,6 @@ const EQUIPMENT_COLUMNS = ["Equipment", "Type", "Limits", "Last study", "Next du
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-const yearOf = (iso: string) => iso.slice(0, 4);
-
 export default async function ClientPage({
   params,
   searchParams,
@@ -149,10 +149,11 @@ export default async function ClientPage({
   const sp = await searchParams;
   const pick = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : undefined);
   // The contracts check the organisation themselves: read them alongside the client.
-  const [data, contracts, studyRows] = await Promise.all([
+  const [data, contracts, studyRows, signed] = await Promise.all([
     getCompany(db, actor, companyId),
     can(actor, "jobs.view") ? listContracts(db, actor, companyId) : Promise.resolve(null),
     companyStudies(db, actor, companyId),
+    companyArchive(db, actor, companyId),
   ]);
   if (!data) notFound();
   const { company, sites, departments, contacts, equipment, clientUsers } = data;
@@ -175,21 +176,48 @@ export default async function ClientPage({
     .sort()[0];
   const siteOptions = sites.filter((s) => s.active).map((s) => ({ id: s.id, name: s.name }));
 
-  // Where we are: ?site=…&dept=…&year=…, each checked against this client.
+  // Where we are (ADR 0023), each part checked against this client.
   const site = sites.find((s) => s.id === pick("site"));
   const dept = site
     ? departments.find((d) => d.id === pick("dept") && d.siteId === site.id)
     : undefined;
-  const departmentOf = new Map(equipment.map((e) => [e.id, e.departmentId]));
-  const deptStudies = dept
-    ? studyRows.filter((s) => departmentOf.get(s.equipmentId) === dept.id)
-    : [];
-  const years = [...new Set(deptStudies.map((s) => yearOf(s.start)))];
-  const year = dept && years.includes(pick("year") ?? "") ? pick("year") : undefined;
-  const place: Place = { site: site?.id, dept: dept?.id, year };
+  // Studies not signed yet (a cancelled job's studies are left out).
+  const signedIds = new Set(signed.map((r) => r.studyId));
+  const inProgress = studyRows.filter((s) => !signedIds.has(s.id) && s.jobStatus !== "cancelled");
+  const siteOf = new Map(equipment.map((e) => [e.id, e.siteId]));
+  const siteSigned = site ? signed.filter((r) => r.siteId === site.id) : [];
+  const siteYears = [...new Set(siteSigned.map((r) => r.year))];
+  const year = site && siteYears.includes(pick("year") ?? "") ? pick("year") : undefined;
+  const yearSigned = siteSigned.filter((r) => r.year === year);
+  const month =
+    year && yearSigned.some((r) => r.month === pick("month")) ? pick("month") : undefined;
+  const monthSigned = yearSigned.filter((r) => r.month === month);
+  const deptKey = (r: { departmentId: string | null }) => r.departmentId ?? "none";
+  const adept =
+    month && monthSigned.some((r) => deptKey(r) === pick("adept")) ? pick("adept") : undefined;
+  const adeptSigned = monthSigned.filter((r) => deptKey(r) === adept);
+  const eqId =
+    adept && adeptSigned.some((r) => r.equipmentId === pick("eq")) ? pick("eq") : undefined;
+  const open = !!site && !year && !dept && pick("open") === "1";
+  // The equipment list: view=equipment, or any department picked.
+  const register = !!site && !year && !open && (!!dept || pick("view") === "equipment");
+  const place: Place = {
+    site: site?.id,
+    dept: dept?.id,
+    year,
+    month,
+    adept,
+    eq: eqId,
+    open,
+    equipment: register,
+  };
+  const deptName = (id: string) =>
+    id === "none" ? "No department" : (departments.find((d) => d.id === id)?.name ?? "—");
+  const equipmentById = new Map(equipment.map((e) => [e.id, e]));
 
   const tree: TreeSite[] = sites.map((s) => {
     const here = equipment.filter((e) => e.siteId === s.id && e.active);
+    const mine = signed.filter((r) => r.siteId === s.id);
     return {
       id: s.id,
       name: s.name,
@@ -200,38 +228,47 @@ export default async function ClientPage({
         .filter((d) => d.siteId === s.id)
         .map((d) => {
           const inDept = here.filter((e) => e.departmentId === d.id);
-          const ids = new Set(equipment.filter((e) => e.departmentId === d.id).map((e) => e.id));
           return {
             id: d.id,
             name: d.name,
             active: d.active,
             equipment: inDept.length,
             overdue: inDept.filter(isOverdue).length,
-            years: [
-              ...new Set(
-                studyRows.filter((x) => ids.has(x.equipmentId)).map((x) => yearOf(x.start)),
-              ),
-            ],
           };
         }),
+      years: [...new Set(mine.map((r) => r.year))].map((y) => ({
+        year: y,
+        months: [...new Set(mine.filter((r) => r.year === y).map((r) => r.month))],
+      })),
+      open: inProgress.filter((x) => siteOf.get(x.equipmentId) === s.id).length,
     };
   });
 
+  const at = (p: Place, last: boolean) => (last ? undefined : placeHref(company.id, p));
   const trail = [
     { label: "Clients", href: "/clients" },
-    { label: company.code || company.name, href: site ? placeHref(company.id, {}) : undefined },
+    { label: company.code || company.name, href: at({}, !site) },
     ...(site
-      ? [{ label: site.name, href: dept ? placeHref(company.id, { site: site.id }) : undefined }]
+      ? [{ label: site.name, href: at({ site: site.id }, !register && !year && !open) }]
       : []),
-    ...(site && dept
+    ...(register
+      ? [{ label: "Equipment", href: at({ site: site!.id, equipment: true }, !dept) }]
+      : []),
+    ...(register && dept ? [{ label: dept.name }] : []),
+    ...(site && open ? [{ label: "In progress" }] : []),
+    ...(site && year ? [{ label: year, href: at({ site: site.id, year }, !month) }] : []),
+    ...(year && month
       ? [
           {
-            label: dept.name,
-            href: year ? placeHref(company.id, { site: site.id, dept: dept.id }) : undefined,
+            label: MONTH_NAMES[Number(month) - 1]!,
+            href: at({ site: site!.id, year, month }, !adept),
           },
         ]
       : []),
-    ...(year ? [{ label: year }] : []),
+    ...(month && adept
+      ? [{ label: deptName(adept), href: at({ site: site!.id, year, month, adept }, !eqId) }]
+      : []),
+    ...(eqId ? [{ label: equipmentById.get(eqId)?.code ?? "—" }] : []),
   ];
   const addEquipment =
     canManage && siteOptions.length > 0 ? (
@@ -249,7 +286,7 @@ export default async function ClientPage({
 
   const header = dept ? (
     <PageHeader
-      title={year ? `${dept.name} · ${year}` : dept.name}
+      title={dept.name}
       description={`Department at ${site!.name}, ${company.name}`}
       action={
         canManage ? (
@@ -337,75 +374,109 @@ export default async function ClientPage({
     />
   );
 
-  const siteDepartments = site ? tree.find((t) => t.id === site.id)!.departments : [];
+  const siteTree = site ? tree.find((t) => t.id === site.id)! : null;
   const empty = (text: string) => (
     <p className="py-10 text-center text-sm text-muted-foreground">{text}</p>
   );
   let pane: ReactNode;
   let status: string;
   let up: string | undefined;
-  if (site && dept && year) {
-    const shown = deptStudies.filter((s) => yearOf(s.start) === year);
-    up = placeHref(company.id, { site: site.id, dept: dept.id });
-    status = plural(shown.length, "report");
-    pane = shown.length ? (
-      <StudyFiles rows={shown} equipmentCode={equipmentCode} />
+  if (site && eqId) {
+    const files = adeptSigned.filter((r) => r.equipmentId === eqId);
+    up = placeHref(company.id, { site: site.id, year, month, adept });
+    status = plural(files.length, "signed report");
+    pane = <ReportFiles rows={files} />;
+  } else if (site && adept) {
+    const items = [...new Set(adeptSigned.map((r) => r.equipmentId))];
+    up = placeHref(company.id, { site: site.id, year, month });
+    status = plural(items.length, "equipment folder");
+    pane = (
+      <FolderGrid>
+        {items.map((id) => (
+          <FolderTile
+            key={id}
+            href={placeHref(company.id, { site: site.id, year, month, adept, eq: id })}
+            title={equipmentById.get(id)?.code ?? "—"}
+            facts={[
+              equipmentById.get(id)?.name ?? "",
+              plural(adeptSigned.filter((r) => r.equipmentId === id).length, "report"),
+            ]}
+          />
+        ))}
+      </FolderGrid>
+    );
+  } else if (site && month) {
+    const keys = [...new Set(monthSigned.map(deptKey))];
+    up = placeHref(company.id, { site: site.id, year });
+    status = plural(keys.length, "department folder");
+    pane = (
+      <FolderGrid>
+        {keys.map((k) => (
+          <FolderTile
+            key={k}
+            href={placeHref(company.id, { site: site.id, year, month, adept: k })}
+            title={deptName(k)}
+            facts={[plural(monthSigned.filter((r) => deptKey(r) === k).length, "report")]}
+          />
+        ))}
+      </FolderGrid>
+    );
+  } else if (site && year) {
+    const months = [...new Set(yearSigned.map((r) => r.month))];
+    up = placeHref(company.id, { site: site.id });
+    status = plural(months.length, "month folder");
+    pane = (
+      <FolderGrid>
+        {months.map((m) => (
+          <FolderTile
+            key={m}
+            href={placeHref(company.id, { site: site.id, year, month: m })}
+            title={MONTH_NAMES[Number(m) - 1]!}
+            facts={[plural(yearSigned.filter((r) => r.month === m).length, "report")]}
+          />
+        ))}
+      </FolderGrid>
+    );
+  } else if (site && open) {
+    const rows = inProgress.filter((x) => siteOf.get(x.equipmentId) === site.id);
+    up = placeHref(company.id, { site: site.id });
+    status = `${plural(rows.length, "study", "studies")} not signed yet`;
+    pane = rows.length ? (
+      <StudyFiles rows={rows} equipmentCode={equipmentCode} />
     ) : (
-      empty("No studies this year.")
+      empty("Nothing in progress.")
     );
   } else if (site && dept) {
     const deptEquipment = equipment.filter((e) => e.departmentId === dept.id);
+    up = placeHref(company.id, { site: site.id, equipment: true });
+    status = plural(deptEquipment.length, "equipment", "equipment");
+    pane = deptEquipment.length ? (
+      <DetailsList columns={EQUIPMENT_COLUMNS} rows={equipmentFiles(deptEquipment, company.id)} />
+    ) : (
+      empty("This department is empty. Add its equipment with Add equipment.")
+    );
+  } else if (site && siteTree && register) {
+    const loose = equipment.filter((e) => e.siteId === site.id && !e.departmentId);
     up = placeHref(company.id, { site: site.id });
-    status = `${plural(years.length, "year folder")}, ${plural(deptEquipment.length, "equipment", "equipment")}`;
+    status = `${plural(siteTree.equipment, "equipment", "equipment")} in ${plural(siteTree.departments.length, "department")}`;
     pane =
-      years.length || deptEquipment.length ? (
+      siteTree.departments.length || loose.length ? (
         <div className="flex flex-col gap-4">
-          {years.length ? (
+          {siteTree.departments.length ? (
             <FolderGrid>
-              {years.map((y) => (
+              {siteTree.departments.map((d) => (
                 <FolderTile
-                  key={y}
-                  href={placeHref(company.id, { site: site.id, dept: dept.id, year: y })}
-                  title={y}
-                  facts={[
-                    plural(deptStudies.filter((s) => yearOf(s.start) === y).length, "report"),
-                  ]}
+                  key={d.id}
+                  kind="equipment"
+                  href={placeHref(company.id, { site: site.id, dept: d.id })}
+                  title={d.name}
+                  facts={[plural(d.equipment, "equipment", "equipment")]}
+                  overdue={d.overdue}
+                  inactive={!d.active}
                 />
               ))}
             </FolderGrid>
           ) : null}
-          {deptEquipment.length ? (
-            <DetailsList
-              columns={EQUIPMENT_COLUMNS}
-              rows={equipmentFiles(deptEquipment, company.id)}
-            />
-          ) : null}
-        </div>
-      ) : (
-        empty("This department is empty. Add its equipment with Add equipment.")
-      );
-  } else if (site) {
-    const loose = equipment.filter((e) => e.siteId === site.id && !e.departmentId);
-    up = placeHref(company.id, {});
-    status = `${plural(siteDepartments.length, "department")}${loose.length ? `, ${plural(loose.length, "equipment", "equipment")} not in a department` : ""}`;
-    pane =
-      siteDepartments.length || loose.length ? (
-        <div className="flex flex-col gap-4">
-          <FolderGrid>
-            {siteDepartments.map((d) => (
-              <FolderTile
-                key={d.id}
-                href={placeHref(company.id, { site: site.id, dept: d.id })}
-                title={d.name}
-                facts={[
-                  plural(d.equipment, "equipment", "equipment"),
-                  plural(d.years.length, "year"),
-                ]}
-                overdue={d.overdue}
-                inactive={!d.active}
-              />
-            ))}
-          </FolderGrid>
           {loose.length ? (
             <div className="flex flex-col gap-1">
               <p className="text-xs text-muted-foreground">
@@ -418,6 +489,50 @@ export default async function ClientPage({
       ) : (
         empty("No departments yet. Add Stores, QC, Production… with Add department.")
       );
+  } else if (site && siteTree) {
+    up = placeHref(company.id, {});
+    status = `${plural(siteYears.length, "year")} of signed reports`;
+    pane = (
+      <FolderGrid>
+        {siteYears.map((y) => (
+          <FolderTile
+            key={y}
+            href={placeHref(company.id, { site: site.id, year: y })}
+            title={y}
+            facts={[plural(siteSigned.filter((r) => r.year === y).length, "signed report")]}
+          />
+        ))}
+        <FolderTile
+          kind="equipment"
+          href={placeHref(company.id, { site: site.id, equipment: true })}
+          title="Equipment"
+          facts={[
+            plural(siteTree.equipment, "equipment", "equipment"),
+            plural(siteTree.departments.length, "department"),
+          ]}
+          overdue={siteTree.overdue}
+        />
+        {siteTree.open ? (
+          <FolderTile
+            kind="progress"
+            href={placeHref(company.id, { site: site.id, open: true })}
+            title="In progress"
+            facts={[`${plural(siteTree.open, "study", "studies")} not signed yet`]}
+          />
+        ) : null}
+      </FolderGrid>
+    );
+    if (!siteYears.length) {
+      pane = (
+        <div className="flex flex-col gap-3">
+          {pane}
+          <p className="text-sm text-muted-foreground">
+            No signed reports yet: a study&apos;s report lands in a year folder here when the client
+            signs it.
+          </p>
+        </div>
+      );
+    }
   } else {
     status = plural(sites.length, "site");
     pane = sites.length ? (
@@ -428,8 +543,8 @@ export default async function ClientPage({
             href={placeHref(company.id, { site: t.id })}
             title={t.name}
             facts={[
-              plural(t.departments.length, "dept"),
               plural(t.equipment, "equipment", "equipment"),
+              plural(signed.filter((r) => r.siteId === t.id).length, "signed report"),
             ]}
             overdue={t.overdue}
             inactive={!t.active}

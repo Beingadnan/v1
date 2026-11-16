@@ -49,7 +49,7 @@ test("phase 3 exit test: PDL batch with a valid master, signed by three people, 
   await expect(
     page.getByRole("heading", { level: 1, name: `QATM/CAL/SSPRT-${run}` }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Record outside-lab certificate" }).click();
+  await page.getByRole("button", { name: "Enter without a scan" }).click();
   dialog = page.getByRole("dialog");
   await dialog.getByLabel("Laboratory").fill("ARAI");
   await dialog.getByLabel("Certificate No.").fill(`ARAI/CAL/2609/${run}`);
@@ -70,7 +70,7 @@ test("phase 3 exit test: PDL batch with a valid master, signed by three people, 
   await dialog.getByLabel("Use").selectOption("master");
   await dialog.getByRole("button", { name: "Add instrument" }).click();
   await expect(page.getByRole("heading", { level: 1, name: `QATM/CAL/TH-${run}` })).toBeVisible();
-  await page.getByRole("button", { name: "Record outside-lab certificate" }).click();
+  await page.getByRole("button", { name: "Enter without a scan" }).click();
   dialog = page.getByRole("dialog");
   await dialog.getByLabel("Laboratory").fill("Sansel");
   await dialog.getByLabel("Certificate No.").fill(`SAN/26/${run}/TH/1`);
@@ -291,5 +291,50 @@ test("the register fits a phone screen", async ({ page, isMobile }) => {
   await expect(
     page.getByRole("heading", { level: 1, name: "Calibration certificates" }),
   ).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("certificate scans are uploaded in bulk, matched by file name, and saved", async ({
+  page,
+  isMobile,
+}) => {
+  test.skip(isMobile, "Desktop task.");
+  const errors = trackErrors(page);
+  await signIn(page, "admin");
+  const code = `QATM/CAL/TLU-${run}`;
+  await page.goto("/instruments");
+  await page.getByRole("button", { name: "Add instrument" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Type").selectOption("humidity_indicator");
+  await dialog.getByLabel("QA Tech ID").fill(code);
+  await dialog.getByLabel("Use").selectOption("master");
+  await dialog.getByRole("button", { name: "Add instrument" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: code })).toBeVisible();
+
+  // From the instrument: upload its scan, named as QA Tech names them.
+  await page.getByRole("link", { name: "Upload certificate" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Upload certificates" })).toBeVisible();
+  await page.locator("input[type=file]").setInputFiles({
+    name: `TLU-${run} 27.01.2030.pdf`,
+    mimeType: "application/pdf",
+    buffer: Buffer.from(`%PDF-1.4\n% scan ${run}\n%%EOF\n`),
+  });
+  await expect(page.getByText("Needs you")).toBeVisible();
+  await expect(page.getByText(code, { exact: true })).toBeVisible();
+  await page.getByLabel("Certificate no.").fill(`SAN/26/${run}/TH/1`);
+  await page.getByLabel("Certificate no.").blur();
+  await page.getByLabel("Lab", { exact: true }).fill("Sansel Calibration Laboratories LLP");
+  await page.getByLabel("Lab", { exact: true }).blur();
+  await page.getByLabel("Calibrated on").fill("2026-01-28");
+  await page.getByLabel("Calibrated on").blur();
+  await expect(page.getByText("New certificate")).toBeVisible();
+  await page.getByRole("button", { name: "Save 1 certificate" }).click();
+  await expect(page.getByText(`Recorded SAN/26/${run}/TH/1.`)).toBeVisible();
+
+  await page.goto(`/instruments?q=${encodeURIComponent(code)}`);
+  await page.getByRole("link", { name: code, exact: true }).click();
+  const row = page.getByRole("row", { name: new RegExp(`SAN/26/${run}/TH/1`) });
+  await expect(row).toContainText("27 Jan 2030");
+  await expect(row.getByRole("link", { name: "PDF" })).toBeVisible();
   expect(errors).toEqual([]);
 });

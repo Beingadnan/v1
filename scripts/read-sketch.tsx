@@ -3,7 +3,7 @@
  *
  *   npm run layout:read -- sketches.pdf photo.jpg
  *
- * Needs OPENAI_API_KEY (and optionally OPENAI_SKETCH_MODEL) in .env.local. For
+ * Needs ANTHROPIC_API_KEY (Claude) or OPENAI_API_KEY in .env.local. For
  * each file it writes <file>.diagrams.html next to it: every room read,
  * drawn as the report's diagram (16 loggers spread where none are drawn), with
  * what to check. Nothing is saved.
@@ -15,18 +15,28 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { LayoutDiagram } from "@/app/(staff)/studies/[studyId]/layout-diagram";
 import { layoutFromRoom, sketchReadingSchema } from "@/domain/field/sketch";
-import { openAiSketchReader } from "@/lib/ai/sketch-reader";
+import { claudeSketchReader, openAiSketchReader } from "@/lib/ai/sketch-reader";
 
 const esc = (t: string) => t.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
 
 async function main(): Promise<void> {
   const files = process.argv.slice(2);
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
-  if (!apiKey) throw new Error("Set OPENAI_API_KEY in .env.local first.");
+  const claudeKey = process.env.ANTHROPIC_API_KEY?.trim();
+  const openAiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!claudeKey && !openAiKey)
+    throw new Error("Set ANTHROPIC_API_KEY (or OPENAI_API_KEY) in .env.local first.");
   if (!files.length)
     throw new Error("Usage: npm run layout:read -- <sketches.pdf or photo.jpg> [more]");
-  const model = process.env.OPENAI_SKETCH_MODEL?.trim() || "gpt-5-mini";
-  const read = openAiSketchReader({ apiKey, model });
+  const read = claudeKey
+    ? claudeSketchReader({
+        apiKey: claudeKey,
+        model: process.env.CLAUDE_SKETCH_MODEL?.trim() || "claude-haiku-5-5",
+      })
+    : openAiSketchReader({
+        apiKey: openAiKey!,
+        model: process.env.OPENAI_SKETCH_MODEL?.trim() || "gpt-5-mini",
+      });
+  console.log(`Reading with ${read.model}…`);
   const loggers = 16;
   for (const file of files) {
     const bytes = new Uint8Array(await readFile(file));
@@ -36,9 +46,14 @@ async function main(): Promise<void> {
         ? "image/png"
         : "image/jpeg";
     const started = Date.now();
-    const parsed = sketchReadingSchema.safeParse(await read({ bytes, mime }));
+    const raw = await read({ bytes, mime });
+    // What the model said, as it said it, to see why when a reading goes wrong.
+    await writeFile(`${file}.raw.json`, JSON.stringify(raw, null, 1));
+    const parsed = sketchReadingSchema.safeParse(raw);
     if (!parsed.success) {
-      console.log(`${file}: not readable as layouts`);
+      console.log(`${file}: not readable as layouts. What the model sent: ${file}.raw.json`);
+      for (const issue of parsed.error.issues.slice(0, 8))
+        console.log(`  ${issue.path.join(".") || "(top)"}: ${issue.message}`);
       continue;
     }
     const rooms = parsed.data.rooms.map((room) => {

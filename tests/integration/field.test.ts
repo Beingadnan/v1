@@ -415,7 +415,7 @@ describe("phase 5: an engineer places 9 loggers for BE-WF-02 and records start a
     ).rejects.toBeInstanceOf(ForbiddenError);
     await expect(
       readLayoutSketch(db, blobs, null, engineer, roomStudy, stored.file.id, req),
-    ).rejects.toThrow("OPENAI_API_KEY");
+    ).rejects.toThrow("ANTHROPIC_API_KEY");
     await expect(
       readLayoutSketch(
         db,

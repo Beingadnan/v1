@@ -55,7 +55,7 @@ test("phase 6 exit test: the team leader uploads FE-WF-03's data, a 30-min gap s
   await page.goto("/studies");
   await page.getByRole("link", { name: /FE-WF-03/ }).click();
   // A finished study opens on its Data tab.
-  await expect(page.getByRole("heading", { name: "Logger data" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Logger data", exact: true })).toBeVisible();
   await expect(page.getByText("No data yet")).toBeVisible();
 
   const input = page.getByLabel("Logger export file");

@@ -25,7 +25,7 @@ async function addFreezer(page: Page, code: string, lastStudy: string) {
 async function certify(page: Page, code: string, number: string, due: string) {
   await page.goto(`/instruments?q=${encodeURIComponent(code)}`);
   await page.getByRole("link", { name: code, exact: true }).click();
-  await page.getByRole("button", { name: "Record outside-lab certificate" }).click();
+  await page.getByRole("button", { name: "Enter without a scan" }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByLabel("Laboratory").fill("QA Tech Lab");
   await dialog.getByLabel("Certificate No.").fill(number);

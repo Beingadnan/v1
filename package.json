@@ -17,6 +17,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file-if-exists=.env.local scripts/migrate.ts",
     "db:seed": "tsx --conditions=react-server --env-file-if-exists=.env.local scripts/seed.ts",
+    "db:seed-folder": "tsx --conditions=react-server --env-file-if-exists=.env.local scripts/seed-company-folder.ts",
     "db:seed-demo": "tsx --conditions=react-server --env-file-if-exists=.env.local scripts/seed-demo.ts",
     "user:create-admin": "tsx --conditions=react-server --env-file-if-exists=.env.local scripts/create-admin.ts",
     "db:studio": "drizzle-kit studio",

@@ -23,8 +23,24 @@ export const LEVEL_LABELS: Record<SketchLevel, string> = {
   bottom: "Bottom",
 };
 
-const unit = z.coerce.number().min(0).max(1);
-const size = z.coerce.number().min(0).max(1000);
+// A model's numbers are brought into range, not refused: 1.05 is the wall, -0.02 the
+// floor, a missing number nothing. Text is cut to length, lists to a sane size.
+const num = (min: number, max: number, fallback: number) =>
+  z.preprocess((v) => {
+    const n = typeof v === "number" ? v : Number(v);
+    return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+  }, z.number());
+const unit = num(0, 1, 0);
+const size = num(0, 1000, 0);
+const text = (max: number) =>
+  z.preprocess((v) => (typeof v === "string" ? v.trim().slice(0, max) : ""), z.string());
+const list = <T extends z.ZodType>(item: T, max: number) =>
+  z.preprocess((v) => (Array.isArray(v) ? v.slice(0, max) : []), z.array(item));
+const whole = (min: number, max: number, fallback: number) =>
+  z.preprocess((v) => {
+    const n = Math.round(typeof v === "number" ? v : Number(v));
+    return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+  }, z.number().int());
 
 /** What stands in a room, as the engineers draw it. */
 export const SKETCH_OBJECT_KINDS = [
@@ -46,53 +62,52 @@ export const SKETCH_OBJECT_KINDS = [
 export type SketchObjectKind = (typeof SKETCH_OBJECT_KINDS)[number];
 
 const roomSchema = z.object({
-  name: z.string().trim().max(120),
-  code: z.string().trim().max(40),
-  page: z.coerce.number().int().min(1).max(200),
-  kind: z.enum(["room", "box"]),
-  orientation: z.enum(["horizontal", "vertical"]),
+  name: text(120),
+  code: text(40),
+  page: whole(1, 500, 1),
+  kind: z.enum(["room", "box"]).catch("room"),
+  orientation: z.enum(["horizontal", "vertical"]).catch("horizontal"),
   length: size,
   width: size,
   height: size,
-  doors: z
-    .array(z.object({ wall: z.enum(["front", "back", "left", "right"]), along: unit }))
-    .max(10),
-  objects: z
-    .array(
-      z.object({
-        kind: z.enum(SKETCH_OBJECT_KINDS),
-        label: z.string().trim().max(40),
-        x: unit,
-        y: unit,
-        w: unit,
-        d: unit,
-        h: unit,
-        shelves: z.coerce.number().int().min(0).max(20),
-      }),
-    )
-    .max(40),
-  sensors: z
-    .array(
-      z.object({
-        label: z.string().trim().max(20),
-        level: z.enum(SKETCH_LEVELS),
-        x: unit,
-        y: unit,
-        ambient: z.boolean(),
-      }),
-    )
-    .max(200),
+  doors: list(
+    z.object({ wall: z.enum(["front", "back", "left", "right"]).catch("front"), along: unit }),
+    10,
+  ),
+  objects: list(
+    z.object({
+      kind: z.enum(SKETCH_OBJECT_KINDS).catch("other"),
+      label: text(40),
+      x: unit,
+      y: unit,
+      w: unit,
+      d: unit,
+      h: unit,
+      shelves: whole(0, 20, 0),
+    }),
+    40,
+  ),
+  sensors: list(
+    z.object({
+      label: text(20),
+      level: z.enum(SKETCH_LEVELS).catch("middle"),
+      x: unit,
+      y: unit,
+      ambient: z.boolean().catch(false),
+    }),
+    200,
+  ),
 });
 export type SketchRoom = z.infer<typeof roomSchema>;
 
 /** What the model must give back. Checked again here: a model's JSON is never trusted. */
 export const sketchReadingSchema = z.object({
-  rooms: z.array(roomSchema).max(60),
-  notes: z.string().max(2000),
+  rooms: list(roomSchema, 80),
+  notes: text(2000),
 });
 export type SketchReading = z.infer<typeof sketchReadingSchema>;
 
-const num = (description: string) => ({ type: "number", description }) as const;
+const jnum = (description: string) => ({ type: "number", description }) as const;
 
 /**
  * The same, as the JSON Schema a model's structured output follows (strict:
@@ -145,11 +160,11 @@ export const SKETCH_JSON_SCHEMA = {
             description:
               "horizontal: longer than tall (rooms nearly always). vertical: taller than wide (an upright fridge or cabinet).",
           },
-          length: num(
+          length: jnum(
             "Left-to-right size of the front face as drawn. Metres if written, otherwise relative.",
           ),
-          width: num("Front-to-back depth as drawn, same unit."),
-          height: num("Floor-to-ceiling height as drawn, same unit."),
+          width: jnum("Front-to-back depth as drawn, same unit."),
+          height: jnum("Floor-to-ceiling height as drawn, same unit."),
           doors: {
             type: "array",
             description: "Each door drawn on the room's walls (not doors of furniture).",
@@ -159,7 +174,7 @@ export const SKETCH_JSON_SCHEMA = {
               required: ["wall", "along"],
               properties: {
                 wall: { type: "string", enum: ["front", "back", "left", "right"] },
-                along: num("0 to 1 along that wall: left to right, or front to back."),
+                along: jnum("0 to 1 along that wall: left to right, or front to back."),
               },
             },
           },
@@ -177,11 +192,11 @@ export const SKETCH_JSON_SCHEMA = {
                   type: "string",
                   description: 'As written, e.g. "Cupboard", "BOD incubator".',
                 },
-                x: num("Left edge, 0 to 1 of the length."),
-                y: num("Front edge, 0 to 1 of the depth."),
-                w: num("Width, 0 to 1 of the length."),
-                d: num("Depth, 0 to 1 of the depth."),
-                h: num("Height, 0 to 1 of the room's height."),
+                x: jnum("Left edge, 0 to 1 of the length."),
+                y: jnum("Front edge, 0 to 1 of the depth."),
+                w: jnum("Width, 0 to 1 of the length."),
+                d: jnum("Depth, 0 to 1 of the depth."),
+                h: jnum("Height, 0 to 1 of the room's height."),
                 shelves: { type: "integer", description: "Shelves drawn, 0 if none." },
               },
             },
@@ -196,8 +211,8 @@ export const SKETCH_JSON_SCHEMA = {
               properties: {
                 label: { type: "string" },
                 level: { type: "string", enum: ["top", "middle", "bottom"] },
-                x: num("0 left to 1 right, seen from the front."),
-                y: num("0 front to 1 back."),
+                x: jnum("0 left to 1 right, seen from the front."),
+                y: jnum("0 front to 1 back."),
                 ambient: { type: "boolean", description: "True if drawn outside." },
               },
             },
@@ -211,10 +226,13 @@ export const SKETCH_JSON_SCHEMA = {
 
 /** Instructions given with the sketch. */
 export const SKETCH_PROMPT = [
-  "These are a field engineer's hand-drawn sketches of rooms and equipment in a pharmaceutical facility, drawn before a temperature mapping study. Pages may be rotated or photographed at an angle.",
-  "Read every room or equipment drawn into the JSON schema, with its written title and ID.",
-  "Each is usually a 3-D box seen from the front: take the front face as the front wall, the receding lines as depth.",
-  "Give each door on the room's walls, and each object drawn inside with its written label and its floor footprint and height as fractions of the room.",
+  "These are a field engineer's hand-drawn sketches of rooms and equipment in a pharmaceutical facility, drawn before a temperature mapping study. Pages may be rotated or photographed at an angle; a page can hold more than one room.",
+  "Read every room or equipment drawn into the JSON schema, with its written title and ID. IDs look like 5-ML-05 or SML-07: a digit 5 at the start is a five, not the letter S.",
+  "A room is usually drawn as seen from its entrance looking in: the rectangle in the middle is the BACK wall (y = 1), the slanted walls on each side are the LEFT (x = 0) and RIGHT (x = 1) walls, and the floor runs from the front (y = 0, nearest the viewer, often left open) to the back wall.",
+  "An object drawn against the left wall has x near 0 and runs along y; one against the right wall has x near 1; one against the back wall has y near 1 and runs along x; one standing on the floor sits where it is drawn.",
+  "A door drawn in the back rectangle is on the back wall; in a side wall, on that wall. Give its place along the wall: back wall left to right, side walls front to back.",
+  "Every room is horizontal. Only a single cabinet, fridge or chamber drawn alone is a box, and it is vertical when drawn taller than wide.",
+  "Label each object with the words written on it only, such as Cupboard, Pass box, Table, LAF, Autoclave; put where it is in the numbers, never in the label.",
   "If loggers are drawn (L1, T1, numbers in circles), give each once with its level from colour, legend, written T/M/B or drawn height; otherwise leave sensors empty.",
   "Do not invent anything not drawn.",
 ].join(" ");
@@ -231,8 +249,10 @@ export function normaliseLabel(text: string): string {
  * it is wide, a horizontal one is not. Missing sizes take typical ones.
  */
 export function shapeOf(
-  r: Pick<SketchRoom, "kind" | "orientation" | "length" | "width" | "height">,
+  given: Pick<SketchRoom, "kind" | "orientation" | "length" | "width" | "height">,
 ): Shape {
+  // A room never stands on end: a model reading a narrow room as "vertical" is wrong.
+  const r = given.kind === "room" ? { ...given, orientation: "horizontal" as const } : given;
   const typical =
     r.kind === "room"
       ? { length: 4, width: 3, height: 2.6 }
@@ -263,6 +283,9 @@ export function shapeOf(
   } else if (r.orientation === "horizontal" && height > across) {
     [length, height] = [height, length];
   }
+  // Hand sketches draw rooms nearly as tall as long; a room is rarely taller than
+  // two-thirds of its longer side, so its drawing is kept to that.
+  if (r.kind === "room") height = Math.min(height, Math.max(length, width) * 0.65);
   const round = (v: number) => Math.round(v * 1000) / 1000;
   return { length: round(length), width: round(width), height: round(height) };
 }
@@ -322,11 +345,11 @@ export function layoutFromRoom(room: SketchRoom, loggerCount: number): SketchLay
 
   const shape: Shape = {
     ...shapeOf(room),
-    orientation: room.orientation,
+    orientation: room.kind === "room" ? "horizontal" : room.orientation,
     objects: room.objects
       .map((o) => ({
         kind: o.kind,
-        label: o.label,
+        label: cleanLabel(o.label),
         x: r3(o.x),
         y: r3(o.y),
         w: r3(Math.min(o.w, 1 - o.x)),
@@ -398,7 +421,23 @@ export function layoutFromRoom(room: SketchRoom, loggerCount: number): SketchLay
   return { points, features, shape, warnings };
 }
 
-const key = (t: string) => t.toLowerCase().replace(/[^a-z0-9]/g, "");
+// Handwriting reads 5 as S, 0 as O, 1 as I or l: compare IDs with those as one.
+const key = (t: string) =>
+  t
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "")
+    .replace(/s/g, "5")
+    .replace(/o/g, "0")
+    .replace(/[il]/g, "1");
+
+/** "cupboard (tall, back centre)" → "Cupboard": the place is in the numbers. */
+export function cleanLabel(label: string): string {
+  const t = label
+    .replace(/\s*\([^)]*\)\s*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return t ? t[0]!.toUpperCase() + t.slice(1) : "";
+}
 
 /**
  * Which drawn room is this equipment: its code written as the room's ID

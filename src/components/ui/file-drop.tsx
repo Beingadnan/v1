@@ -13,6 +13,8 @@ type FileDropProps = {
   maxSizeMb: number;
   onFile: (file: File) => void;
   disabled?: boolean;
+  /** Take many files at once; each accepted one is passed to onFile. */
+  multiple?: boolean;
 };
 
 /**
@@ -20,32 +22,41 @@ type FileDropProps = {
  * Client-side checks only give fast feedback; the server re-validates
  * type, size and content before anything is stored.
  */
-export function FileDrop({ accept, description, maxSizeMb, onFile, disabled }: FileDropProps) {
+export function FileDrop({
+  accept,
+  description,
+  maxSizeMb,
+  onFile,
+  disabled,
+  multiple,
+}: FileDropProps) {
   const inputId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  function handleFile(file: File | undefined) {
-    if (!file) return;
+  function handleFiles(list: FileList | null | undefined) {
+    const files = [...(list ?? [])].slice(0, multiple ? undefined : 1);
+    if (files.length === 0) return;
     const allowed = accept.split(",").map((ext) => ext.trim().toLowerCase());
-    const name = file.name.toLowerCase();
-    if (!allowed.some((ext) => name.endsWith(ext))) {
-      setError(`${file.name} is not an accepted file type. Choose ${accept}.`);
-      return;
+    const refused: string[] = [];
+    for (const file of files) {
+      const name = file.name.toLowerCase();
+      if (!allowed.some((ext) => name.endsWith(ext))) {
+        refused.push(`${file.name} is not an accepted file type. Choose ${accept}.`);
+      } else if (file.size > maxSizeMb * 1024 * 1024) {
+        refused.push(`${file.name} is larger than ${maxSizeMb} MB. Split or compress it first.`);
+      } else {
+        onFile(file);
+      }
     }
-    if (file.size > maxSizeMb * 1024 * 1024) {
-      setError(`${file.name} is larger than ${maxSizeMb} MB. Split or compress it first.`);
-      return;
-    }
-    setError(null);
-    onFile(file);
+    setError(refused.length ? refused.join(" ") : null);
   }
 
   function onDrop(event: DragEvent<HTMLLabelElement>) {
     event.preventDefault();
     setDragging(false);
-    if (!disabled) handleFile(event.dataTransfer.files[0]);
+    if (!disabled) handleFiles(event.dataTransfer.files);
   }
 
   return (
@@ -65,7 +76,9 @@ export function FileDrop({ accept, description, maxSizeMb, onFile, disabled }: F
         )}
       >
         <Upload className="size-6 text-primary" aria-hidden="true" />
-        <span className="text-sm font-medium">Drop a file here, or choose one</span>
+        <span className="text-sm font-medium">
+          {multiple ? "Drop files here, or choose them" : "Drop a file here, or choose one"}
+        </span>
         <span className="text-xs text-muted-foreground">
           {description} · up to {maxSizeMb} MB
         </span>
@@ -75,10 +88,11 @@ export function FileDrop({ accept, description, maxSizeMb, onFile, disabled }: F
         id={inputId}
         type="file"
         accept={accept}
+        multiple={multiple}
         disabled={disabled}
         className="sr-only"
         onChange={(event) => {
-          handleFile(event.target.files?.[0]);
+          handleFiles(event.target.files);
           event.target.value = "";
         }}
       />

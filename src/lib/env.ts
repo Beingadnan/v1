@@ -100,8 +100,15 @@ const envSchema = z.object({
     .transform((v) => v || undefined),
   /**
    * Reads the field engineer's layout sketch (photo) into positions (ADR 0021).
-   * Optional: without a key the Layout tab has no "Read a sketch" button.
+   * Optional: Claude (ANTHROPIC_API_KEY) or OpenAI; without either, sketches aren't read.
    */
+  ANTHROPIC_API_KEY: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => v || undefined),
+  /** The Claude model for sketches: Haiku is the cheapest with vision and PDFs. */
+  CLAUDE_SKETCH_MODEL: z.string().trim().min(1).default("claude-haiku-5-5"),
   OPENAI_API_KEY: z
     .string()
     .trim()

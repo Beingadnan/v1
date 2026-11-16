@@ -78,7 +78,7 @@ test("phase 5 exit test: on a phone, an engineer places 9 loggers for the freeze
   await expect(page.getByText("9 of 9", { exact: true })).toBeVisible();
 
   // Times: start, then end (it asks first: the 24 h study has just begun).
-  await page.getByRole("link", { name: /^Times/ }).click();
+  await page.getByRole("link", { name: /^Start & end/ }).click();
   await page.getByRole("button", { name: "Start study" }).click();
   await expect(page.getByText(/Started at .* recorded\./)).toBeVisible();
   await page.getByRole("button", { name: "End study" }).click();

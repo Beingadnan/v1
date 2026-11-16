@@ -93,7 +93,7 @@ export function LayoutEditor({
   room?: boolean;
   /** Doors, pass boxes, LAFs… already marked on the plan. */
   initialFeatures?: PlanFeature[];
-  /** The server can read a sketch photo (an OpenAI key is set). */
+  /** The server can read a new sketch (an OpenAI key is set); stored readings work without. */
   canReadSketch?: boolean;
 }) {
   // The shape read from a sketch draws the box until it's saved.
@@ -262,8 +262,9 @@ export function LayoutEditor({
 
   return (
     <div className="flex flex-col gap-4">
-      {canReadSketch && !readOnly ? (
+      {!readOnly ? (
         <SketchUpload
+          configured={canReadSketch}
           studyId={studyId}
           dims={dims}
           onUse={(read) => {
@@ -709,8 +710,8 @@ export function LayoutEditor({
         >
           {message.text}
           {message.ok && !dirty ? (
-            <a href="#loggers" className="font-medium underline">
-              Next: put a logger at each position ↓
+            <a href={`/studies/${studyId}?tab=loggers`} className="font-medium underline">
+              Next: put a logger at each position →
             </a>
           ) : null}
         </div>

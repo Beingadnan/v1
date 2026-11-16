@@ -18,6 +18,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 import type { AccuracySpec } from "@/domain/instruments/calibration-math";
+import type { ReadCertificate } from "@/domain/instruments/certificate-scan";
 import {
   INSTRUMENT_STATUSES,
   INSTRUMENT_TIERS,
@@ -358,6 +359,22 @@ export const certificateMasters = pgTable(
     index("certificate_masters_master_idx").on(t.masterCertificateId),
   ],
 );
+
+/**
+ * A scanned certificate as the vision model read it (ADR 0024), kept so the
+ * same file is never sent twice.
+ */
+export const certificateScanReadings = pgTable("certificate_scan_readings", {
+  fileId: uuid("file_id")
+    .primaryKey()
+    .references(() => storedFiles.id, { onDelete: "restrict" }),
+  organisationId: uuid("organisation_id")
+    .notNull()
+    .references(() => organisations.id),
+  model: text("model").notNull(),
+  reading: jsonb("reading").$type<ReadCertificate[]>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 export type InstrumentModel = typeof instrumentModels.$inferSelect;
 export type Instrument = typeof instruments.$inferSelect;

@@ -26,19 +26,20 @@ test("phase 2 exit test: Watson Pharma → Seawoods → BA → BE-WF-02 with −
     page.getByRole("heading", { level: 1, name: "Watson Pharma Pvt Limited" }),
   ).toBeVisible();
 
-  // The client's folders: company → site → department → year.
+  // The folder window: open the site, add its department.
   await page
     .getByRole("navigation", { name: "Client folders" })
     .getByRole("link", { name: /Seawoods/ })
     .click();
-  await expect(page.getByRole("heading", { level: 1, name: "Seawoods" })).toBeVisible();
   await page.getByRole("button", { name: "Add department at Seawoods" }).click();
   await page.getByRole("dialog").getByLabel("Department name").fill("BA");
   await page.getByRole("dialog").getByRole("button", { name: "Add department" }).click();
-  await page.getByRole("main").getByRole("link", { name: /^BA/ }).first().click();
+  const folders = page.getByRole("navigation", { name: "Client folders" });
+  await folders.getByRole("link", { name: /^Equipment/ }).click();
+  await folders.getByRole("link", { name: /^BA/ }).click();
   await expect(page.getByRole("button", { name: "Edit department BA" })).toBeVisible();
 
-  // Added from the department's folder: its site and department are already chosen.
+  // Added at the chosen site: the department is picked in the form.
   await page.getByRole("link", { name: "Add equipment" }).first().click();
   await expect(page.getByRole("heading", { level: 1, name: /^Add equipment/ })).toBeVisible();
   await page.getByLabel("Department", { exact: true }).selectOption({ label: "BA" });
@@ -71,11 +72,8 @@ test("phase 2 exit test: Watson Pharma → Seawoods → BA → BE-WF-02 with −
     .getByRole("navigation", { name: "Breadcrumb" })
     .getByRole("link", { name: "BA" })
     .click();
-  // Inside the BA folder of Seawoods, as in Windows Explorer.
-  const address = page.getByRole("region", { name: "Client folders and files" });
-  await expect(address.getByRole("navigation", { name: "Breadcrumb" })).toContainText(
-    /Seawoods.*BA/,
-  );
+  // Back on the client, in Seawoods › Equipment › BA.
+  await expect(page.getByRole("heading", { level: 1, name: "BA" })).toBeVisible();
   const row = page.getByRole("row", { name: /BE-WF-02/ });
   await expect(row).toContainText("Walk-in freezer");
   await expect(row).toContainText("−30 to −15 °C");
@@ -174,9 +172,10 @@ test("clients and equipment import from the Excel template", async ({
   await page.getByRole("link", { name: "Go to clients" }).click();
   await page.getByRole("link", { name: "Lupin Limited" }).click();
   await expect(page.getByText("Required by client SOP")).toBeVisible();
-  // Filed under Lupin → Pithampur → Stores.
+  // Filed under Lupin → Pithampur → Equipment → Stores.
   const folders = page.getByRole("navigation", { name: "Client folders" });
   await folders.getByRole("link", { name: /Pithampur/ }).click();
+  await folders.getByRole("link", { name: /^Equipment/ }).click();
   await folders.getByRole("link", { name: /Stores/ }).click();
   await expect(page.getByRole("row", { name: /CR-01/ })).toContainText("2 to 8 °C");
   expect(errors).toEqual([]);

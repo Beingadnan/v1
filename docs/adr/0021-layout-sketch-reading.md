@@ -55,3 +55,14 @@ loggers: the sketch is drawn before the loggers go in.
   data; API inputs are not used for training by default.
 - Accuracy depends on the photo. `npm run layout:read -- sketches.pdf` writes every room's
   diagram next to the file to try many sketches before go-live.
+
+## Update, 16 Nov 2026: Claude as the reader
+
+QA Tech asked to use Claude. With `ANTHROPIC_API_KEY` set, sketches are read by Claude
+(`CLAUDE_SKETCH_MODEL`, default `claude-haiku-5-5`) through the Messages API: the PDF goes
+as a document (a photo as an image) and the answer comes back as the input of a forced
+tool whose schema is `SKETCH_JSON_SCHEMA`. OpenAI stays as the fallback when only its key
+is set. Claude Haiku 5.5 costs $0.10 per million input tokens and $0.50 per million output
+tokens (prompts under 100k tokens), so a photo is about 10 paise and a 9-page site PDF
+about 40 paise, read once. API use is billed in the Claude Console, separately from a
+Claude Pro subscription.
