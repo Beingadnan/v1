@@ -94,20 +94,13 @@ test("phase 4 exit test: a Watson job with 2 freezers, found by PO, held back by
     }),
   ).toBeVisible();
 
-  // Book the three loggers by pasting their IDs, then tick the people's items.
+  // Book the three loggers by pasting their IDs, then field work can start.
   await page.getByRole("button", { name: "Add by ID or serial" }).click();
   dialog = page.getByRole("dialog");
   await dialog.getByLabel("IDs or serial numbers").fill(`J${run}-0001\nJ${run}-0002, J${run}-0003`);
   await dialog.getByRole("button", { name: "Book" }).click();
   await expect(dialog.getByText(`Booked: J${run}-0001, J${run}-0002, J${run}-0003`)).toBeVisible();
   await page.keyboard.press("Escape");
-  for (const item of ["Approved protocol", "Site access / gate pass", "Previous report on hand"]) {
-    await page.getByRole("group", { name: item }).getByRole("button", { name: "Ready" }).click();
-    await expect(
-      page.getByRole("group", { name: item }).getByRole("button", { name: "Ready" }),
-    ).toHaveAttribute("aria-pressed", "true");
-  }
-  await expect(page.getByText("Everything is in place.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Start field work" })).toBeVisible();
 
   // Found by its PO number.
@@ -124,12 +117,10 @@ test("phase 4 exit test: a Watson job with 2 freezers, found by PO, held back by
   await dialog.getByRole("button", { name: "Save" }).click();
   await expect(dialog).toBeHidden();
   await expect(page.getByText("is valid only until 30.06.2030").first()).toBeVisible();
-  await expect(page.getByText("1 item pending")).toBeVisible();
   await expect(page.getByRole("button", { name: "Start field work" })).toHaveCount(0);
 
   // Releasing it and booking a spare fixes it.
   await page.getByRole("button", { name: `Release J${run}-0003` }).click();
-  await expect(page.getByText("Everything is in place.")).toBeVisible();
   await page.getByRole("button", { name: "Start field work" }).click();
   await expect(page.locator("[data-tone]").first()).toHaveText("Field work");
   expect(errors).toEqual([]);

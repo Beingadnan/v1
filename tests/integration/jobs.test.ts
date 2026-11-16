@@ -420,15 +420,11 @@ describe("phase 4 exit test: a Watson job with 2 freezers", () => {
     await expect(
       setReadiness(db, leader, jobId, { key: "protocol", state: "ready", note: "" }, req),
     ).rejects.toThrow();
+    // The previous report is for comparing; it no longer holds up field work.
+    expect(
+      (await state(jobId)).readiness.items.find((i) => i.key === "previous_report"),
+    ).toMatchObject({ state: "pending", blocking: false });
     await setReadiness(db, leader, jobId, { key: "site_access", state: "ready", note: "" }, req);
-    expect((await state(jobId)).status).toBe("created");
-    await setReadiness(
-      db,
-      leader,
-      jobId,
-      { key: "previous_report", state: "ready", note: "11/25 report on file" },
-      req,
-    );
     const ready = await state(jobId);
     expect(ready.readiness.ready).toBe(true);
     expect(ready.status).toBe("ready");

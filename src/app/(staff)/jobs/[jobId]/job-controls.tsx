@@ -2,7 +2,7 @@
 
 import { Pencil, Plus, Trash2, Wand2, X } from "lucide-react";
 import Link from "next/link";
-import { startTransition, useActionState, useState, type FormEvent, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -26,7 +26,6 @@ import {
   WORK_TYPES,
   type Transition,
 } from "@/domain/jobs/types";
-import type { ActionResult } from "@/lib/action-result";
 import { shortList } from "@/lib/text";
 import { cn } from "@/lib/utils";
 
@@ -36,28 +35,10 @@ import {
   changeStatusAction,
   releaseAction,
   removeStudyAction,
-  setReadinessAction,
   setTeamAction,
   updateJobAction,
   updateStudyAction,
 } from "../actions";
-
-type FormAction<T> = (prev: unknown, formData: FormData) => Promise<ActionResult<T>>;
-
-/** A form whose submit buttons carry their own name/value (FormData with the submitter). */
-function useSubmitterAction<T>(action: FormAction<T>) {
-  const [result, dispatch, pending] = useActionState<ActionResult<T> | undefined, FormData>(
-    action,
-    undefined,
-  );
-  const onSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const native = event.nativeEvent as SubmitEvent;
-    const formData = new FormData(event.currentTarget, native.submitter);
-    startTransition(() => dispatch(formData));
-  };
-  return { result, pending, onSubmit };
-}
 
 const Hidden = ({ fields }: { fields: Record<string, string> }) => (
   <>
@@ -302,63 +283,6 @@ function EditJobForm({
       <Button type="submit" disabled={pending}>
         {pending ? "Saving…" : "Save"}
       </Button>
-    </form>
-  );
-}
-
-// ---------------------------------------------------------------- readiness
-
-export function ReadinessSwitch({
-  jobId,
-  itemKey,
-  label,
-  state,
-  note,
-}: {
-  jobId: string;
-  itemKey: string;
-  label: string;
-  state: string;
-  note: string;
-}) {
-  const { result, pending, onSubmit } = useSubmitterAction(setReadinessAction);
-  const options = [
-    { value: "ready", label: "Ready" },
-    { value: "pending", label: "Pending" },
-    { value: "na", label: "N/A" },
-  ];
-  return (
-    <form onSubmit={onSubmit} className="flex flex-col gap-1">
-      <Hidden fields={{ jobId, key: itemKey, note }} />
-      <div
-        role="group"
-        aria-label={label}
-        className="inline-flex w-fit overflow-hidden rounded-md border border-border"
-      >
-        {options.map((o) => (
-          <button
-            key={o.value}
-            type="submit"
-            name="state"
-            value={o.value}
-            disabled={pending}
-            aria-pressed={state === o.value}
-            className={cn(
-              "px-2.5 py-1 text-xs",
-              state === o.value
-                ? "bg-primary text-primary-foreground"
-                : "bg-surface hover:bg-surface-muted",
-            )}
-          >
-            {o.label}
-          </button>
-        ))}
-      </div>
-      {result && !result.ok ? (
-        <p role="alert" className="text-xs text-fail">
-          {result.error}
-        </p>
-      ) : null}
     </form>
   );
 }

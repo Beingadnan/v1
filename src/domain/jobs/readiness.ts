@@ -248,7 +248,9 @@ export function computeReadiness(input: ReadinessInput): {
       key,
       label: info.label,
       note: manual?.note ?? "",
-      blocking: key !== "purchase_order",
+      // The client's order and the previous report never hold up field work: the
+      // order comes later, and the last report is for comparing, not for going.
+      blocking: key !== "purchase_order" && key !== "previous_report",
     };
     if (worked && info.calculated) return { ...base, calculated: true, ...worked };
     // Worked out for certain (the previous report found in QTech, or no previous study).
