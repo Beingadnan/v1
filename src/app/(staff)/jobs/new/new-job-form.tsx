@@ -12,7 +12,7 @@ import { EQUIPMENT_TYPE_INFO, isEquipmentType } from "@/domain/clients/equipment
 import type { SiteEquipment, WizardClient } from "@/domain/jobs/queries";
 
 import { OrderFields } from "../order-fields";
-import { TEAM_ROLE_LABELS, TEAM_ROLES } from "@/domain/jobs/types";
+import { TeamPicker } from "../team-picker";
 
 import { createJobAction, siteEquipmentAction } from "../actions";
 
@@ -31,10 +31,6 @@ function plusDays(iso: string, days: number) {
   const d = new Date(`${iso}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
-}
-
-function defaultRole(role: string): string {
-  return (TEAM_ROLES as readonly string[]).includes(role) ? role : "field_engineer";
 }
 
 function initialTicks(list: SiteEquipment[], preselected: string[]) {
@@ -77,9 +73,6 @@ export function NewJobForm({
   const [filter, setFilter] = useState("");
   const [start, setStart] = useState(initial.plannedStart);
   const [end, setEnd] = useState(plusDays(initial.plannedStart, 3));
-  const [team, setTeam] = useState<Set<string>>(
-    () => new Set(me.role === "team_leader" ? [me.id] : []),
-  );
 
   const company = clients.find((c) => c.id === companyId);
 
@@ -349,47 +342,10 @@ export function NewJobForm({
         </div>
         <fieldset className="flex flex-col gap-2">
           <legend className="mb-1 text-sm font-medium">Team</legend>
-          <ul className="grid gap-2 sm:grid-cols-2">
-            {staff.map((s) => (
-              <li
-                key={s.id}
-                className="flex items-center gap-2 rounded-md border border-border px-3 py-2"
-              >
-                <input
-                  id={`team-${s.id}`}
-                  type="checkbox"
-                  name="team"
-                  value={s.id}
-                  checked={team.has(s.id)}
-                  onChange={() =>
-                    setTeam((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(s.id)) next.delete(s.id);
-                      else next.add(s.id);
-                      return next;
-                    })
-                  }
-                  className="size-4 accent-primary"
-                />
-                <label htmlFor={`team-${s.id}`} className="min-w-0 flex-1 truncate text-sm">
-                  {s.name}
-                </label>
-                <select
-                  name={`role-${s.id}`}
-                  aria-label={`${s.name}'s role on this job`}
-                  defaultValue={defaultRole(s.role)}
-                  disabled={!team.has(s.id)}
-                  className="h-8 rounded-md border border-input bg-surface px-2 text-xs disabled:opacity-50"
-                >
-                  {TEAM_ROLES.map((r) => (
-                    <option key={r} value={r}>
-                      {TEAM_ROLE_LABELS[r]}
-                    </option>
-                  ))}
-                </select>
-              </li>
-            ))}
-          </ul>
+          <TeamPicker
+            staff={staff}
+            initial={me.role === "team_leader" ? [{ userId: me.id, role: "team_leader" }] : []}
+          />
         </fieldset>
       </section>
 

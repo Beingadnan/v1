@@ -593,6 +593,26 @@ describe("clashes, holds and repeat visits", () => {
       removeStudy(db, leader, (await state(repeat.id)).studies[0]!.id, req),
     ).rejects.toThrow("at least one study");
     await setTeam(db, leader, repeat.id, [{ userId: leader.id, role: "team_leader" }], req);
+    // One person can do several things on a job: lead, map and send the data.
+    await setTeam(
+      db,
+      leader,
+      repeat.id,
+      [
+        { userId: leader.id, role: "team_leader" },
+        { userId: leader.id, role: "field_engineer" },
+        { userId: leader.id, role: "data_provider" },
+        { userId: leader.id, role: "field_engineer" },
+      ],
+      req,
+    );
+    const team = (await getJob(db, leader, repeat.id))!.team;
+    expect(
+      team
+        .filter((t) => t.userId === leader.id)
+        .map((t) => t.role)
+        .sort(),
+    ).toEqual(["data_provider", "field_engineer", "team_leader"]);
     await expect(
       setTeam(db, leader, repeat.id, [{ userId: outsider.id, role: "field_engineer" }], req),
     ).rejects.toThrow("A team member does not exist.");

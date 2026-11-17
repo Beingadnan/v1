@@ -28,7 +28,7 @@ import {
   staffOptions,
 } from "@/domain/jobs/queries";
 import { can } from "@/domain/auth/permissions";
-import { TEAM_ROLE_LABELS, type TeamRole } from "@/domain/jobs/schemas";
+import { TEAM_ROLE_LABELS, TEAM_ROLES, type TeamRole } from "@/domain/jobs/schemas";
 import {
   HOLDS_INSTRUMENTS,
   JOB_STATUS_LABELS,
@@ -650,15 +650,31 @@ export default async function JobPage({ params }: PageProps<"/jobs/[jobId]">) {
               {detail.team.length === 0 ? (
                 <span className="text-muted-foreground">Nobody yet</span>
               ) : (
-                <ul>
-                  {detail.team.map((t) => (
-                    <li key={`${t.userId}-${t.role}`}>
-                      {t.name}{" "}
-                      <span className="text-muted-foreground">
-                        · {TEAM_ROLE_LABELS[t.role as TeamRole] ?? t.role}
-                      </span>
-                    </li>
-                  ))}
+                <ul className="flex flex-col gap-1.5">
+                  {[...new Set(detail.team.map((t) => t.userId))].map((id) => {
+                    const mine = detail.team
+                      .filter((t) => t.userId === id)
+                      .sort(
+                        (a, b) =>
+                          TEAM_ROLES.indexOf(a.role as TeamRole) -
+                          TEAM_ROLES.indexOf(b.role as TeamRole),
+                      );
+                    return (
+                      <li key={id}>
+                        <span className="font-medium">{mine[0]!.name}</span>
+                        <span className="mt-0.5 flex flex-wrap gap-1">
+                          {mine.map((t) => (
+                            <span
+                              key={t.role}
+                              className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-normal text-primary"
+                            >
+                              {TEAM_ROLE_LABELS[t.role as TeamRole] ?? t.role}
+                            </span>
+                          ))}
+                        </span>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
               {detail.teamClashes.map((c) => (

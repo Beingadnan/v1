@@ -2,7 +2,7 @@
 
 import { Pencil, Plus, Trash2, Wand2, X } from "lucide-react";
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -18,7 +18,7 @@ import { STUDY_CYCLE_LABELS, STUDY_CYCLES } from "@/domain/clients/study-default
 import type { SiteEquipment } from "@/domain/jobs/queries";
 
 import { OrderFields, type ContractOption } from "../order-fields";
-import { TEAM_ROLE_LABELS, TEAM_ROLES } from "@/domain/jobs/types";
+import { TeamPicker } from "../team-picker";
 import {
   SEASONS,
   TRANSITIONS,
@@ -565,57 +565,14 @@ function TeamForm({
 }) {
   const { result, pending, onSubmit } = useFormAction(setTeamAction);
   useCloseOnSuccess(result?.ok, close);
-  const [on, setOn] = useState(() => new Set(current.map((c) => c.userId)));
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-4">
       <DialogTitle>Team</DialogTitle>
+      <p className="text-sm text-muted-foreground">
+        Tick who is on the job, then what each does. One person can do several things.
+      </p>
       <Hidden fields={{ jobId }} />
-      <ul className="grid gap-2 sm:grid-cols-2">
-        {staff.map((s) => {
-          const role =
-            current.find((c) => c.userId === s.id)?.role ??
-            ((TEAM_ROLES as readonly string[]).includes(s.role) ? s.role : "field_engineer");
-          return (
-            <li
-              key={s.id}
-              className="flex items-center gap-2 rounded-md border border-border px-3 py-2"
-            >
-              <input
-                id={`t-${s.id}`}
-                type="checkbox"
-                name="team"
-                value={s.id}
-                checked={on.has(s.id)}
-                onChange={() =>
-                  setOn((prev) => {
-                    const next = new Set(prev);
-                    if (next.has(s.id)) next.delete(s.id);
-                    else next.add(s.id);
-                    return next;
-                  })
-                }
-                className="size-4 accent-primary"
-              />
-              <label htmlFor={`t-${s.id}`} className="min-w-0 flex-1 truncate text-sm">
-                {s.name}
-              </label>
-              <select
-                name={`role-${s.id}`}
-                aria-label={`${s.name}'s role`}
-                defaultValue={role}
-                disabled={!on.has(s.id)}
-                className="h-8 rounded-md border border-input bg-surface px-2 text-xs disabled:opacity-50"
-              >
-                {TEAM_ROLES.map((r) => (
-                  <option key={r} value={r}>
-                    {TEAM_ROLE_LABELS[r]}
-                  </option>
-                ))}
-              </select>
-            </li>
-          );
-        })}
-      </ul>
+      <TeamPicker staff={staff} initial={current} />
       <FormMessage result={result} />
       <Button type="submit" disabled={pending}>
         {pending ? "Saving…" : "Save team"}

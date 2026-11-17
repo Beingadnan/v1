@@ -57,12 +57,15 @@ const header = (formData: FormData) =>
     HEADER_FIELDS.filter((n) => formData.has(n)).map((n) => [n, field(formData, n)]),
   );
 
-/** Team pickers send `team` = userId and `role-<userId>` = role. */
+/**
+ * Team pickers send `team` = userId once per person and `role-<userId>`
+ * once per role they have on the job (one person can have several).
+ */
 function team(formData: FormData) {
-  return all(formData, "team").map((userId) => ({
-    userId,
-    role: field(formData, `role-${userId}`) || "field_engineer",
-  }));
+  return all(formData, "team").flatMap((userId) => {
+    const roles = all(formData, `role-${userId}`);
+    return (roles.length ? roles : ["field_engineer"]).map((role) => ({ userId, role }));
+  });
 }
 
 function refresh(jobId?: string) {
