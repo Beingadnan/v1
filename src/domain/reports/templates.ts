@@ -21,9 +21,48 @@ export type TemplateInput = {
     e: Excursion,
     cycle: string,
   ) => { decision: string; reason: string; deviation: string | null } | null;
-  /** Closed deviations' outcomes, for the conclusion ("QT/DEV/2026/0001: No impact"). */
-  deviations: { number: string; outcome: string }[];
+  /**
+   * Closed deviations' outcomes, for the conclusion ("QT/DEV/2026/0001: No impact"),
+   * with the decision code (no_impact, exclude_probe, repeat_study).
+   */
+  deviations: { number: string; outcome: string; decision: string }[];
 };
+
+/**
+ * The study's outcome once its excursions are assessed (QA Tech, Nov 2026):
+ * - qualified: every cycle met the criteria;
+ * - qualified_with_deviations: every excursion was accepted with a reason, or
+ *   raised as a deviation the client's QA head closed without asking for a
+ *   repeat (no impact, or that probe excluded);
+ * - not_qualified: an excursion isn't reviewed yet, its deviation is still
+ *   open, or the decision was to repeat the study;
+ * - not_judged: no limits to judge by.
+ * The report's badge and its suggested conclusion both follow this, so they
+ * can't disagree.
+ */
+export type Assessed = "qualified" | "qualified_with_deviations" | "not_qualified" | "not_judged";
+
+export function assessedOutcome(
+  i: Pick<TemplateInput, "cycles" | "reviewOf" | "deviations">,
+): Assessed {
+  if (i.cycles.length > 0 && i.cycles.every((c) => c.pass === true)) return "qualified";
+  if (!i.cycles.some((c) => c.pass === false)) return "not_judged";
+  const decided = new Map(i.deviations.map((d) => [d.number, d.decision]));
+  if ([...decided.values()].includes("repeat_study")) return "not_qualified";
+  const failing = i.cycles.filter((c) => c.pass === false);
+  // A failing cycle with nothing to review failed some other way: not qualified.
+  if (failing.some((c) => c.excursions.length === 0)) return "not_qualified";
+  const ok = failing.every((c) =>
+    c.excursions.every((e) => {
+      const r = i.reviewOf(e, c.cycle);
+      if (!r) return false;
+      if (r.decision === "accepted") return true;
+      const d = r.deviation ? decided.get(r.deviation) : undefined;
+      return d === "no_impact" || d === "exclude_probe";
+    }),
+  );
+  return ok ? "qualified_with_deviations" : "not_qualified";
+}
 
 /** One decimal with an ASCII minus, as typed in QA Tech's reports (−21.9 → -21.9). */
 export const t1 = (v: number) => (Math.round(v * 10) / 10).toFixed(1);
@@ -88,11 +127,14 @@ export function conclusionText(i: TemplateInput): string {
       ? `${what}, accepted: ${r.reason.replace(/\.$/, "")}`
       : `${what}, raised as deviation ${r.deviation}`;
   });
-  const allReviewed = excursions.every(({ e, c }) => i.reviewOf(e, c.cycle) !== null);
   const devs = i.deviations.map((d) => `${d.number}: ${d.outcome}`).join("; ");
   const head = `${subject}. ${described.join("; ")}.`;
-  if (allReviewed) {
+  const outcome = assessedOutcome(i);
+  if (outcome === "qualified_with_deviations") {
     return `${head}${devs ? ` Deviations: ${devs}.` : ""} With the above assessed, this equipment is in compliance with the defined criteria (${criteria}) & qualified for its further use.`;
+  }
+  if (i.deviations.some((d) => d.decision === "repeat_study")) {
+    return `${head}${devs ? ` Deviations: ${devs}.` : ""} This equipment is not in compliance with the defined criteria (${criteria}); the study is to be repeated.`;
   }
   return `${head} This equipment is not in compliance with the defined criteria (${criteria}).`;
 }

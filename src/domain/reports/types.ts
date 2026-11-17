@@ -123,6 +123,11 @@ export type ReportLayout = {
       { signature: SignBox; name: SignBox; role?: SignBox; footer?: SignBox[] }
     >
   > | null;
+  /**
+   * The verdict printed on the frozen report (Nov 2026), so the client's
+   * stamp says the same; absent on reports frozen before then.
+   */
+  outcome?: "qualified" | "qualified_with_deviations" | "not_qualified" | "not_judged";
 };
 
 /** "Rev 00", "Rev 01"… as on QA Tech's documents. */

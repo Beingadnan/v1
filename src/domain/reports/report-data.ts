@@ -45,7 +45,7 @@ import type { BlobStore } from "@/lib/storage/blob-store";
 import { renderReport, type ReportData } from "./report-pdf";
 import { overridesOf } from "@/domain/field/override-service";
 
-import { conclusionText, observationText, type TemplateInput } from "./templates";
+import { assessedOutcome, conclusionText, observationText, type TemplateInput } from "./templates";
 
 type Exec = Database | Transaction;
 
@@ -233,6 +233,7 @@ export async function reportContext(db: Exec, actor: SessionUser, study: Study, 
       .map((x) => ({
         number: x.d.number,
         outcome: DEVIATION_DECISION_LABELS[x.d.decision as DeviationDecision],
+        decision: x.d.decision!,
       })),
   };
 
@@ -354,6 +355,7 @@ export async function reportData(
     })),
     observation: rev.observation ?? observationText(ctx.template),
     conclusion: rev.conclusion ?? conclusionText(ctx.template),
+    assessed: assessedOutcome(ctx.template),
     postCal: ctx.post.map((x) => ({
       label: x.label ?? "",
       serial: x.serial || x.code,

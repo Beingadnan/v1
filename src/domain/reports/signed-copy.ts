@@ -62,6 +62,14 @@ function centred(
   page.drawText(t, { x: box.x + (box.w - w) / 2, y, size, font, color: colour });
 }
 
+/** What the client's signature means, by the report's verdict: never "qualified" on a failed study. */
+export const APPROVAL_LINE: Record<NonNullable<ReportLayout["outcome"]>, string> = {
+  qualified: "APPROVED - ACCEPTED - QUALIFIED",
+  qualified_with_deviations: "APPROVED - ACCEPTED - QUALIFIED WITH DEVIATIONS",
+  not_qualified: "REVIEWED - ACCEPTED - NOT QUALIFIED",
+  not_judged: "APPROVED - ACCEPTED",
+};
+
 /**
  * The signed copy of a frozen report: the frozen PDF, untouched, with each
  * signature stamped into the signature block and a last page listing every
@@ -103,7 +111,7 @@ export async function signedCopy(input: {
           page,
           bold,
           s.meaning === "approved_by"
-            ? "APPROVED - ACCEPTED - QUALIFIED"
+            ? APPROVAL_LINE[input.layout?.outcome ?? "qualified"]
             : "VERIFIED AND ISSUED - 21 CFR PART 11",
           6.5,
           b.role,

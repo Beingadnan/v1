@@ -2,7 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import type { CycleResult, Excursion } from "@/domain/analysis/engine";
 
-import { conclusionText, criteriaText, observationText, type TemplateInput } from "./templates";
+import {
+  assessedOutcome,
+  conclusionText,
+  criteriaText,
+  observationText,
+  type TemplateInput,
+} from "./templates";
 
 const cycle = (over: Partial<CycleResult> = {}): CycleResult => ({
   cycle: "routine",
@@ -81,6 +87,52 @@ describe("report text, as on BE-WF-02 page 6", () => {
       cycles: [cycle({ pass: false, excursions: [excursion] })],
     });
     expect(t).toMatch(/is not in compliance with the defined criteria \(-15°C To -30°C\)\.$/);
+  });
+
+  it("qualifies with deviations only once the client closed them without a repeat", () => {
+    const failing = {
+      ...base,
+      cycles: [cycle({ pass: false, excursions: [excursion] })],
+      reviewOf: () => ({ decision: "deviation", reason: "", deviation: "QT/DEV/2026/0001" }),
+    };
+    // Raised, still open: the badge and the text both say not qualified.
+    expect(assessedOutcome(failing)).toBe("not_qualified");
+    expect(conclusionText(failing)).toMatch(/is not in compliance/);
+    const noImpact = {
+      ...failing,
+      deviations: [{ number: "QT/DEV/2026/0001", outcome: "No impact", decision: "no_impact" }],
+    };
+    expect(assessedOutcome(noImpact)).toBe("qualified_with_deviations");
+    expect(conclusionText(noImpact)).toMatch(
+      /QT\/DEV\/2026\/0001: No impact\. With the above assessed.*qualified for its further use\.$/,
+    );
+    const repeat = {
+      ...failing,
+      deviations: [
+        { number: "QT/DEV/2026/0001", outcome: "Repeat the study", decision: "repeat_study" },
+      ],
+    };
+    expect(assessedOutcome(repeat)).toBe("not_qualified");
+    expect(conclusionText(repeat)).toMatch(
+      /is not in compliance .*; the study is to be repeated\.$/,
+    );
+    expect(conclusionText(repeat)).not.toMatch(/qualified for its further use/);
+  });
+
+  it("calls a study with every cycle passing qualified, and one without limits not judged", () => {
+    expect(assessedOutcome(base)).toBe("qualified");
+    expect(assessedOutcome({ ...base, cycles: [cycle({ pass: null })] })).toBe("not_judged");
+    expect(
+      assessedOutcome({
+        ...base,
+        cycles: [cycle({ pass: false, excursions: [excursion] })],
+        reviewOf: () => ({
+          decision: "accepted",
+          reason: "Door opened for loading.",
+          deviation: null,
+        }),
+      }),
+    ).toBe("qualified_with_deviations");
   });
 
   it("prefixes each line with the cycle when there are several", () => {
