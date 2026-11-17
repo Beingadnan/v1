@@ -2,7 +2,7 @@
 
 import { Clock } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useState, useSyncExternalStore, useTransition } from "react";
+import { useCallback, useRef, useState, useSyncExternalStore, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/form-controls";
@@ -81,6 +81,10 @@ export function TimesPanel({
   const router = useRouter();
   const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null);
   const [custom, setCustom] = useState<Record<string, string>>({});
+  // The typed time is read from the field itself when the button is pressed: a
+  // time typed while the page is still loading (slow mobile data) shows in the
+  // field but never reached the state, and must not turn into "now".
+  const typedInputs = useRef<Record<string, HTMLInputElement | null>>({});
   const [voiding, setVoiding] = useState<{ id: string; reason: string } | null>(null);
   // Ending well before the planned duration asks once more: the End button is big.
   const [confirmEnd, setConfirmEnd] = useState<string | null>(null);
@@ -102,10 +106,17 @@ export function TimesPanel({
   const queued = pending.filter((p) => p.kind === "event");
 
   function record(c: Cycle, kind: EventKind) {
-    const typed = custom[c.cycle];
+    const typed = typedInputs.current[c.cycle]?.value || custom[c.cycle];
     const at = typed ? new Date(typed) : new Date();
     if (Number.isNaN(at.getTime())) {
       setFeedback({ ok: false, text: "That time is not valid." });
+      return;
+    }
+    if (kind !== "start" && c.startedAt && at.getTime() < c.startedAt.getTime()) {
+      setFeedback({
+        ok: false,
+        text: `${time(at)} is before ${c.label.toLowerCase()} started (${time(c.startedAt)}). Check the time.`,
+      });
       return;
     }
     if (kind === "end" && c.startedAt && durationHours && confirmEnd !== c.cycle) {
@@ -310,6 +321,9 @@ export function TimesPanel({
                 <label className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                   Happened earlier? Time:
                   <Input
+                    ref={(el) => {
+                      typedInputs.current[c.cycle] = el;
+                    }}
                     type="datetime-local"
                     value={custom[c.cycle] ?? ""}
                     max={localInput(new Date())}
