@@ -16,6 +16,8 @@ import {
 import { drawPlan } from "@/domain/field/plan-pdf";
 import type { PlanFeature } from "@/domain/field/types";
 
+import { underShortName, withShortName } from "./org-name";
+import type { Assessed } from "./templates";
 import { FT09_FORM, type ReportLayout, type ReportSection, type SignBox } from "./types";
 
 /**
@@ -105,6 +107,8 @@ export type ReportData = {
   }[];
   observation: string;
   conclusion: string;
+  /** The outcome once excursions are assessed; the badge follows it, as the conclusion does. */
+  assessed: Assessed;
   postCal: {
     label: string;
     serial: string;
@@ -372,7 +376,7 @@ class Builder {
       top,
       w - a - b - c,
       40,
-      `${d.organisation.shortName} (${d.organisation.legalName})`,
+      withShortName(d.organisation.shortName, d.organisation.legalName),
       {
         bold: true,
         size: 7,
@@ -400,23 +404,43 @@ class Builder {
 
   // ------------------------------------------------------------------ pages
 
-  /** The verdict over every cycle: qualified, not qualified, or no limits to judge by. */
+  /**
+   * The verdict over every cycle: qualified, qualified with its excursions
+   * assessed (accepted, or deviations closed without a repeat), not qualified,
+   * or no limits to judge by.
+   */
   verdict() {
     const cycles = this.d.result.cycles;
     const judged = cycles.flatMap((c) => c.positions.filter((p) => p.pass !== null));
     const ok = judged.filter((p) => p.pass === true).length;
     const anyFail = cycles.some((c) => c.pass === false);
     const allPass = cycles.length > 0 && cycles.every((c) => c.pass === true);
+    const assessed = anyFail && this.d.assessed === "qualified_with_deviations";
     return {
       ok,
       judged: judged.length,
-      state: anyFail ? ("fail" as const) : allPass ? ("pass" as const) : ("none" as const),
-      label: anyFail
-        ? "RESULT: NOT QUALIFIED"
-        : allPass
-          ? `RESULT: QUALIFIED - ${ok}/${judged.length} LOCATIONS COMPLIANT`
-          : "RESULT: NOT JUDGED (NO LIMITS SET)",
+      assessed,
+      state:
+        anyFail && !assessed
+          ? ("fail" as const)
+          : allPass || assessed
+            ? ("pass" as const)
+            : ("none" as const),
+      label: assessed
+        ? "RESULT: QUALIFIED WITH DEVIATIONS"
+        : anyFail
+          ? "RESULT: NOT QUALIFIED"
+          : allPass
+            ? `RESULT: QUALIFIED - ${ok}/${judged.length} LOCATIONS COMPLIANT`
+            : "RESULT: NOT JUDGED (NO LIMITS SET)",
     };
+  }
+
+  /** The verdict as stored with the frozen report, for the client's stamp. */
+  outcome(): NonNullable<ReportLayout["outcome"]> {
+    const v = this.verdict();
+    if (v.assessed) return "qualified_with_deviations";
+    return v.state === "pass" ? "qualified" : v.state === "fail" ? "not_qualified" : "not_judged";
   }
 
   /** A small rounded badge, green for a pass and red for a fail; returns its width. */
@@ -439,7 +463,7 @@ class Builder {
           ? ["#fde8e8", "#b42318"]
           : ["#eeeeee", "#444444"];
     doc.roundedRect(bx, y, bw, 14, 3).fillAndStroke(fill, ink);
-    doc.fillColor(ink).text(t, bx + 7, y + 4, { width: bw - 14, lineBreak: false });
+    doc.fillColor(ink).text(t, bx + 7, y + 4, { width: bw - 12, lineBreak: false });
     doc.fillColor("#000000");
     return bw;
   }
@@ -536,11 +560,16 @@ class Builder {
       characterSpacing: 1,
     });
     doc.font("Helvetica").fontSize(6.5).fillColor("#555555");
-    doc.text(ascii(`(${d.organisation.legalName.toUpperCase()})`), cx, y + 25, {
-      width: cw,
-      align: "center",
-      characterSpacing: 0.6,
-    });
+    doc.text(
+      ascii(underShortName(d.organisation.shortName, d.organisation.legalName).toUpperCase()),
+      cx,
+      y + 25,
+      {
+        width: cw,
+        align: "center",
+        characterSpacing: 0.6,
+      },
+    );
     doc.font("Helvetica-Bold").fontSize(19).fillColor("#000000");
     doc.text(ascii(d.study.typeLabel.toUpperCase()), cx, y + 40, {
       width: cw,
@@ -702,11 +731,13 @@ class Builder {
     if (hot || cold) {
       para(
         `${cold ? `The cold point is ${cold.label} (${f1(cold.avg)} °C)` : ""}${hot && cold ? " and the" : hot ? "The" : ""}${hot ? ` hot point is ${hot.label} (${f1(hot.avg)} °C)` : ""}. ${
-          v.state === "pass"
-            ? `${d.equipment.name} (${d.equipment.code}) meets the thermal uniformity requirement and is qualified for its intended use.`
-            : v.state === "fail"
-              ? `${d.equipment.name} (${d.equipment.code}) does not meet the acceptance criteria; see the observations and deviations.`
-              : ""
+          v.assessed
+            ? `With its excursions assessed (see the deviations), ${d.equipment.name} (${d.equipment.code}) is qualified for its intended use.`
+            : v.state === "pass"
+              ? `${d.equipment.name} (${d.equipment.code}) meets the thermal uniformity requirement and is qualified for its intended use.`
+              : v.state === "fail"
+                ? `${d.equipment.name} (${d.equipment.code}) does not meet the acceptance criteria; see the observations and deviations.`
+                : ""
         }`,
       );
     }
@@ -1929,6 +1960,6 @@ export async function renderReport(d: ReportData): Promise<RenderedReport> {
     bodyPages: counts.get("body") ?? 0,
     rawPages: counts.get("raw") ?? 0,
     totalPages: final.kinds.length,
-    layout: { sections, signBoxes: final.signBoxes },
+    layout: { sections, signBoxes: final.signBoxes, outcome: final.outcome() },
   };
 }
