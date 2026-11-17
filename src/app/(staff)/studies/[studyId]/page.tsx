@@ -8,7 +8,7 @@ import type { SessionUser } from "@/domain/auth/session-service";
 import { can } from "@/domain/auth/permissions";
 import { getStudyAnalysis } from "@/domain/analysis/queries";
 import { getStudyData } from "@/domain/data/queries";
-import { getStudyReport } from "@/domain/reports/queries";
+import { getStudyReport, latestReportStatus } from "@/domain/reports/queries";
 import { getFieldStudy } from "@/domain/field/queries";
 import { STUDY_STATUS_LABELS } from "@/domain/field/types";
 import { WORK_TYPE_LABELS, type WorkType } from "@/domain/jobs/types";
@@ -56,9 +56,10 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
   // The tab's own data is read alongside the study when the link names the tab (every tab
   // click does), instead of after it: one wait instead of two on a distant database.
   const named = TABS.some((t) => t.key === asked) ? (asked as Tab) : null;
-  const [s, early] = await Promise.all([
+  const [s, early, reportStatus] = await Promise.all([
     getFieldStudy(db, actor, studyId),
     named ? tabData(actor, studyId, named) : Promise.resolve(null),
+    latestReportStatus(db, actor, studyId),
   ]);
   if (!s) notFound();
   const canWork = can(actor, "field.perform");
@@ -159,10 +160,20 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
           title: "Study complete",
           text: "The report is checked. It goes to the client from the job.",
         }
-      : {
-          title: "Prepare the report",
-          text: "Draft the report, then sign it and send it for checking.",
-        },
+      : reportStatus === "checking"
+        ? {
+            title: "Check the report",
+            text: "A team leader or manager who didn't prepare it signs it for QA Tech, or returns it with comments.",
+          }
+        : reportStatus === "returned"
+          ? {
+              title: "Revise the report",
+              text: "The client sent it back: answer their comments in a new revision.",
+            }
+          : {
+              title: "Prepare the report",
+              text: "Draft the report, then send it for checking.",
+            },
   };
   const next = waitingForJob
     ? {

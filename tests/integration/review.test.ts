@@ -24,6 +24,7 @@ import {
 } from "@/domain/analysis/analysis-service";
 import { clientDeviations, getClientDeviation } from "@/domain/analysis/client-deviations";
 import { ForbiddenError } from "@/domain/auth/permissions";
+import { latestReportStatus } from "@/domain/reports/queries";
 import { freezeReport, newRevision, openComments } from "@/domain/reports/report-service";
 import {
   answerComment,
@@ -85,6 +86,8 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 9: review and sign-off in the
     const ok = await freezeReport(db, w.blobs, w.preparer, w.reportId, req);
     expect(ok.ok).toBe(true);
     expect(await statusOf(w.reportId)).toBe("checking");
+    // The study page's "What to do now" reads this: check the report.
+    expect(await latestReportStatus(db, w.lead, w.studyId)).toBe("checking");
     const sig = await db
       .select()
       .from(signatures)
@@ -191,6 +194,7 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 9: review and sign-off in the
     );
     expect(await statusOf(w.reportId)).toBe("returned");
     expect(await jobStatusOf(w.jobId)).toBe("rework");
+    expect(await latestReportStatus(db, w.preparer, w.studyId)).toBe("returned");
     const r1 = await newRevision(
       db,
       w.preparer,
@@ -207,6 +211,9 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 9: review and sign-off in the
     await answerComment(db, w.preparer, c!.id, "Fixed: conclusion now names the excursion.", req);
     expect((await freezeReport(db, w.blobs, w.preparer, rev1, req)).ok).toBe(true);
     expect(await statusOf(w.reportId)).toBe("superseded");
+    // The superseded Rev 00 doesn't count: Rev 01 is the one to check.
+    expect(await latestReportStatus(db, w.lead, w.studyId)).toBe("checking");
+    expect(await latestReportStatus(db, w.lead, "not-a-uuid")).toBeNull();
     expect((await checkReport(db, w.lead, rev1, pw, req)).ok).toBe(true);
     await releaseReport(db, w.lead, rev1, { to: [w.qa.id, w.head.id] }, APP, req);
     expect(await jobStatusOf(w.jobId)).toBe("sent_to_client");

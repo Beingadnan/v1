@@ -208,6 +208,29 @@ export async function getStudyReport(db: Database, actor: SessionUser, studyId: 
 
 export type StudyReport = NonNullable<Awaited<ReturnType<typeof getStudyReport>>>;
 
+/** The latest revision's status (null: no report yet), for the study's "What to do now". */
+export async function latestReportStatus(
+  db: Database,
+  actor: SessionUser,
+  studyId: string,
+): Promise<ReportStatus | null> {
+  assertCan(actor, "jobs.view");
+  if (!isUuid(studyId)) return null;
+  const [row] = await db
+    .select({ status: studyReports.status })
+    .from(studyReports)
+    .where(
+      and(
+        eq(studyReports.organisationId, actor.organisationId),
+        eq(studyReports.studyId, studyId),
+        ne(studyReports.status, "superseded"),
+      ),
+    )
+    .orderBy(desc(studyReports.rev))
+    .limit(1);
+  return (row?.status as ReportStatus | undefined) ?? null;
+}
+
 /** The Reports page: every study with a report, and studies whose analysis is approved but not yet reported. */
 export async function listReports(db: Database, actor: SessionUser) {
   assertCan(actor, "jobs.view");
