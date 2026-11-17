@@ -762,13 +762,8 @@ const STEPS: { key: StepKey; label: string }[] = [
   { key: "billing", label: "Billing" },
   { key: "closed", label: "Closed" },
 ];
-const REPORT_STEP: JobStatus[] = [
-  "report_draft",
-  "rework",
-  "checked",
-  "sent_to_client",
-  "client_signed",
-];
+// Client signed means every report is signed: the job is at billing, not the reports.
+const REPORT_STEP: JobStatus[] = ["report_draft", "rework", "checked", "sent_to_client"];
 
 /** The job's steps in order: done ones ticked, the current one marked. */
 function JobSteps({ current, status }: { current: StepKey; status: JobStatus }) {
