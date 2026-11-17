@@ -298,6 +298,32 @@ export async function recordPayment(
         "A write-off is for the last few rupees: at most ₹100 or 1% of the invoice.",
       );
     }
+    // A UTR or cheque number is one transfer: the same one twice on an invoice is
+    // a double entry (one transfer can still pay several invoices).
+    const ref = v.reference.trim();
+    if (ref) {
+      const [twice] = await tx
+        .select({
+          paidOn: payments.paidOn,
+          received: payments.received,
+          reference: payments.reference,
+        })
+        .from(payments)
+        .where(
+          and(
+            eq(payments.invoiceId, inv.id),
+            sql`lower(trim(${payments.reference})) = ${ref.toLowerCase()}`,
+            sql`${payments.reversesId} is null`,
+            sql`not exists (select 1 from ${payments} r where r.reverses_id = ${payments.id})`,
+          ),
+        )
+        .limit(1);
+      if (twice) {
+        throw new BillingError(
+          `${twice.reference} is already recorded on invoice ${inv.number} (${inr(paise(twice.received))} on ${twice.paidOn.split("-").reverse().join(".")}). If that entry was wrong, reverse it first.`,
+        );
+      }
+    }
     const [pay] = await tx
       .insert(payments)
       .values({

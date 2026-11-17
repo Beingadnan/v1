@@ -200,6 +200,16 @@ describe.skipIf(!existsSync(BE_WF_02_FILE))("phase 10: WCR, invoice, payments an
       req,
     );
     expect(again.left).toBe(15500);
+    // The same transfer entered twice is refused (the reversed entry above doesn't count).
+    await expect(
+      recordPayment(
+        db,
+        w.accounts,
+        invoiceId,
+        { paidOn: today, received: 1000, mode: "neft", reference: " utr123456789 " },
+        req,
+      ),
+    ).rejects.toThrow("UTR123456789 is already recorded on invoice");
     // The rest, less 2% TDS on the taxable value (₹500), and ₹3 the bank kept.
     await expect(
       recordPayment(
