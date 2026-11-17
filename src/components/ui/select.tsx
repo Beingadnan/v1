@@ -1,5 +1,6 @@
 "use client";
 
+import { getNonce } from "get-nonce";
 import { Check, ChevronDown } from "lucide-react";
 import { Select as SelectPrimitive } from "radix-ui";
 import type { ComponentProps } from "react";
@@ -50,7 +51,10 @@ export function SelectContent({
         )}
         {...props}
       >
-        <SelectPrimitive.Viewport className="p-1">{children}</SelectPrimitive.Viewport>
+        {/* The viewport injects a <style> tag: it needs the page's CSP nonce (see CspNonce). */}
+        <SelectPrimitive.Viewport className="p-1" nonce={getNonce()}>
+          {children}
+        </SelectPrimitive.Viewport>
       </SelectPrimitive.Content>
     </SelectPrimitive.Portal>
   );
