@@ -26,17 +26,15 @@ test("phase 2 exit test: Watson Pharma → Seawoods → BA → BE-WF-02 with −
     page.getByRole("heading", { level: 1, name: "Watson Pharma Pvt Limited" }),
   ).toBeVisible();
 
-  // The folder window: open the site, add its department.
-  await page
-    .getByRole("navigation", { name: "Client folders" })
-    .getByRole("link", { name: /Seawoods/ })
-    .click();
+  // The finder: pick the site, add its department, pick it.
+  await page.getByLabel("Site", { exact: true }).selectOption({ label: "Seawoods" });
+  await page.waitForURL(/site=/);
   await page.getByRole("button", { name: "Add department at Seawoods" }).click();
   await page.getByRole("dialog").getByLabel("Department name").fill("BA");
   await page.getByRole("dialog").getByRole("button", { name: "Add department" }).click();
-  const folders = page.getByRole("navigation", { name: "Client folders" });
-  await folders.getByRole("link", { name: /^Equipment/ }).click();
-  await folders.getByRole("link", { name: /^BA/ }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.getByLabel("Department", { exact: true }).selectOption({ label: "BA" });
+  await page.waitForURL(/dept=/);
   await expect(page.getByRole("button", { name: "Edit department BA" })).toBeVisible();
 
   // Added at the chosen site: the department is picked in the form.
@@ -72,9 +70,13 @@ test("phase 2 exit test: Watson Pharma → Seawoods → BA → BE-WF-02 with −
     .getByRole("navigation", { name: "Breadcrumb" })
     .getByRole("link", { name: "BA" })
     .click();
-  // Back on the client, in Seawoods › Equipment › BA.
-  await expect(page.getByRole("heading", { level: 1, name: "BA" })).toBeVisible();
-  const row = page.getByRole("row", { name: /BE-WF-02/ });
+  // Back on the client, with Seawoods and BA picked: its equipment list.
+  await expect(page.getByLabel("Department", { exact: true })).toHaveValue(/dept=/);
+  await page.getByRole("link", { name: /^Equipment \(1\)/ }).click();
+  const row = page
+    .getByRole("list", { name: "Equipment list" })
+    .getByRole("listitem")
+    .filter({ hasText: "BE-WF-02" });
   await expect(row).toContainText("Walk-in freezer");
   await expect(row).toContainText("−30 to −15 °C");
   await expect(row).toContainText("22 May 2027");
@@ -172,12 +174,20 @@ test("clients and equipment import from the Excel template", async ({
   await page.getByRole("link", { name: "Go to clients" }).click();
   await page.getByRole("link", { name: "Lupin Limited" }).click();
   await expect(page.getByText("Required by client SOP")).toBeVisible();
-  // Filed under Lupin → Pithampur → Equipment → Stores.
-  const folders = page.getByRole("navigation", { name: "Client folders" });
-  await folders.getByRole("link", { name: /Pithampur/ }).click();
-  await folders.getByRole("link", { name: /^Equipment/ }).click();
-  await folders.getByRole("link", { name: /Stores/ }).click();
-  await expect(page.getByRole("row", { name: /CR-01/ })).toContainText("2 to 8 °C");
+  // Filed under Lupin → Madhya Pradesh → Pithampur → Stores.
+  await page.getByLabel("Region", { exact: true }).selectOption({ label: "Madhya Pradesh" });
+  await page.waitForURL(/region=/);
+  await page.getByLabel("Site", { exact: true }).selectOption({ label: "Pithampur" });
+  await page.waitForURL(/site=/);
+  await page.getByLabel("Department", { exact: true }).selectOption({ label: "Stores" });
+  await page.waitForURL(/dept=/);
+  await page.getByRole("link", { name: /^Equipment \(1\)/ }).click();
+  await expect(
+    page
+      .getByRole("list", { name: "Equipment list" })
+      .getByRole("listitem")
+      .filter({ hasText: "CR-01" }),
+  ).toContainText("2 to 8 °C");
   expect(errors).toEqual([]);
 });
 
@@ -193,7 +203,7 @@ test("adding a client works on a phone", async ({ page, isMobile }) => {
   await dialog.getByLabel("Site name").fill("Kurkumbh");
   await dialog.getByRole("button", { name: "Add client" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Cipla Limited" })).toBeVisible();
-  await expect(page.getByText("Kurkumbh", { exact: true }).first()).toBeVisible();
+  await expect(page.getByLabel("Site", { exact: true })).toContainText("Kurkumbh");
   expect(errors).toEqual([]);
 });
 

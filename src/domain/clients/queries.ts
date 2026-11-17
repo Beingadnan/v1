@@ -218,6 +218,8 @@ export async function companyStudies(db: Database, actor: SessionUser, companyId
       jobNumber: jobs.number,
       jobStatus: jobs.status,
       start: jobs.plannedStart,
+      end: jobs.plannedEnd,
+      studyStatus: studies.status,
       reportStatus: latest.status,
       reportRev: latest.rev,
     })

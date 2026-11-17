@@ -52,3 +52,20 @@ mixed up:
 
 The tree unfolds only the open path. The client's terms, contracts, signatories and users
 sit below the window on the client's own folder.
+
+## Update, 17 Nov 2026: a step-by-step study finder
+
+QA Tech gave a design for the client page: the client's name with three figures (client
+since, sites, studies), then one card of steps, each a drop-down: Region → Site →
+Year / month → Department → Equipment → Studies. It replaces the Explorer window.
+
+- **Region** is the site's state (the field the site already has); sites without one
+  are "No state recorded".
+- Every step is optional ("All …"); a later step's choices narrow to the earlier ones,
+  and changing a step clears the steps that depend on it. The choice lives in the URL
+  (`region`, `site`, `ym`, `dept`, `eq`), so Back undoes it and a link can be shared.
+- The last step shows the studies matching the choice as cards (equipment, dates, state:
+  Signed, Report in progress, Field work done, In progress, Planned), 24 at a time, or
+  the equipment list with next due dates (`view=equipment`).
+- Adding and editing a site, a department or equipment sits beside its step.
+- The client's terms, contracts, signatories and users stay below the finder.

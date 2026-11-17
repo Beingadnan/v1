@@ -15,7 +15,7 @@ import { formatDate, formatDateTime } from "@/lib/format";
 
 import { DueBadge } from "../../../due-badge";
 import { EquipmentForm, RetireEquipmentButton } from "../equipment-form";
-import { placeHref, Trail } from "../../client-explorer";
+import { finderHref, Trail } from "../../finder";
 
 export const metadata = { title: "Equipment" };
 
@@ -54,13 +54,24 @@ export default async function EquipmentPage({
         <Trail
           parts={[
             { label: "Clients", href: "/clients" },
-            { label: company.code || company.name, href: placeHref(company.id, {}) },
-            ...(site ? [{ label: site.name, href: placeHref(company.id, { site: site.id }) }] : []),
+            { label: company.code || company.name, href: finderHref(company.id, {}) },
+            ...(site
+              ? [
+                  {
+                    label: site.name,
+                    href: finderHref(company.id, { region: site.state || "none", site: site.id }),
+                  },
+                ]
+              : []),
             ...(site && dept
               ? [
                   {
                     label: dept.name,
-                    href: placeHref(company.id, { site: site.id, dept: dept.id }),
+                    href: finderHref(company.id, {
+                      region: site.state || "none",
+                      site: site.id,
+                      dept: dept.id,
+                    }),
                   },
                 ]
               : []),

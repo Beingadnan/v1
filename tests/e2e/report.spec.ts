@@ -25,10 +25,9 @@ test("phase 8–11: FE-WF-05's report is drafted, signed four times (the client 
   // ---- Team leader: drafts and signs Done By.
   await signIn(page, "lead");
   await page.goto("/reports");
-  await expect(
-    page.getByRole("heading", { name: /Analysis approved, report not started/ }),
-  ).toBeVisible();
-  await page.getByRole("link", { name: /FE-WF-05/ }).click();
+  const toStart = page.getByRole("link", { name: /FE-WF-05/ });
+  await expect(toStart).toContainText("Start the report");
+  await toStart.click();
   await expect(page).toHaveURL(/\/studies\/[0-9a-f-]{36}\?tab=report$/);
   const studyUrl = page.url();
   await expect(page.getByText("No report yet")).toBeVisible();
@@ -71,7 +70,7 @@ test("phase 8–11: FE-WF-05's report is drafted, signed four times (the client 
   await page.context().clearCookies();
   await signIn(page, "manager");
   await page.goto("/reports");
-  await expect(page.getByRole("heading", { name: /Waiting for a check/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /FE-WF-05/ })).toContainText("Check it");
   await page.goto(studyUrl);
   await sign(page, "Sign Checked By", "manager");
   await expect(page.getByText("Rev 00 · Checked")).toBeVisible();

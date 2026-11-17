@@ -219,6 +219,7 @@ export async function listReports(db: Database, actor: SessionUser) {
         code: equipment.code,
         name: equipment.name,
         company: clientCompanies.name,
+        companyId: clientCompanies.id,
         jobNumber: jobs.number,
         jobStatus: jobs.status,
         approvedAt: studies.analysisApprovedAt,
@@ -241,6 +242,7 @@ export async function listReports(db: Database, actor: SessionUser) {
         code: equipment.code,
         name: equipment.name,
         company: clientCompanies.name,
+        companyId: clientCompanies.id,
         jobNumber: jobs.number,
         reportNumber: studies.reportNumber,
       })
@@ -274,6 +276,7 @@ export async function listReports(db: Database, actor: SessionUser) {
       code: x.code,
       name: x.name,
       company: x.company,
+      companyId: x.companyId,
       jobNumber: x.jobNumber,
       at:
         x.r.signedAt ??

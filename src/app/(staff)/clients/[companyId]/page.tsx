@@ -1,4 +1,15 @@
-import { Download, Plus, Users } from "lucide-react";
+import {
+  Building2,
+  CalendarDays,
+  Check,
+  ChevronRight,
+  Download,
+  MapPin,
+  Network,
+  Plus,
+  Refrigerator,
+  Users,
+} from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -6,8 +17,7 @@ import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { PageHeader } from "@/components/ui/page-header";
-import { StatusBadge } from "@/components/ui/status-badge";
+import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
 import {
   Table,
   TableBody,
@@ -20,13 +30,15 @@ import { db } from "@/db/client";
 import { can } from "@/domain/auth/permissions";
 import { isRole, ROLE_LABELS } from "@/domain/auth/roles";
 import { EQUIPMENT_TYPE_INFO, isEquipmentType } from "@/domain/clients/equipment-types";
-import { companyArchive, companyStudies, getCompany } from "@/domain/clients/queries";
+import { companyStudies, getCompany } from "@/domain/clients/queries";
+import { dueStatus, todayInIndia } from "@/domain/clients/requalification";
+import { STUDY_STATUS_LABELS } from "@/domain/field/types";
 import { listContracts } from "@/domain/jobs/contract-service";
 import { formatInr } from "@/domain/jobs/pricing";
 import { ORDER_TYPE_SHORT } from "@/domain/jobs/types";
-import { dueStatus, todayInIndia } from "@/domain/clients/requalification";
 import { requirePermission } from "@/lib/auth/dal";
 import { formatDate, formatDateTime, formatLimits } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 import {
   ContactDialog,
@@ -38,20 +50,9 @@ import {
 } from "../client-dialogs";
 import { DueBadge } from "../due-badge";
 
-import {
-  ClientTree,
-  DetailsList,
-  ExplorerWindow,
-  FolderGrid,
-  FolderTile,
-  MONTH_NAMES,
-  placeHref,
-  ReportFiles,
-  StudyFiles,
-  type Place,
-  type TreeSite,
-} from "./client-explorer";
 import { ContractButton } from "./contract-dialog";
+import { finderHref, MONTH_NAMES, Trail, type FinderPlace } from "./finder";
+import { FinderSelect, type FinderOption } from "./finder-select";
 
 export const metadata: Metadata = { title: "Client" };
 
@@ -82,9 +83,9 @@ function Section({
 
 function Fact({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="rounded-lg border border-border bg-surface p-4">
-      <p className="text-xs font-medium text-muted-foreground">{label}</p>
-      <div className="mt-1 text-sm font-semibold">{children}</div>
+    <div>
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="mt-0.5 text-sm font-medium">{children}</dd>
     </div>
   );
 }
@@ -96,49 +97,71 @@ type EquipmentRow =
       : never
     : never;
 
-/** Equipment as files in a folder: code and name, type, limits, last study, next due. */
-function equipmentFiles(rows: EquipmentRow[], companyId: string) {
-  return rows.map((item) => ({
-    key: item.id,
-    icon: "equipment" as const,
-    muted: !item.active,
-    name: (
-      <span>
-        <Link
-          href={`/clients/${companyId}/equipment/${item.id}`}
-          className="font-medium text-primary hover:underline"
-        >
-          {item.code}
-        </Link>
-        <span className="block text-xs text-muted-foreground">{item.name}</span>
-      </span>
-    ),
-    cells: [
-      isEquipmentType(item.type) ? EQUIPMENT_TYPE_INFO[item.type].label : item.type,
-      <span key="l" className="tabular whitespace-nowrap">
-        {formatLimits(item.tempMinC, item.tempMaxC, "°C")}
-        {item.rhMinPct || item.rhMaxPct ? (
-          <span className="block text-xs text-muted-foreground">
-            {formatLimits(item.rhMinPct, item.rhMaxPct, "%RH")}
-          </span>
-        ) : null}
-      </span>,
-      <span key="s" className="tabular whitespace-nowrap">
-        {formatDate(item.lastStudyOn)}
-      </span>,
-      item.active ? (
-        <DueBadge key="d" nextDue={item.nextDue} />
-      ) : (
-        <StatusBadge key="d" tone="neutral">
-          Retired
-        </StatusBadge>
-      ),
-    ],
-  }));
-}
-const EQUIPMENT_COLUMNS = ["Equipment", "Type", "Limits", "Last study", "Next due"];
+const dmy = (iso: string) => iso.split("-").reverse().join(".");
+const monthYear = (d: Date) =>
+  new Intl.DateTimeFormat("en-IN", { month: "short", year: "numeric", timeZone: "Asia/Kolkata" })
+    .format(d)
+    .replace(/^(\w+) /, "$1 ");
 
-const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+/** A study's state on its card: the client's signature counts most. */
+function studyBadge(s: { reportStatus: string | null; studyStatus: string }): {
+  tone: StatusTone;
+  label: string;
+} {
+  if (s.reportStatus === "signed") return { tone: "pass", label: "Signed" };
+  if (s.reportStatus && s.reportStatus !== "replaced")
+    return { tone: "attention", label: "Report in progress" };
+  if (s.studyStatus === "completed") return { tone: "info", label: "Field work done" };
+  if (s.studyStatus === "in_progress") return { tone: "info", label: "In progress" };
+  return {
+    tone: "neutral",
+    label: STUDY_STATUS_LABELS[s.studyStatus as keyof typeof STUDY_STATUS_LABELS] ?? s.studyStatus,
+  };
+}
+
+/** One step of the finder: the number (a tick once picked), the name, the choice. */
+function Step({
+  n,
+  done,
+  last,
+  title,
+  control,
+  aside,
+}: {
+  n: number;
+  done: boolean;
+  last?: boolean;
+  title: string;
+  control: ReactNode;
+  aside?: ReactNode;
+}) {
+  return (
+    <li className="relative grid grid-cols-[1.75rem_1fr] items-center gap-x-3 gap-y-1.5 py-2 sm:grid-cols-[1.75rem_7.5rem_1fr_9.5rem]">
+      {!last ? (
+        <span
+          className="absolute top-[calc(50%+0.875rem)] left-[0.84rem] h-[calc(100%-1.75rem)] w-px bg-border max-sm:top-9"
+          aria-hidden="true"
+        />
+      ) : null}
+      <span
+        className={cn(
+          "relative z-10 flex size-7 items-center justify-center rounded-full text-xs font-semibold",
+          done ? "bg-primary text-primary-foreground" : "bg-surface-muted text-muted-foreground",
+        )}
+        aria-hidden="true"
+      >
+        {done ? <Check className="size-4" strokeWidth={3} /> : n}
+      </span>
+      <span className="text-sm font-medium">{title}</span>
+      <div className="col-start-2 min-w-0 sm:col-start-auto">{control}</div>
+      {aside ? (
+        <div className="col-start-2 flex min-h-8 items-center sm:col-start-auto">{aside}</div>
+      ) : (
+        <span className="hidden sm:block" aria-hidden="true" />
+      )}
+    </li>
+  );
+}
 
 export default async function ClientPage({
   params,
@@ -149,11 +172,10 @@ export default async function ClientPage({
   const sp = await searchParams;
   const pick = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : undefined);
   // The contracts check the organisation themselves: read them alongside the client.
-  const [data, contracts, studyRows, signed] = await Promise.all([
+  const [data, contracts, studyRows] = await Promise.all([
     getCompany(db, actor, companyId),
     can(actor, "jobs.view") ? listContracts(db, actor, companyId) : Promise.resolve(null),
     companyStudies(db, actor, companyId),
-    companyArchive(db, actor, companyId),
   ]);
   if (!data) notFound();
   const { company, sites, departments, contacts, equipment, clientUsers } = data;
@@ -165,7 +187,6 @@ export default async function ClientPage({
   const canSeeMoney = can(actor, "jobs.money");
 
   const siteName = new Map(sites.map((s) => [s.id, s.name]));
-  const equipmentCode = new Map(equipment.map((e) => [e.id, e.code]));
   const today = todayInIndia();
   const isOverdue = (e: EquipmentRow) => e.active && dueStatus(e.nextDue, today) === "overdue";
   const activeEquipment = equipment.filter((e) => e.active);
@@ -175,407 +196,109 @@ export default async function ClientPage({
     .filter((d): d is string => Boolean(d))
     .sort()[0];
   const siteOptions = sites.filter((s) => s.active).map((s) => ({ id: s.id, name: s.name }));
+  const liveStudies = studyRows.filter((s) => s.jobStatus !== "cancelled");
 
-  // Where we are (ADR 0023), each part checked against this client.
-  const site = sites.find((s) => s.id === pick("site"));
-  const dept = site
-    ? departments.find((d) => d.id === pick("dept") && d.siteId === site.id)
-    : undefined;
-  // Studies not signed yet (a cancelled job's studies are left out).
-  const signedIds = new Set(signed.map((r) => r.studyId));
-  const inProgress = studyRows.filter((s) => !signedIds.has(s.id) && s.jobStatus !== "cancelled");
-  const siteOf = new Map(equipment.map((e) => [e.id, e.siteId]));
-  const siteSigned = site ? signed.filter((r) => r.siteId === site.id) : [];
-  const siteYears = [...new Set(siteSigned.map((r) => r.year))];
-  const year = site && siteYears.includes(pick("year") ?? "") ? pick("year") : undefined;
-  const yearSigned = siteSigned.filter((r) => r.year === year);
-  const month =
-    year && yearSigned.some((r) => r.month === pick("month")) ? pick("month") : undefined;
-  const monthSigned = yearSigned.filter((r) => r.month === month);
-  const deptKey = (r: { departmentId: string | null }) => r.departmentId ?? "none";
-  const adept =
-    month && monthSigned.some((r) => deptKey(r) === pick("adept")) ? pick("adept") : undefined;
-  const adeptSigned = monthSigned.filter((r) => deptKey(r) === adept);
-  const eqId =
-    adept && adeptSigned.some((r) => r.equipmentId === pick("eq")) ? pick("eq") : undefined;
-  const open = !!site && !year && !dept && pick("open") === "1";
-  // The equipment list: view=equipment, or any department picked.
-  const register = !!site && !year && !open && (!!dept || pick("view") === "equipment");
-  const place: Place = {
+  // The finder (each step checked against this client, each optional).
+  const regionOf = (s: { state: string }) => s.state.trim() || "none";
+  const regionLabel = (r: string) => (r === "none" ? "No state recorded" : r);
+  const regions = [...new Set(sites.map(regionOf))].sort();
+  const region = regions.find((r) => r === pick("region"));
+  const inRegion = sites.filter((s) => !region || regionOf(s) === region);
+  const site = inRegion.find((s) => s.id === pick("site"));
+  const siteIds = new Set((site ? [site] : inRegion).map((s) => s.id));
+  const deptChoices = departments.filter((d) => siteIds.has(d.siteId));
+  const dept = deptChoices.find((d) => d.id === pick("dept"));
+  const eqChoices = equipment.filter(
+    (e) => siteIds.has(e.siteId) && (!dept || e.departmentId === dept.id),
+  );
+  const eq = eqChoices.find((e) => e.id === pick("eq"));
+  const eqIds = new Set((eq ? [eq] : eqChoices).map((e) => e.id));
+  const placeStudies = liveStudies.filter((s) => eqIds.has(s.equipmentId));
+  // Months with studies, for the place picked so far.
+  const periods = [...new Set(placeStudies.map((s) => s.start.slice(0, 7)))].sort().reverse();
+  const years = [...new Set(periods.map((p) => p.slice(0, 4)))];
+  const ymPick = pick("ym");
+  const ym = ymPick && (years.includes(ymPick) || periods.includes(ymPick)) ? ymPick : undefined;
+  const shownStudies = placeStudies.filter((s) => !ym || s.start.startsWith(ym));
+  const view = pick("view") === "equipment" ? "equipment" : undefined;
+  const all = pick("all") === "1";
+  const place: FinderPlace = {
+    region,
     site: site?.id,
+    ym,
     dept: dept?.id,
-    year,
-    month,
-    adept,
-    eq: eqId,
-    open,
-    equipment: register,
+    eq: eq?.id,
+    view,
   };
-  const deptName = (id: string) =>
-    id === "none" ? "No department" : (departments.find((d) => d.id === id)?.name ?? "—");
-  const equipmentById = new Map(equipment.map((e) => [e.id, e]));
+  const at = (change: Partial<FinderPlace>) => finderHref(company.id, { ...place, ...change });
+  const eqById = new Map(equipment.map((e) => [e.id, e]));
+  const deptName = new Map(departments.map((d) => [d.id, d.name]));
 
-  const tree: TreeSite[] = sites.map((s) => {
-    const here = equipment.filter((e) => e.siteId === s.id && e.active);
-    const mine = signed.filter((r) => r.siteId === s.id);
-    return {
-      id: s.id,
-      name: s.name,
-      active: s.active,
-      equipment: here.length,
-      overdue: here.filter(isOverdue).length,
-      departments: departments
-        .filter((d) => d.siteId === s.id)
-        .map((d) => {
-          const inDept = here.filter((e) => e.departmentId === d.id);
-          return {
-            id: d.id,
-            name: d.name,
-            active: d.active,
-            equipment: inDept.length,
-            overdue: inDept.filter(isOverdue).length,
-          };
-        }),
-      years: [...new Set(mine.map((r) => r.year))].map((y) => ({
-        year: y,
-        months: [...new Set(mine.filter((r) => r.year === y).map((r) => r.month))],
-      })),
-      open: inProgress.filter((x) => siteOf.get(x.equipmentId) === s.id).length,
-    };
-  });
-
-  const at = (p: Place, last: boolean) => (last ? undefined : placeHref(company.id, p));
-  const trail = [
-    { label: "Clients", href: "/clients" },
-    { label: company.code || company.name, href: at({}, !site) },
-    ...(site
-      ? [{ label: site.name, href: at({ site: site.id }, !register && !year && !open) }]
-      : []),
-    ...(register
-      ? [{ label: "Equipment", href: at({ site: site!.id, equipment: true }, !dept) }]
-      : []),
-    ...(register && dept ? [{ label: dept.name }] : []),
-    ...(site && open ? [{ label: "In progress" }] : []),
-    ...(site && year ? [{ label: year, href: at({ site: site.id, year }, !month) }] : []),
-    ...(year && month
-      ? [
-          {
-            label: MONTH_NAMES[Number(month) - 1]!,
-            href: at({ site: site!.id, year, month }, !adept),
-          },
-        ]
-      : []),
-    ...(month && adept
-      ? [{ label: deptName(adept), href: at({ site: site!.id, year, month, adept }, !eqId) }]
-      : []),
-    ...(eqId ? [{ label: equipmentById.get(eqId)?.code ?? "—" }] : []),
+  const regionOptions: FinderOption[] = [
+    {
+      label: "All regions",
+      href: at({ region: undefined, site: undefined, dept: undefined, eq: undefined }),
+    },
+    ...regions.map((r) => ({
+      label: regionLabel(r),
+      href: at({ region: r, site: undefined, dept: undefined, eq: undefined }),
+    })),
   ];
-  const addEquipment =
-    canManage && siteOptions.length > 0 ? (
-      <Button asChild>
-        <Link
-          href={`/clients/${company.id}/equipment/new${
-            site ? `?site=${site.id}${dept ? `&dept=${dept.id}` : ""}` : ""
-          }`}
-        >
-          <Plus aria-hidden="true" />
-          Add equipment
-        </Link>
-      </Button>
-    ) : null;
+  const siteOptionsList: FinderOption[] = [
+    {
+      label: region ? `All sites in ${regionLabel(region)}` : "All sites",
+      href: at({ site: undefined, dept: undefined, eq: undefined }),
+    },
+    ...inRegion.map((s) => ({
+      label: s.active ? s.name : `${s.name} (inactive)`,
+      href: at({ region: regionOf(s), site: s.id, dept: undefined, eq: undefined }),
+    })),
+  ];
+  const periodOptions: FinderOption[] = [
+    { label: "Any time", href: at({ ym: undefined }) },
+    ...years.flatMap((y) => [
+      { label: `All of ${y}`, href: at({ ym: y }), group: y },
+      ...periods
+        .filter((p) => p.startsWith(y))
+        .map((p) => ({
+          label: `${y} · ${MONTH_NAMES[Number(p.slice(5, 7)) - 1]}`,
+          href: at({ ym: p }),
+          group: y,
+        })),
+    ]),
+  ];
+  const deptOptions: FinderOption[] = [
+    { label: "All departments", href: at({ dept: undefined, eq: undefined }) },
+    ...deptChoices.map((d) => ({
+      label: site ? d.name : `${d.name} · ${siteName.get(d.siteId)}`,
+      href: at({ dept: d.id, eq: undefined }),
+    })),
+  ];
+  const eqOptions: FinderOption[] = [
+    { label: "All equipment", href: at({ eq: undefined }) },
+    ...eqChoices.map((e) => ({
+      label: `${e.code} · ${e.name}${e.active ? "" : " (retired)"}${isOverdue(e) ? " · overdue" : ""}`,
+      href: at({ eq: e.id }),
+    })),
+  ];
+  const valueOf = (options: FinderOption[], href: string) =>
+    options.find((o) => o.href === href)?.href ?? options[0]!.href;
+  const here = finderHref(company.id, place);
+  const sinceYear = company.createdAt ? monthYear(new Date(company.createdAt)) : "—";
+  const initials = (company.code || company.name)
+    .replace(/[^A-Za-z0-9]/g, "")
+    .slice(0, 3)
+    .toUpperCase();
+  const addEquipmentHref = `/clients/${company.id}/equipment/new${
+    site ? `?site=${site.id}${dept ? `&dept=${dept.id}` : ""}` : ""
+  }`;
+  const shownEquipment = (eq ? [eq] : eqChoices).filter((e) => e.active || eq);
+  const STUDY_LIMIT = 24;
+  const cards = all ? shownStudies : shownStudies.slice(0, STUDY_LIMIT);
 
-  const header = dept ? (
-    <PageHeader
-      title={dept.name}
-      description={`Department at ${site!.name}, ${company.name}`}
-      action={
-        canManage ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <DepartmentDialog
-              companyId={company.id}
-              siteId={site!.id}
-              siteName={site!.name}
-              department={{ id: dept.id, name: dept.name, active: dept.active }}
-            />
-            {addEquipment}
-          </div>
-        ) : undefined
-      }
-    />
-  ) : site ? (
-    <PageHeader
-      title={site.name}
-      description={[`${company.name} site`, site.code !== site.name ? `code ${site.code}` : ""]
-        .filter(Boolean)
-        .join(" · ")}
-      action={
-        canManage ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <SiteDialog
-              companyId={company.id}
-              site={{
-                id: site.id,
-                name: site.name,
-                code: site.code,
-                address: site.address,
-                city: site.city,
-                state: site.state,
-                gstin: site.gstin,
-                active: site.active,
-              }}
-            />
-            {site.active ? (
-              <DepartmentDialog companyId={company.id} siteId={site.id} siteName={site.name} />
-            ) : null}
-            {addEquipment}
-          </div>
-        ) : undefined
-      }
-    />
-  ) : (
-    <PageHeader
-      title={company.name}
-      description={[company.code, company.gstin && `GSTIN ${company.gstin}`, company.address]
-        .filter(Boolean)
-        .join(" · ")}
-      action={
-        <div className="flex flex-wrap gap-2">
-          {equipment.length > 0 ? (
-            <Button variant="secondary" asChild>
-              <a href={`/clients/${company.id}/export`} download>
-                <Download aria-hidden="true" />
-                Download Excel
-              </a>
-            </Button>
-          ) : null}
-          {canManage ? (
-            <>
-              <SiteDialog companyId={company.id} />
-              <EditCompanyButton
-                values={{
-                  id: company.id,
-                  name: company.name,
-                  code: company.code,
-                  gstin: company.gstin,
-                  address: company.address,
-                  notes: company.notes,
-                  postCalRequired: company.postCalRequired,
-                  requalificationMonths: company.requalificationMonths,
-                  paymentTermsDays: company.paymentTermsDays,
-                  reportNumberFormat: company.reportNumberFormat,
-                  active: company.active,
-                }}
-              />
-              {addEquipment}
-            </>
-          ) : null}
-        </div>
-      }
-    />
-  );
-
-  const siteTree = site ? tree.find((t) => t.id === site.id)! : null;
-  const empty = (text: string) => (
-    <p className="py-10 text-center text-sm text-muted-foreground">{text}</p>
-  );
-  let pane: ReactNode;
-  let status: string;
-  let up: string | undefined;
-  if (site && eqId) {
-    const files = adeptSigned.filter((r) => r.equipmentId === eqId);
-    up = placeHref(company.id, { site: site.id, year, month, adept });
-    status = plural(files.length, "signed report");
-    pane = <ReportFiles rows={files} />;
-  } else if (site && adept) {
-    const items = [...new Set(adeptSigned.map((r) => r.equipmentId))];
-    up = placeHref(company.id, { site: site.id, year, month });
-    status = plural(items.length, "equipment folder");
-    pane = (
-      <FolderGrid>
-        {items.map((id) => (
-          <FolderTile
-            key={id}
-            href={placeHref(company.id, { site: site.id, year, month, adept, eq: id })}
-            title={equipmentById.get(id)?.code ?? "—"}
-            facts={[
-              equipmentById.get(id)?.name ?? "",
-              plural(adeptSigned.filter((r) => r.equipmentId === id).length, "report"),
-            ]}
-          />
-        ))}
-      </FolderGrid>
-    );
-  } else if (site && month) {
-    const keys = [...new Set(monthSigned.map(deptKey))];
-    up = placeHref(company.id, { site: site.id, year });
-    status = plural(keys.length, "department folder");
-    pane = (
-      <FolderGrid>
-        {keys.map((k) => (
-          <FolderTile
-            key={k}
-            href={placeHref(company.id, { site: site.id, year, month, adept: k })}
-            title={deptName(k)}
-            facts={[plural(monthSigned.filter((r) => deptKey(r) === k).length, "report")]}
-          />
-        ))}
-      </FolderGrid>
-    );
-  } else if (site && year) {
-    const months = [...new Set(yearSigned.map((r) => r.month))];
-    up = placeHref(company.id, { site: site.id });
-    status = plural(months.length, "month folder");
-    pane = (
-      <FolderGrid>
-        {months.map((m) => (
-          <FolderTile
-            key={m}
-            href={placeHref(company.id, { site: site.id, year, month: m })}
-            title={MONTH_NAMES[Number(m) - 1]!}
-            facts={[plural(yearSigned.filter((r) => r.month === m).length, "report")]}
-          />
-        ))}
-      </FolderGrid>
-    );
-  } else if (site && open) {
-    const rows = inProgress.filter((x) => siteOf.get(x.equipmentId) === site.id);
-    up = placeHref(company.id, { site: site.id });
-    status = `${plural(rows.length, "study", "studies")} not signed yet`;
-    pane = rows.length ? (
-      <StudyFiles rows={rows} equipmentCode={equipmentCode} />
-    ) : (
-      empty("Nothing in progress.")
-    );
-  } else if (site && dept) {
-    const deptEquipment = equipment.filter((e) => e.departmentId === dept.id);
-    up = placeHref(company.id, { site: site.id, equipment: true });
-    status = plural(deptEquipment.length, "equipment", "equipment");
-    pane = deptEquipment.length ? (
-      <DetailsList columns={EQUIPMENT_COLUMNS} rows={equipmentFiles(deptEquipment, company.id)} />
-    ) : (
-      empty("This department is empty. Add its equipment with Add equipment.")
-    );
-  } else if (site && siteTree && register) {
-    const loose = equipment.filter((e) => e.siteId === site.id && !e.departmentId);
-    up = placeHref(company.id, { site: site.id });
-    status = `${plural(siteTree.equipment, "equipment", "equipment")} in ${plural(siteTree.departments.length, "department")}`;
-    pane =
-      siteTree.departments.length || loose.length ? (
-        <div className="flex flex-col gap-4">
-          {siteTree.departments.length ? (
-            <FolderGrid>
-              {siteTree.departments.map((d) => (
-                <FolderTile
-                  key={d.id}
-                  kind="equipment"
-                  href={placeHref(company.id, { site: site.id, dept: d.id })}
-                  title={d.name}
-                  facts={[plural(d.equipment, "equipment", "equipment")]}
-                  overdue={d.overdue}
-                  inactive={!d.active}
-                />
-              ))}
-            </FolderGrid>
-          ) : null}
-          {loose.length ? (
-            <div className="flex flex-col gap-1">
-              <p className="text-xs text-muted-foreground">
-                Not in a department (edit each to put it in one):
-              </p>
-              <DetailsList columns={EQUIPMENT_COLUMNS} rows={equipmentFiles(loose, company.id)} />
-            </div>
-          ) : null}
-        </div>
-      ) : (
-        empty("No departments yet. Add Stores, QC, Production… with Add department.")
-      );
-  } else if (site && siteTree) {
-    up = placeHref(company.id, {});
-    status = `${plural(siteYears.length, "year")} of signed reports`;
-    pane = (
-      <FolderGrid>
-        {siteYears.map((y) => (
-          <FolderTile
-            key={y}
-            href={placeHref(company.id, { site: site.id, year: y })}
-            title={y}
-            facts={[plural(siteSigned.filter((r) => r.year === y).length, "signed report")]}
-          />
-        ))}
-        <FolderTile
-          kind="equipment"
-          href={placeHref(company.id, { site: site.id, equipment: true })}
-          title="Equipment"
-          facts={[
-            plural(siteTree.equipment, "equipment", "equipment"),
-            plural(siteTree.departments.length, "department"),
-          ]}
-          overdue={siteTree.overdue}
-        />
-        {siteTree.open ? (
-          <FolderTile
-            kind="progress"
-            href={placeHref(company.id, { site: site.id, open: true })}
-            title="In progress"
-            facts={[`${plural(siteTree.open, "study", "studies")} not signed yet`]}
-          />
-        ) : null}
-      </FolderGrid>
-    );
-    if (!siteYears.length) {
-      pane = (
-        <div className="flex flex-col gap-3">
-          {pane}
-          <p className="text-sm text-muted-foreground">
-            No signed reports yet: a study&apos;s report lands in a year folder here when the client
-            signs it.
-          </p>
-        </div>
-      );
-    }
-  } else {
-    status = plural(sites.length, "site");
-    pane = sites.length ? (
-      <FolderGrid>
-        {tree.map((t) => (
-          <FolderTile
-            key={t.id}
-            href={placeHref(company.id, { site: t.id })}
-            title={t.name}
-            facts={[
-              plural(t.equipment, "equipment", "equipment"),
-              plural(signed.filter((r) => r.siteId === t.id).length, "signed report"),
-            ]}
-            overdue={t.overdue}
-            inactive={!t.active}
-          />
-        ))}
-      </FolderGrid>
-    ) : (
-      empty("No sites yet. Add the client's locations, e.g. Seawoods or Ambernath, with Add site.")
-    );
-  }
-
-  const about: ReactNode = site ? (
-    !dept ? (
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Fact label="Address">
-          <span className="font-normal">
-            {[site.address, site.city, site.state].filter(Boolean).join(", ") || "Not recorded"}
-          </span>
-        </Fact>
-        <Fact label="Report code">{site.code}</Fact>
-        <Fact label="Equipment in use">
-          <span className="tabular">
-            {equipment.filter((e) => e.siteId === site.id && e.active).length}
-          </span>
-        </Fact>
-        <Fact label="GSTIN">{site.gstin || company.gstin || "—"}</Fact>
-      </div>
-    ) : null
-  ) : (
+  const details: ReactNode = (
     <>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <dl className="grid gap-4 rounded-xl border border-border bg-surface p-4 sm:grid-cols-3">
         <Fact label="Equipment in use">
           <span className="tabular">{activeEquipment.length}</span>
           {overdue > 0 ? (
@@ -595,7 +318,7 @@ export default async function ClientPage({
         <Fact label="Post-calibration (mapping)">
           {company.postCalRequired ? "Required by client SOP" : "Not required by SOP"}
         </Fact>
-      </div>
+      </dl>
       {contracts ? (
         <Section
           title="Contracts (ARC and AMC)"
@@ -821,30 +544,325 @@ export default async function ClientPage({
     </>
   );
 
+  const results =
+    view === "equipment" ? (
+      shownEquipment.length ? (
+        <ul
+          aria-label="Equipment list"
+          className="divide-y divide-border overflow-hidden rounded-lg border border-border"
+        >
+          {shownEquipment.map((e) => (
+            <li key={e.id}>
+              <Link
+                href={`/clients/${company.id}/equipment/${e.id}`}
+                className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2.5 text-sm hover:bg-surface-muted/60"
+              >
+                <span className="min-w-0 flex-1 basis-48">
+                  <span className="font-medium">{e.code}</span>{" "}
+                  <span className="text-muted-foreground">{e.name}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    {[
+                      isEquipmentType(e.type) ? EQUIPMENT_TYPE_INFO[e.type].label : e.type,
+                      e.departmentId ? deptName.get(e.departmentId) : "",
+                      site ? "" : siteName.get(e.siteId),
+                      formatLimits(e.tempMinC, e.tempMaxC, "°C"),
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
+                </span>
+                {e.active ? (
+                  <DueBadge nextDue={e.nextDue} />
+                ) : (
+                  <StatusBadge tone="neutral">Retired</StatusBadge>
+                )}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="py-8 text-center text-sm text-muted-foreground">No equipment here yet.</p>
+      )
+    ) : cards.length ? (
+      <ul aria-label="Studies" className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+        {cards.map((s) => {
+          const e = eqById.get(s.equipmentId);
+          const badge = studyBadge(s);
+          return (
+            <li key={s.id}>
+              <Link
+                href={`/studies/${s.id}${s.reportStatus === "signed" ? "?tab=report" : ""}`}
+                className="flex h-full flex-col gap-1 rounded-lg border border-border p-3 transition-colors hover:border-primary hover:bg-primary/5"
+              >
+                <span className="flex items-start justify-between gap-2">
+                  <span className="min-w-0 truncate text-sm font-medium">
+                    {e?.name ?? "Equipment"}
+                  </span>
+                  <StatusBadge tone={badge.tone} className="shrink-0">
+                    {badge.label}
+                  </StatusBadge>
+                </span>
+                <span className="tabular truncate text-xs text-muted-foreground">
+                  {e?.code} · {dmy(s.start)}
+                  {s.end !== s.start ? ` – ${dmy(s.end)}` : ""}
+                </span>
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    ) : (
+      <p className="py-8 text-center text-sm text-muted-foreground">
+        {liveStudies.length
+          ? "No studies for what's selected. Change a step above."
+          : "No studies yet: they appear here once a job for this client is booked."}
+      </p>
+    );
+
+  const finder = (
+    <section
+      aria-label="Find studies"
+      className="flex flex-col rounded-xl border border-border bg-surface shadow-sm"
+    >
+      <ol className="flex flex-col px-4 py-2 sm:px-5">
+        <Step
+          n={1}
+          done={!!region}
+          title="Region"
+          control={
+            <FinderSelect
+              label="Region"
+              icon={<MapPin className="size-4" aria-hidden="true" />}
+              value={valueOf(
+                regionOptions,
+                at({ region, site: undefined, dept: undefined, eq: undefined }),
+              )}
+              options={regionOptions}
+            />
+          }
+        />
+        <Step
+          n={2}
+          done={!!site}
+          title="Site"
+          control={
+            <FinderSelect
+              label="Site"
+              icon={<Building2 className="size-4" aria-hidden="true" />}
+              value={
+                site
+                  ? at({ region: regionOf(site), site: site.id, dept: undefined, eq: undefined })
+                  : siteOptionsList[0]!.href
+              }
+              options={siteOptionsList}
+            />
+          }
+          aside={
+            canManage && site ? (
+              <SiteDialog
+                companyId={company.id}
+                site={{
+                  id: site.id,
+                  name: site.name,
+                  code: site.code,
+                  address: site.address,
+                  city: site.city,
+                  state: site.state,
+                  gstin: site.gstin,
+                  active: site.active,
+                }}
+              />
+            ) : null
+          }
+        />
+        <Step
+          n={3}
+          done={!!ym}
+          title="Year / Month"
+          control={
+            <FinderSelect
+              label="Year or month"
+              icon={<CalendarDays className="size-4" aria-hidden="true" />}
+              value={ym ? at({ ym }) : periodOptions[0]!.href}
+              options={periodOptions}
+              disabled={periods.length === 0}
+            />
+          }
+        />
+        <Step
+          n={4}
+          done={!!dept}
+          title="Department"
+          control={
+            <FinderSelect
+              label="Department"
+              icon={<Network className="size-4" aria-hidden="true" />}
+              value={dept ? at({ dept: dept.id, eq: undefined }) : deptOptions[0]!.href}
+              options={deptOptions}
+              disabled={deptChoices.length === 0}
+            />
+          }
+          aside={
+            canManage && site && dept ? (
+              <DepartmentDialog
+                companyId={company.id}
+                siteId={site.id}
+                siteName={site.name}
+                department={{ id: dept.id, name: dept.name, active: dept.active }}
+              />
+            ) : null
+          }
+        />
+        <Step
+          n={5}
+          done={!!eq}
+          last
+          title="Equipment"
+          control={
+            <FinderSelect
+              label="Equipment"
+              icon={<Refrigerator className="size-4" aria-hidden="true" />}
+              value={eq ? at({ eq: eq.id }) : eqOptions[0]!.href}
+              options={eqOptions}
+              disabled={eqChoices.length === 0}
+            />
+          }
+          aside={
+            eq ? (
+              <Button variant="ghost" size="sm" asChild>
+                <Link href={`/clients/${company.id}/equipment/${eq.id}`}>
+                  Open
+                  <ChevronRight aria-hidden="true" />
+                </Link>
+              </Button>
+            ) : null
+          }
+        />
+      </ol>
+      <div className="flex flex-col gap-3 border-t border-border px-4 py-4 sm:px-5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <nav aria-label="Show" className="flex gap-4 text-sm">
+            {[
+              [undefined, "Studies", shownStudies.length],
+              ["equipment", "Equipment", shownEquipment.length],
+            ].map(([v, l, n]) => (
+              <Link
+                key={l as string}
+                href={at({ view: v as "equipment" | undefined })}
+                aria-current={view === v ? "page" : undefined}
+                scroll={false}
+                className={cn(
+                  "-mb-px border-b-2 pb-1",
+                  view === v
+                    ? "border-primary font-semibold text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {l as string} ({n as number})
+              </Link>
+            ))}
+          </nav>
+          {view !== "equipment" && shownStudies.length > cards.length ? (
+            <Link
+              href={finderHref(company.id, { ...place, all: true })}
+              scroll={false}
+              className="text-sm text-primary hover:underline"
+            >
+              Show all {shownStudies.length}
+            </Link>
+          ) : null}
+        </div>
+        {results}
+      </div>
+    </section>
+  );
+
   return (
-    <div className="mx-auto flex max-w-7xl flex-col gap-4">
-      {header}
-      {company.active ? null : (
-        <StatusBadge tone="neutral" className="w-fit">
-          Inactive client
-        </StatusBadge>
-      )}
-      <ExplorerWindow
-        up={up}
-        trail={trail}
-        status={status}
-        tree={
-          <ClientTree
-            companyId={company.id}
-            companyName={company.name}
-            sites={tree}
-            place={place}
-          />
-        }
-      >
-        {pane}
-      </ExplorerWindow>
-      {about ? <div className="flex flex-col gap-8">{about}</div> : null}
+    <div className="mx-auto flex max-w-7xl flex-col gap-5">
+      <Trail parts={[{ label: "Clients", href: "/clients" }, { label: company.name }]} />
+      <header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 items-center gap-4">
+          <span
+            className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-primary text-sm font-bold tracking-wide text-primary-foreground"
+            aria-hidden="true"
+          >
+            {initials}
+          </span>
+          <div className="min-w-0">
+            <h1 className="truncate text-2xl font-semibold">{company.name}</h1>
+            <div className="flex flex-wrap items-center gap-x-1 text-sm text-muted-foreground">
+              <span>
+                {[company.code, company.active ? "" : "Inactive client"]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
+              {equipment.length > 0 ? (
+                <Button variant="ghost" size="sm" asChild>
+                  <a href={`/clients/${company.id}/export`} download>
+                    <Download aria-hidden="true" />
+                    Excel
+                  </a>
+                </Button>
+              ) : null}
+              {canManage ? (
+                <EditCompanyButton
+                  values={{
+                    id: company.id,
+                    name: company.name,
+                    code: company.code,
+                    gstin: company.gstin,
+                    address: company.address,
+                    notes: company.notes,
+                    postCalRequired: company.postCalRequired,
+                    requalificationMonths: company.requalificationMonths,
+                    paymentTermsDays: company.paymentTermsDays,
+                    reportNumberFormat: company.reportNumberFormat,
+                    active: company.active,
+                  }}
+                />
+              ) : null}
+            </div>
+          </div>
+        </div>
+        <dl className="flex divide-x divide-border rounded-xl border border-border bg-surface py-2.5">
+          {[
+            ["Client since", sinceYear],
+            ["Sites", String(sites.length)],
+            ["Studies", String(liveStudies.length)],
+          ].map(([label, value]) => (
+            <div key={label} className="px-5">
+              <dt className="text-xs text-muted-foreground">{label}</dt>
+              <dd className="tabular font-semibold">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      </header>
+      {canManage ? (
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <SiteDialog companyId={company.id} toolbar />
+          {siteOptions.length ? (
+            <DepartmentDialog
+              companyId={company.id}
+              siteId={site && site.active ? site.id : siteOptions[0]!.id}
+              siteName={site && site.active ? site.name : siteOptions[0]!.name}
+              sites={siteOptions}
+              toolbar
+            />
+          ) : null}
+          {siteOptions.length ? (
+            <Button size="sm" asChild>
+              <Link href={addEquipmentHref}>
+                <Plus aria-hidden="true" />
+                Add equipment
+              </Link>
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      {finder}
+      <div key={here} className="flex flex-col gap-8">
+        {details}
+      </div>
     </div>
   );
 }

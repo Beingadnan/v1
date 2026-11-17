@@ -400,7 +400,7 @@ export function EditCompanyButton({ values }: { values: CompanyValues }) {
     <FormDialog
       wide
       trigger={(open) => (
-        <Button variant="secondary" onClick={open}>
+        <Button variant="ghost" size="sm" onClick={open}>
           <Pencil aria-hidden="true" />
           Edit details
         </Button>
@@ -462,7 +462,16 @@ export type SiteValues = {
   active: boolean;
 };
 
-export function SiteDialog({ companyId, site }: { companyId: string; site?: SiteValues }) {
+export function SiteDialog({
+  companyId,
+  site,
+  toolbar,
+}: {
+  companyId: string;
+  site?: SiteValues;
+  /** Shown as a button of the page's toolbar. */
+  toolbar?: boolean;
+}) {
   return (
     <FormDialog
       trigger={(open) =>
@@ -472,7 +481,7 @@ export function SiteDialog({ companyId, site }: { companyId: string; site?: Site
             Edit
           </Button>
         ) : (
-          <Button variant="secondary" size="sm" onClick={open}>
+          <Button variant={toolbar ? "secondary" : "ghost"} size="sm" onClick={open}>
             <Plus aria-hidden="true" />
             Add site
           </Button>
@@ -554,29 +563,36 @@ export function DepartmentDialog({
   siteId,
   siteName,
   department,
+  sites,
+  toolbar,
 }: {
   companyId: string;
   siteId: string;
   siteName: string;
   department?: { id: string; name: string; active: boolean };
+  /** Let the person choose the site (siteId is the one chosen at first). */
+  sites?: { id: string; name: string }[];
+  /** Shown as a button of the page's toolbar. */
+  toolbar?: boolean;
 }) {
   return (
     <FormDialog
       trigger={(open) =>
         department ? (
           <Button
-            variant="secondary"
+            variant="ghost"
+            size="sm"
             onClick={open}
             aria-label={`Edit department ${department.name}`}
           >
             <Pencil aria-hidden="true" />
-            Edit department
+            Edit
           </Button>
         ) : (
-          <Button variant="secondary" size="sm" onClick={open}>
+          <Button variant={toolbar ? "secondary" : "ghost"} size="sm" onClick={open}>
             <Plus aria-hidden="true" />
             Add department
-            <span className="sr-only"> at {siteName}</span>
+            {sites && sites.length > 1 ? null : <span className="sr-only"> at {siteName}</span>}
           </Button>
         )
       }
@@ -587,6 +603,7 @@ export function DepartmentDialog({
           siteId={siteId}
           siteName={siteName}
           department={department}
+          sites={sites}
           close={close}
         />
       )}
@@ -599,26 +616,50 @@ function DepartmentForm({
   siteId,
   siteName,
   department,
+  sites,
   close,
 }: {
   companyId: string;
   siteId: string;
   siteName: string;
   department?: { id: string; name: string; active: boolean };
+  sites?: { id: string; name: string }[];
   close: () => void;
 }) {
+  const chooseSite = !department && !!sites && sites.length > 1;
   const { result, pending, onSubmit } = useFormAction(saveDepartmentAction);
   useCloseOnSuccess(result?.ok, close);
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
       <DialogHeader>
         <DialogTitle>
-          {department ? `Edit department ${department.name}` : `Add a department at ${siteName}`}
+          {department
+            ? `Edit department ${department.name}`
+            : chooseSite
+              ? "Add a department"
+              : `Add a department at ${siteName}`}
         </DialogTitle>
         <DialogDescription>For example BA, QC, Warehouse or Stores.</DialogDescription>
       </DialogHeader>
       <input type="hidden" name="companyId" value={companyId} />
-      <input type="hidden" name="siteId" value={siteId} />
+      {chooseSite ? (
+        <label className="flex flex-col gap-1.5 text-sm font-medium">
+          Site
+          <select
+            name="siteId"
+            defaultValue={siteId}
+            className="h-10 rounded-md border border-border bg-surface px-3 text-sm"
+          >
+            {sites!.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : (
+        <input type="hidden" name="siteId" value={siteId} />
+      )}
       <input type="hidden" name="departmentId" value={department?.id ?? ""} />
       <TextField
         name="name"

@@ -36,11 +36,19 @@ import { importActor } from "./import-actor";
 const CODE = "TFP";
 
 type Eq = { code: string; name: string; type: string; min: string; max: string; dept: string };
-const SITES: { name: string; code: string; city: string; depts: string[]; equipment: Eq[] }[] = [
+const SITES: {
+  name: string;
+  code: string;
+  city: string;
+  state: string;
+  depts: string[];
+  equipment: Eq[];
+}[] = [
   {
     name: "Taloja (West region)",
     code: "TLJ",
     city: "Navi Mumbai",
+    state: "Maharashtra",
     depts: ["Quality Control", "Stores", "Microbiology"],
     equipment: [
       {
@@ -97,6 +105,7 @@ const SITES: { name: string; code: string; city: string; depts: string[]; equipm
     name: "Baddi (North region)",
     code: "BDI",
     city: "Baddi",
+    state: "Himachal Pradesh",
     depts: ["Production", "Warehouse"],
     equipment: [
       {
@@ -192,6 +201,7 @@ async function main(): Promise<void> {
           name: s.name,
           code: s.code,
           city: s.city,
+          state: s.state,
         })
         .returning();
       const deptId = new Map<string, string>();
