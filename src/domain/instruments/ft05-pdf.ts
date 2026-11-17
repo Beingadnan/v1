@@ -385,19 +385,17 @@ export async function renderFt05(cert: CertificateDetail, ctx: Ft05Context): Pro
     });
     for (let c = 0; c < PER_BLOCK; c++) {
       const it = block[c];
-      s.cell(
-        ux + c * UW,
-        top + 11,
-        UW,
-        15,
-        it ? `${it.instrument.serialNo || "-"}\n${it.instrument.code}` : "",
-        {
-          align: "center",
-          size: 5.5,
-          fill:
-            it && ctx.highlightSerials?.includes(it.instrument.serialNo) ? "#fff200" : undefined,
-        },
-      );
+      // The serial and the QA Tech ID must print whole (they identify the
+      // instrument): shrink the type for long ones instead of cutting them.
+      const lines = it ? [it.instrument.serialNo || "-", it.instrument.code] : [];
+      s.doc.font("Helvetica").fontSize(10);
+      const widest = Math.max(0, ...lines.map((l) => s.doc.widthOfString(ascii(l)) / 10));
+      const size = widest > 0 ? Math.max(3.5, Math.min(5.5, (UW - 5.5) / widest)) : 5.5;
+      s.cell(ux + c * UW, top + 11, UW, 15, lines.join("\n"), {
+        align: "center",
+        size,
+        fill: it && ctx.highlightSerials?.includes(it.instrument.serialNo) ? "#fff200" : undefined,
+      });
     }
     s.y = top + 26;
     for (const [pi, p] of cert.points.entries()) {
