@@ -157,9 +157,22 @@ export function BookingPicker({ jobId, choices }: { jobId: string; choices: Book
     const hit = everywhere.get(text.toLowerCase());
     if (!hit) {
       setNote(`${text} is not in the register as a logger of the kind these studies need.`);
+    } else if (hit.model !== model.label && picked.length === 0) {
+      // The first scan picks the model: a scanner in hand shouldn't need the
+      // drop-down first.
+      const other = choices.models.findIndex((m) => m.label === hit.model);
+      setModelIndex(other);
+      setShow("free");
+      if (hit.l.state !== "free") {
+        setNote(`${hit.l.code} (serial ${hit.l.serialNo || "-"}) can't be booked: ${hit.l.where}.`);
+      } else {
+        setPicked([hit.l.code]);
+        setNote(`Showing ${hit.model}, the model of ${hit.l.code}.`);
+        setTyped("");
+      }
     } else if (hit.model !== model.label) {
       setNote(
-        `${hit.l.code} (serial ${hit.l.serialNo || "-"}) is a ${hit.model}, not a ${model.label}. Pick ${hit.model} above to book it.`,
+        `${hit.l.code} (serial ${hit.l.serialNo || "-"}) is model ${hit.model}, not ${model.label}. Book the ticked ones first, then scan the other model.`,
       );
     } else if (hit.l.state !== "free") {
       setNote(`${hit.l.code} (serial ${hit.l.serialNo || "-"}) can't be booked: ${hit.l.where}.`);
@@ -206,9 +219,12 @@ export function BookingPicker({ jobId, choices }: { jobId: string; choices: Book
         </div>
       </div>
 
-      <label className="flex flex-col gap-1 text-sm font-medium">
-        Model
+      <div className="flex flex-col gap-1">
+        <label htmlFor="booking-model" className="text-sm font-medium">
+          Model
+        </label>
         <select
+          id="booking-model"
           value={modelIndex}
           onChange={(e) => {
             setModelIndex(Number(e.target.value));
@@ -224,7 +240,7 @@ export function BookingPicker({ jobId, choices }: { jobId: string; choices: Book
             </option>
           ))}
         </select>
-      </label>
+      </div>
 
       <div role="tablist" aria-label="Show" className="flex flex-wrap gap-1.5">
         {STATES.map((st) => (
