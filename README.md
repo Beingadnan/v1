@@ -1,4 +1,3 @@
-
 # QTech platform
 
 Calibration and thermal validation management for QA Tech (a division of GMP Technical

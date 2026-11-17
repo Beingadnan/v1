@@ -31,6 +31,9 @@ const nextConfig: NextConfig = {
   output: "standalone",
   // pdfkit reads its font metrics from its own folder at run time; bundling would lose them.
   serverExternalPackages: ["pdfkit"],
+  experimental: {
+    agentUpgrade: "security",
+  },
   turbopack: {
     rules: {
       "*.css": {
