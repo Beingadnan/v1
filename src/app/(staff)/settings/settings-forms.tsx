@@ -130,7 +130,7 @@ function Preview({ format, needsSite }: { format: string; needsSite: boolean }) 
   return (
     <p className="text-xs text-muted-foreground">
       Example:{" "}
-      <span className="tabular font-medium text-foreground">
+      <span className="tabular font-medium break-all text-foreground">
         {formatNumber(format, {
           year,
           month: 3,
@@ -160,7 +160,7 @@ export function NumberFormatsForm({
       description="Job and certificate numbers are generated from these. Tokens: {YYYY} {YY} {MM} {SITE} {SITE_NAME} {KIND} {SEQ:n}. Numbers restart each year. Job numbers count through the year even when they show the month; certificate numbers restart each month when the format has {MM}, and each kind (PDL, RTD, TC) counts separately when it has {KIND}."
     >
       <form action={action} className="grid gap-4 sm:grid-cols-2">
-        <div className="flex flex-col gap-1.5">
+        <div className="flex min-w-0 flex-col gap-1.5">
           <Field
             id="jobNumberFormat"
             label="Job number"
@@ -177,7 +177,7 @@ export function NumberFormatsForm({
           </Field>
           <Preview format={job} needsSite={false} />
         </div>
-        <div className="flex flex-col gap-1.5">
+        <div className="flex min-w-0 flex-col gap-1.5">
           <Field
             id="certificateNumberFormat"
             label="Certificate number (one series per site)"

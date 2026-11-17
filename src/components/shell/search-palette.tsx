@@ -62,7 +62,7 @@ export function SearchPalette() {
   return (
     <DialogPrimitive.Root open={open} onOpenChange={setOpen}>
       <DialogPrimitive.Trigger
-        className="flex h-9 max-w-md flex-1 items-center gap-2 rounded-md border border-input bg-background px-3 text-left text-sm text-muted-foreground hover:border-primary"
+        className="flex h-9 max-w-md min-w-0 flex-1 items-center gap-2 rounded-md border border-input bg-background px-3 text-left text-sm text-muted-foreground hover:border-primary"
         aria-label="Search"
       >
         <Search className="size-4 shrink-0" aria-hidden="true" />
