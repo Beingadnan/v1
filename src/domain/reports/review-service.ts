@@ -410,7 +410,7 @@ export async function releaseReport(
       "",
       `Open it here (sign in with your QTech account): ${link}`,
       "",
-      "You can sign Reviewed By and Approved By in the app, or send it back with comments.",
+      "You can sign it for your company in the app, or send it back with comments.",
       "",
       "Regards,",
       actor.name,

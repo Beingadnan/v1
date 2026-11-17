@@ -11,7 +11,7 @@ import { ClientReportView } from "./client-report-view";
 
 export const metadata = { title: "Report" };
 
-/** One released report: read it, then sign Reviewed By / Approved By, or send it back. */
+/** One released report: read it, then sign it for the client, or send it back. */
 export default async function ClientReportPage({
   params,
 }: PageProps<"/client/reports/[reportId]">) {

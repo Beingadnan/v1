@@ -2,6 +2,15 @@
 
 Status: accepted (Phase 9, November 2026)
 
+> **Update, 10 Nov 2026 (commit f80eeae):** QA Tech's reference report carries two
+> signatures, so the chain below was cut to two: **for QA Tech** (a team leader or
+> manager who did not prepare the revision, `checked_by`) and **for the client** (the
+> client's signatory, `approved_by`). Freezing no longer signs: the preparer is recorded
+> as who froze the revision (`frozen_by_user_id`), and can't sign it for QA Tech. The
+> client's separate Reviewed By step is gone. Decisions 1, 2 and 5 below still hold; read
+> "four signatures", "Freeze and Done By are one step" and "the Reviewed By signer can't
+> sign Approved By" as history.
+
 ## Context
 
 A mapping report carries four signatures: Done By and Checked By (QA Tech), Reviewed
