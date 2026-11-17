@@ -643,9 +643,12 @@ function DepartmentForm({
       </DialogHeader>
       <input type="hidden" name="companyId" value={companyId} />
       {chooseSite ? (
-        <label className="flex flex-col gap-1.5 text-sm font-medium">
-          Site
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="department-site" className="text-sm font-medium">
+            Site
+          </label>
           <select
+            id="department-site"
             name="siteId"
             defaultValue={siteId}
             className="h-10 rounded-md border border-border bg-surface px-3 text-sm"
@@ -656,7 +659,7 @@ function DepartmentForm({
               </option>
             ))}
           </select>
-        </label>
+        </div>
       ) : (
         <input type="hidden" name="siteId" value={siteId} />
       )}
@@ -886,9 +889,9 @@ function InviteClientUserForm({
         autoComplete="off"
       />
       <SelectField name="role" label="Role" defaultValue="client_qa" result={result} required>
-        <option value="client_qa">Client QA (signs Reviewed By)</option>
+        <option value="client_qa">Client QA (reads and comments on released reports)</option>
         <option value="client_qa_head">
-          Client QA head (signs Approved By, decides deviations)
+          Client QA head (signs reports for the client, decides deviations)
         </option>
       </SelectField>
       <FormMessage result={result} />
