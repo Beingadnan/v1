@@ -53,6 +53,9 @@ test("unknown pages show the QA Tech 404 page once signed in", async ({ page }) 
 
 test("the development component gallery is hidden in production", async ({ page }) => {
   await signIn(page, "admin");
-  const response = await page.goto("/dev/components");
-  expect(response?.status()).toBe(404);
+  await page.goto("/dev/components");
+  // notFound() inside the streamed staff layout keeps HTTP 200 (Next marks the
+  // page noindex); what matters is that the gallery isn't there.
+  await expect(page.getByRole("heading", { name: "This page doesn't exist" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Component gallery" })).toHaveCount(0);
 });

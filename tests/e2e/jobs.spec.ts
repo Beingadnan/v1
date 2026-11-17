@@ -79,28 +79,29 @@ test("phase 4 exit test: a Watson job with 2 freezers, found by PO, held back by
   // Freezer A is due on 09.11.2026, so it comes ticked.
   await expect(page.getByText("1 of 2 ticked · 1 due")).toBeVisible();
   await page.getByRole("button", { name: "Tick all" }).click();
+  // Each freezer's study runs 4 cycles of 24 h: 03.06 to 07.06.2030 covers it.
   await page.getByLabel("First day on site").fill("2030-06-03");
-  await page.getByLabel("Last day (loggers back)").fill("2030-06-05");
+  await page.getByLabel("Last day (loggers back)").fill("2030-06-07");
   await page.getByLabel("PO number").fill(`PO-${run}`);
   await page.getByRole("button", { name: "Create job with 2 items" }).click();
   await expect(
     page.getByRole("heading", { level: 1, name: /^QT\/\d{2}\/\d{4}\/\d{4}$/ }),
   ).toBeVisible();
   const jobUrl = page.url();
-  await expect(
-    page.getByRole("cell", {
-      name: `W${run}/Seawoods/06/30/Cold Storage (Walk In Freezer)/WF-${run}-A`,
-      exact: true,
-    }),
-  ).toBeVisible();
+  await expect(page.getByRole("link", { name: `WF-${run}-A`, exact: true })).toBeVisible();
 
-  // Book the three loggers by pasting their IDs, then field work can start.
-  await page.getByRole("button", { name: "Add by ID or serial" }).click();
-  dialog = page.getByRole("dialog");
-  await dialog.getByLabel("IDs or serial numbers").fill(`J${run}-0001\nJ${run}-0002, J${run}-0003`);
-  await dialog.getByRole("button", { name: "Book" }).click();
-  await expect(dialog.getByText(`Booked: J${run}-0001, J${run}-0002, J${run}-0003`)).toBeVisible();
-  await page.keyboard.press("Escape");
+  // The gate pass, then one logger per freezer scanned in and booked: field work can start.
+  await page.getByLabel("Gate pass number").fill(`GP-${run}`);
+  await page.getByRole("button", { name: "Save gate pass" }).click();
+  const scan = page.getByLabel(/Type or scan an ID or serial/);
+  await expect(scan).toBeVisible();
+  for (const code of [`J${run}-0001`, `J${run}-0003`]) {
+    await scan.fill(code);
+    await scan.press("Enter");
+    await expect(page.getByRole("button", { name: `Remove ${code}` })).toBeVisible();
+  }
+  await page.getByRole("button", { name: /^Book 2/ }).click();
+  await expect(page.getByRole("button", { name: `Release J${run}-0003` })).toBeVisible();
   await expect(page.getByRole("button", { name: "Start field work" })).toBeVisible();
 
   // Found by its PO number.
@@ -113,16 +114,24 @@ test("phase 4 exit test: a Watson job with 2 freezers, found by PO, held back by
   await page.getByRole("button", { name: "Edit details" }).click();
   dialog = page.getByRole("dialog");
   await dialog.getByLabel("First day on site").fill("2030-07-01");
-  await dialog.getByLabel("Last day (loggers back)").fill("2030-07-03");
+  await dialog.getByLabel("Last day (loggers back)").fill("2030-07-05");
   await dialog.getByRole("button", { name: "Save" }).click();
   await expect(dialog).toBeHidden();
   await expect(page.getByText("is valid only until 30.06.2030").first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Start field work" })).toHaveCount(0);
 
-  // Releasing it and booking a spare fixes it.
+  // Releasing it and booking the spare fixes it.
   await page.getByRole("button", { name: `Release J${run}-0003` }).click();
+  await expect(page.getByRole("button", { name: `Release J${run}-0003` })).toHaveCount(0);
+  await scan.fill(`J${run}-0002`);
+  await scan.press("Enter");
+  await page.getByRole("button", { name: /^Book 1/ }).click();
+  await expect(page.getByRole("button", { name: `Release J${run}-0002` })).toBeVisible();
   await page.getByRole("button", { name: "Start field work" }).click();
-  await expect(page.locator("[data-tone]").first()).toHaveText("Field work");
+  await expect(page.getByRole("button", { name: "Start field work" })).toHaveCount(0);
+  await expect(
+    page.getByText("Field work", { exact: true }).filter({ visible: true }).first(),
+  ).toBeVisible();
   expect(errors).toEqual([]);
 });
 
@@ -131,12 +140,11 @@ test("the job board fits a phone and hides money from field engineers", async ({
   await page.goto("/jobs");
   await expect(page.getByRole("heading", { level: 1, name: "Jobs" })).toBeVisible();
   await expect(page.getByRole("link", { name: "New job" })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Rate card" })).toHaveCount(0);
   const [scroll, width] = await page.evaluate(() => [
     document.documentElement.scrollWidth,
     window.innerWidth,
   ]);
   expect(scroll).toBeLessThanOrEqual(width);
-  await page.goto("/jobs/rates");
+  await page.goto("/billing");
   await expect(page).toHaveURL(/no-access/);
 });
