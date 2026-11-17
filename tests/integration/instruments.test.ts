@@ -252,6 +252,25 @@ describe("instrument register", () => {
     ).rejects.toThrow(/serial/i);
   });
 
+  it("names the pasted serials that are already registered, and adds none of the batch", async () => {
+    await expect(
+      bulkAddInstruments(
+        db,
+        manager,
+        {
+          modelId,
+          homeSiteId: siteId,
+          codePrefix: "E-TRH",
+          serials: "62399001\n62363018\n62399002\n62363016",
+        },
+        req,
+      ),
+    ).rejects.toThrow(
+      "Already registered: 62363018 (E-TRH0525), 62363016 (E-TRH0523). Take them out of the list and add the rest.",
+    );
+    expect(await listInstruments(db, manager, { q: "62399001" })).toHaveLength(0);
+  });
+
   it("keeps field engineers to viewing", async () => {
     await expect(
       createInstrument(db, engineer, { type: "portable_logger", code: "X-1" }, req),
@@ -787,6 +806,65 @@ describe("dates a person might get wrong", () => {
       );
     await expect(start("2099-01-01", null)).rejects.toThrow(/in the future/);
     await expect(start("2026-03-26", "2025-01-01")).rejects.toThrow(/due date must be after/);
+  });
+
+  it("puts loggers of one model on one certificate however their Excel spelt the model", async () => {
+    const [logger] = await listInstruments(db, lab, { q: "E-TRH0523" });
+    // Same register model, typed "EBRO EBI20-TH1" in another site's Excel.
+    const spelt = await createInstrument(
+      db,
+      manager,
+      {
+        type: "portable_logger",
+        code: "E-TRH0901",
+        serialNo: "62399901",
+        modelId,
+        make: "EBRO",
+        model: "EBI20-TH1",
+        homeSiteId: siteId,
+      },
+      req,
+    );
+    // Not linked to the register, spelt differently again.
+    const unlinked = await createInstrument(
+      db,
+      manager,
+      {
+        type: "portable_logger",
+        code: "E-TRH0902",
+        serialNo: "62399902",
+        make: "Ebro",
+        model: "EBI-20 TH1",
+        homeSiteId: siteId,
+      },
+      req,
+    );
+    const other = await createInstrument(
+      db,
+      manager,
+      {
+        type: "portable_logger",
+        code: "E-TRH0903",
+        serialNo: "62399903",
+        make: "Testo",
+        model: "174H",
+        homeSiteId: siteId,
+      },
+      req,
+    );
+    const start = (ids: string[]) =>
+      createCalibration(
+        db,
+        lab,
+        { header: { ...header("2026-03-27"), siteId }, instrumentIds: ids, masterIds: [] },
+        req,
+      );
+    await expect(start([logger!.id, spelt.id])).resolves.toMatchObject({
+      number: expect.stringContaining("PDL"),
+    });
+    await expect(start([unlinked.id, other.id])).rejects.toThrow(
+      "E-TRH0903 is Testo 174H, the others are Ebro EBI-20 TH1. Put each model on its own certificate.",
+    );
   });
 });
 

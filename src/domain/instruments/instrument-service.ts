@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { Database, Transaction } from "@/db/client-factory";
@@ -368,6 +368,37 @@ export async function bulkAddInstruments(
         organisationId: actor.organisationId,
         createdByUserId: actor.id,
       }));
+      // Name the serials already registered (same make), so a long list can be fixed.
+      const make = (rows[0]!.make ?? "").toLowerCase();
+      const taken = await tx
+        .select({ code: instruments.code, serialNo: instruments.serialNo })
+        .from(instruments)
+        .where(
+          and(
+            eq(instruments.organisationId, actor.organisationId),
+            sql`lower(${instruments.make}) = ${make}`,
+            inArray(
+              sql`lower(${instruments.serialNo})`,
+              serials.map((x) => x.toLowerCase()),
+            ),
+          ),
+        );
+      if (taken.length > 0) {
+        throw new InstrumentsError(
+          `Already registered: ${taken
+            // In the order they were pasted.
+            .sort(
+              (a, b) =>
+                serials.findIndex((x) => x.toLowerCase() === a.serialNo.toLowerCase()) -
+                serials.findIndex((x) => x.toLowerCase() === b.serialNo.toLowerCase()),
+            )
+            .slice(0, 20)
+            .map((t) => `${t.serialNo} (${t.code})`)
+            .join(
+              ", ",
+            )}${taken.length > 20 ? ` and ${taken.length - 20} more` : ""}. Take ${taken.length === 1 ? "it" : "them"} out of the list and add the rest.`,
+        );
+      }
       const created = await tx.insert(instruments).values(rows).returning();
       await recordAudit(tx, {
         organisationId: actor.organisationId,
