@@ -106,7 +106,11 @@ async function resolveMasters(
 async function modelOf(tx: Transaction, organisationId: string, uucs: Instrument[]) {
   const first = uucs[0];
   if (!first) throw new InstrumentsError("Add the instruments to calibrate.");
-  const key = (i: Instrument) => `${i.make.toLowerCase()}|${i.model.toLowerCase()}`;
+  // The same model from different Excel files is spelt "EBRO EBI20-TH1" and
+  // "ebro EBI 20-TH1": the register's model decides, else make and model with
+  // case, spaces and punctuation ignored.
+  const flat = (t: string) => t.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const key = (i: Instrument) => i.modelId ?? `${flat(i.make)}|${flat(i.model)}`;
   const odd = uucs.find((i) => key(i) !== key(first));
   if (odd) {
     throw new InstrumentsError(
