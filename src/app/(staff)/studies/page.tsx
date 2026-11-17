@@ -1,152 +1,232 @@
-import { ThermometerSnowflake } from "lucide-react";
+import { ChevronRight, ThermometerSnowflake } from "lucide-react";
 import Link from "next/link";
 
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
-import { StatusBadge } from "@/components/ui/status-badge";
 import { db } from "@/db/client";
 import { can } from "@/domain/auth/permissions";
+import { nextStep, STAGE_LABELS, type NextStep, type StudyStage } from "@/domain/field/next-step";
 import { myStudies, type MyStudy } from "@/domain/field/queries";
-import { STUDY_STATUS_LABELS } from "@/domain/field/types";
 import { requirePermission } from "@/lib/auth/dal";
 import { cn } from "@/lib/utils";
 
-export const metadata = { title: "My studies" };
+export const metadata = { title: "Studies" };
 
 const dmy = (iso: string) => iso.split("-").reverse().join(".");
 
+const STAGES = ["site", "data", "postcal", "analysis", "done"] as const;
+
+const BUTTON: Record<NextStep["tone"], string> = {
+  attention: "border-attention/50 bg-attention-soft text-attention",
+  fail: "border-fail/50 bg-fail-soft text-fail",
+  info: "border-primary/40 bg-primary/10 text-primary",
+  neutral: "border-border bg-surface text-foreground",
+  pass: "border-transparent text-muted-foreground",
+};
+
+type Row = MyStudy & { next: NextStep };
+
+/**
+ * The studies list (QA Tech, Nov 2026): one compact line per study, grouped
+ * by job, each with the one thing to do next as its button.
+ */
 export default async function StudiesPage({ searchParams }: PageProps<"/studies">) {
   const actor = await requirePermission("data.import");
-  const everyone = (await searchParams).all === "1" && can(actor, "jobs.manage");
-  const rows = await myStudies(db, actor, { everyone });
-  const data = rows.filter(waiting);
-  const post = rows.filter((r) => !waiting(r) && r.status === "completed" && r.postCalLeft > 0);
-  const analyse = rows.filter((r) => !waiting(r) && r.postCalLeft === 0 && r.toAnalyse);
-  const today = rows.filter((r) => !waiting(r) && r.today && r.status !== "completed");
-  const later = rows.filter((r) => !waiting(r) && !r.today && r.status !== "completed");
-  const done = rows.filter(
-    (r) => !waiting(r) && r.status === "completed" && r.postCalLeft === 0 && !r.toAnalyse,
-  );
+  const params = await searchParams;
+  const everyone = params.all === "1" && can(actor, "jobs.manage");
+  const stage = STAGES.find((s) => s === params.stage);
+  const all: Row[] = (await myStudies(db, actor, { everyone })).map((r) => ({
+    ...r,
+    next: nextStep(r),
+  }));
+  const count = (s: StudyStage) => all.filter((r) => r.next.stage === s).length;
+  const open = all.filter((r) => r.next.stage !== "done");
+  const shown = stage ? all.filter((r) => r.next.stage === stage) : open;
+
+  // By job, today's first, then by date.
+  const jobs = new Map<string, Row[]>();
+  for (const r of [...shown].sort(
+    (a, b) => Number(b.today) - Number(a.today) || a.plannedStart.localeCompare(b.plannedStart),
+  )) {
+    jobs.set(r.jobId, [...(jobs.get(r.jobId) ?? []), r]);
+  }
+
+  const href = (next: { stage?: StudyStage; all?: boolean }) => {
+    const q = new URLSearchParams();
+    if (next.all) q.set("all", "1");
+    if (next.stage) q.set("stage", next.stage);
+    const s = q.toString();
+    return `/studies${s ? `?${s}` : ""}`;
+  };
+  const chip = (active: boolean) =>
+    cn(
+      "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm",
+      active
+        ? "border-primary bg-primary text-primary-foreground"
+        : "border-border bg-surface hover:border-primary",
+    );
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
       <PageHeader
-        title={everyone ? "All studies on site" : "My studies"}
-        description="Studies of jobs that are ready, in field work, waiting for data or for post-calibration. Open one to place loggers, record times, take photos, send in the logger data and post-calibrate."
-      />
-      {can(actor, "jobs.manage") ? (
-        <nav aria-label="Show" className="flex gap-1 text-sm">
-          {[
-            ["", "Mine"],
-            ["1", "Everyone's"],
-          ].map(([v, l]) => (
-            <Link
-              key={v}
-              href={v ? "/studies?all=1" : "/studies"}
-              aria-current={(v === "1") === everyone ? "page" : undefined}
-              className={cn(
-                "rounded-full border px-3 py-1",
-                (v === "1") === everyone
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "border-border",
-              )}
+        title="Studies"
+        description={
+          everyone
+            ? "Every team's studies, by job. The button on each says what to do next."
+            : "The studies you're on, by job. The button on each says what to do next."
+        }
+        action={
+          can(actor, "jobs.manage") ? (
+            <nav
+              aria-label="Whose"
+              className="flex rounded-full border border-border p-0.5 text-sm"
             >
-              {l}
-            </Link>
-          ))}
-        </nav>
-      ) : null}
-      {rows.length === 0 ? (
+              {[
+                [false, "Mine"],
+                [true, "Everyone's"],
+              ].map(([v, l]) => (
+                <Link
+                  key={String(v)}
+                  href={href({ stage, all: v as boolean })}
+                  aria-current={v === everyone ? "page" : undefined}
+                  className={cn(
+                    "rounded-full px-3 py-1",
+                    v === everyone
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {l as string}
+                </Link>
+              ))}
+            </nav>
+          ) : undefined
+        }
+      />
+
+      {all.length === 0 ? (
         <EmptyState
           icon={ThermometerSnowflake}
-          title="Nothing on site for you"
-          description="Studies appear here when you are on the team of a job that is Ready, in Field Work or waiting for data."
+          title="No studies for you"
+          description="Studies appear here when you are on the team of a job that is Ready, in field work, or waiting for data."
         />
       ) : (
         <>
-          <Group title="Data to send or check" rows={data} />
-          <Group title="Post-calibration to do" rows={post} />
-          <Group title="To analyse" rows={analyse} />
-          <Group title="Today" rows={today} />
-          <Group title="Coming up" rows={later} />
-          <Group title="Done" rows={done} />
+          <nav aria-label="Stage" className="flex flex-wrap gap-2">
+            <Link
+              href={href({ all: everyone })}
+              aria-current={!stage ? "page" : undefined}
+              className={chip(!stage)}
+            >
+              To do <span className="tabular opacity-80">{open.length}</span>
+            </Link>
+            {STAGES.map((s) =>
+              count(s) ? (
+                <Link
+                  key={s}
+                  href={href({ stage: s, all: everyone })}
+                  aria-current={stage === s ? "page" : undefined}
+                  className={chip(stage === s)}
+                >
+                  {STAGE_LABELS[s]} <span className="tabular opacity-80">{count(s)}</span>
+                </Link>
+              ) : null,
+            )}
+          </nav>
+
+          {jobs.size === 0 ? (
+            <p className="rounded-lg border border-border bg-surface px-4 py-6 text-center text-sm text-muted-foreground">
+              Nothing here.{" "}
+              {stage ? (
+                <Link href={href({ all: everyone })} className="text-primary hover:underline">
+                  Show what&apos;s to do
+                </Link>
+              ) : (
+                "Every study is done."
+              )}
+            </p>
+          ) : (
+            [...jobs.values()].map((rows) => <JobGroup key={rows[0]!.jobId} rows={rows} />)
+          )}
         </>
       )}
     </div>
   );
 }
 
-/** Ended on site but the data isn't confirmed yet (or asked for): the data provider's list. */
-const waiting = (r: MyStudy) =>
-  r.request !== null || (r.status === "completed" && r.dataStatus !== "received");
-
-function Group({ title, rows }: { title: string; rows: MyStudy[] }) {
-  if (rows.length === 0) return null;
+function JobGroup({ rows }: { rows: Row[] }) {
+  const job = rows[0]!;
   return (
-    <section aria-labelledby={`g-${title}`} className="flex flex-col gap-2">
-      <h2 id={`g-${title}`} className="text-sm font-semibold text-muted-foreground">
-        {title} ({rows.length})
-      </h2>
-      <ul className="flex flex-col gap-2">
+    <section
+      aria-label={`Job ${job.jobNumber}`}
+      className="overflow-hidden rounded-lg border border-border bg-surface"
+    >
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-surface-muted/60 px-4 py-2 text-sm">
+        <Link href={`/jobs/${job.jobId}`} className="font-semibold hover:underline">
+          {job.jobNumber}
+        </Link>
+        <span className="min-w-0 truncate text-muted-foreground">
+          {job.companyName} · {job.siteName}
+        </span>
+        <span className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+          {job.today ? (
+            <span className="rounded-full bg-primary px-2 py-0.5 font-medium text-primary-foreground">
+              Today
+            </span>
+          ) : null}
+          <span className="tabular">
+            {dmy(job.plannedStart)}
+            {job.plannedEnd !== job.plannedStart ? ` – ${dmy(job.plannedEnd)}` : ""}
+          </span>
+        </span>
+      </header>
+      <ul className="divide-y divide-border">
         {rows.map((r) => (
           <li key={r.id}>
             <Link
-              href={
-                waiting(r)
-                  ? `/studies/${r.id}?tab=data`
-                  : r.status === "completed" && r.postCalLeft > 0
-                    ? `/studies/${r.id}?tab=postcal`
-                    : r.toAnalyse
-                      ? `/studies/${r.id}?tab=analysis`
-                      : `/studies/${r.id}`
-              }
-              className="flex flex-col gap-1 rounded-lg border border-border bg-surface p-4 hover:border-primary"
+              href={`/studies/${r.id}?tab=${r.next.tab}`}
+              className="group flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5 hover:bg-surface-muted/60"
             >
-              <span className="flex items-center justify-between gap-2">
-                <strong className="text-lg">{r.equipmentCode}</strong>
-                <StatusBadge
-                  tone={
-                    r.status === "completed"
-                      ? "pass"
-                      : r.status === "in_progress"
-                        ? "info"
-                        : "neutral"
-                  }
+              <span className="flex min-w-0 flex-1 basis-56 flex-col">
+                <span className="truncate text-sm">
+                  <span className="font-semibold">{r.equipmentCode}</span>{" "}
+                  <span className="text-muted-foreground">{r.equipmentName}</span>
+                </span>
+                {r.department || r.next.detail ? (
+                  <span className="truncate text-xs text-muted-foreground">
+                    {[r.department, r.next.detail ? `Asked for: ${r.next.detail}` : ""]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
+                ) : null}
+              </span>
+              {r.next.stage === "site" && r.positions > 0 ? (
+                <span
+                  className="flex w-28 items-center gap-2 text-xs text-muted-foreground"
+                  title={`${r.placed} of ${r.positions} loggers placed`}
                 >
-                  {STUDY_STATUS_LABELS[r.status]}
-                </StatusBadge>
-              </span>
-              <span className="text-sm">{r.equipmentName}</span>
-              <span className="text-sm text-muted-foreground">
-                {r.companyName} · {r.siteName}
-                {r.department ? ` · ${r.department}` : ""}
-              </span>
-              {r.request ? (
-                <span className="rounded-md bg-attention-soft px-2 py-1 text-sm text-attention">
-                  Data needed: {r.request}
-                </span>
-              ) : r.dataStatus === "issues" ? (
-                <span className="text-sm text-fail">The data has problems: see Data.</span>
-              ) : r.status === "completed" && r.dataStatus === "none" ? (
-                <span className="text-sm text-attention">Logger data not uploaded yet.</span>
-              ) : r.status === "completed" && r.dataStatus === "checked" ? (
-                <span className="text-sm text-info">Data checked: waiting to be confirmed.</span>
-              ) : r.toAnalyse && r.postCalLeft === 0 ? (
-                <span className="text-sm text-info">
-                  Data confirmed:{" "}
-                  {r.jobStatus === "analysis" ? "analysis under way" : "ready to analyse"}.
-                </span>
-              ) : r.status === "completed" && r.postCalLeft > 0 ? (
-                <span className="text-sm text-attention">
-                  {r.postCalLeft} logger{r.postCalLeft === 1 ? "" : "s"} to post-calibrate.
+                  <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-muted">
+                    <span
+                      className="block h-full rounded-full bg-primary"
+                      style={{ width: `${Math.round((100 * r.placed) / r.positions)}%` }}
+                    />
+                  </span>
+                  <span className="tabular">
+                    {r.placed}/{r.positions}
+                  </span>
                 </span>
               ) : null}
-              <span className="text-xs text-muted-foreground">
-                {r.jobNumber} · {dmy(r.plannedStart)}
-                {r.plannedEnd !== r.plannedStart ? `–${dmy(r.plannedEnd)}` : ""} ·{" "}
-                {r.positions === 0
-                  ? "no layout yet"
-                  : `${r.placed} of ${r.positions} loggers placed`}
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-sm font-medium",
+                  BUTTON[r.next.tone],
+                )}
+              >
+                {r.next.label}
+                <ChevronRight
+                  className="size-4 transition-transform group-hover:translate-x-0.5"
+                  aria-hidden="true"
+                />
               </span>
             </Link>
           </li>

@@ -304,7 +304,7 @@ export function DataPanel({ data: d }: { data: StudyData }) {
                       run(
                         () => requestDataAction(d.study.id, asking),
                         () =>
-                          "Request sent: it shows on the team's My studies, and the job is in Data issue until it's answered.",
+                          "Request sent: it shows on the team's Studies list, and the job is in Data issue until it's answered.",
                         () => setAsking(null),
                       )
                     }

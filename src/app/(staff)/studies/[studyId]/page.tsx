@@ -181,7 +181,7 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
           className="inline-flex w-fit items-center gap-1 text-sm text-muted-foreground hover:text-primary"
         >
           <ChevronLeft className="size-4" aria-hidden="true" />
-          My studies
+          Studies
         </Link>
       ) : (
         <Link
