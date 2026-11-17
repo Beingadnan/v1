@@ -21,7 +21,7 @@ import { JOB_STATUS_LABELS, ORDER_TYPE_SHORT, type OrderType } from "@/domain/jo
 import { requirePermission } from "@/lib/auth/dal";
 import { cn } from "@/lib/utils";
 
-import { dateRange, rupees, statusTone } from "./display";
+import { dashDate, rupees, statusTone } from "./display";
 
 export const metadata = { title: "Jobs" };
 
@@ -190,7 +190,8 @@ function JobTable({ rows, money }: { rows: JobListRow[]; money: boolean }) {
           <TableHead>Job</TableHead>
           <TableHead>Client</TableHead>
           <TableHead>Equipment</TableHead>
-          <TableHead>Dates</TableHead>
+          <TableHead>Start date</TableHead>
+          <TableHead>End date</TableHead>
           <TableHead>Status</TableHead>
           {money ? <TableHead className="text-right">PO value</TableHead> : null}
         </TableRow>
@@ -224,9 +225,8 @@ function JobTable({ rows, money }: { rows: JobListRow[]; money: boolean }) {
                 {r.equipmentCodes.join(", ")}
               </span>
             </TableCell>
-            <TableCell className="whitespace-nowrap">
-              {dateRange(r.plannedStart, r.plannedEnd)}
-            </TableCell>
+            <TableCell className="tabular whitespace-nowrap">{dashDate(r.plannedStart)}</TableCell>
+            <TableCell className="tabular whitespace-nowrap">{dashDate(r.plannedEnd)}</TableCell>
             <TableCell>
               <StatusBadge tone={statusTone(r.status)}>{JOB_STATUS_LABELS[r.status]}</StatusBadge>
             </TableCell>

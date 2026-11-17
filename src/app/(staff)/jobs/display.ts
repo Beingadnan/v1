@@ -24,19 +24,15 @@ export function statusTone(status: JobStatus): StatusTone {
   }
 }
 
-const short = (iso: string) => {
+/** "12-10-2026": a job's start or end date as QA Tech reads it on the board (Nov 2026). */
+export function dashDate(iso: string): string {
   const [y, m, d] = iso.split("-");
-  return { y, m, d };
-};
+  return `${d}-${m}-${y}`;
+}
 
-/** "02–05.11.2026", "28.11–02.12.2026" or one day "02.11.2026". */
+/** "12-10-2026 to 19-10-2026", or one day "12-10-2026". */
 export function dateRange(start: string, end: string): string {
-  const a = short(start);
-  const b = short(end);
-  if (start === end) return `${b.d}.${b.m}.${b.y}`;
-  if (a.y !== b.y) return `${a.d}.${a.m}.${a.y}–${b.d}.${b.m}.${b.y}`;
-  if (a.m !== b.m) return `${a.d}.${a.m}–${b.d}.${b.m}.${b.y}`;
-  return `${a.d}–${b.d}.${b.m}.${b.y}`;
+  return start === end ? dashDate(start) : `${dashDate(start)} to ${dashDate(end)}`;
 }
 
 const inr = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 });
