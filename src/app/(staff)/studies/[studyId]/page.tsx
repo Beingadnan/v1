@@ -23,17 +23,22 @@ import { LayoutEditor } from "./layout-editor";
 import { ShowActiveTab } from "./show-active-tab";
 import { LoggerPanel } from "./logger-panel";
 import { PrecalPanel } from "./precal-panel";
+import { ConfirmData } from "./confirm-data";
+import { StudyPeriod } from "./study-period";
 import { TimesPanel } from "./times-panel";
 
 export const metadata = { title: "Study" };
 
-/** The study's steps, in the order QA Tech does them; each is a tab. */
+/**
+ * The study's steps, in the order QA Tech does them; each is a tab. The data
+ * comes before Start & end (Nov 2026): the report's period is chosen from it.
+ */
 const TABS = [
   { key: "layout", label: "Positions" },
   { key: "loggers", label: "Loggers" },
   { key: "precal", label: "Pre-cal" },
-  { key: "times", label: "Start & end" },
   { key: "data", label: "Data" },
+  { key: "times", label: "Start & end" },
   { key: "postcal", label: "Post-cal" },
   { key: "analysis", label: "Analysis" },
   { key: "report", label: "Report" },
@@ -43,7 +48,7 @@ type Tab = (typeof TABS)[number]["key"];
 /** What the Data, Analysis, Post-cal and Report tabs read beyond the study itself. */
 async function tabData(actor: SessionUser, studyId: string, tab: Tab) {
   const [data, analysis, report] = await Promise.all([
-    tab === "data" ? getStudyData(db, actor, studyId) : null,
+    tab === "data" || tab === "times" ? getStudyData(db, actor, studyId) : null,
     tab === "analysis" || tab === "postcal" ? getStudyAnalysis(db, actor, studyId) : null,
     tab === "report" ? getStudyReport(db, actor, studyId) : null,
   ]);
@@ -96,8 +101,11 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
     layout: s.positions.length > 0,
     loggers: s.positions.length > 0 && placed === s.positions.length,
     precal: placed > 0 && preDone >= placed,
-    times: s.cycles.length > 0 && s.cycles.every((c) => c.done),
-    data: s.study.dataStatus === "received",
+    // Uploaded with nothing wrong left; Start & end is done once the period is chosen and
+    // the data confirmed for it.
+    data: s.study.dataStatus === "checked" || s.study.dataStatus === "received",
+    times:
+      s.cycles.length > 0 && s.cycles.every((c) => c.done) && s.study.dataStatus === "received",
     postcal: placed > 0 && postDone >= placed,
     analysis: !!s.study.analysisApprovedAt,
     report: [
@@ -117,10 +125,19 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
   const tab: Tab = named && tabs.some((t) => t.key === named) ? named : current;
   const { data, analysis, report } = early ?? (await tabData(actor, studyId, tab));
   const stepLabel = (k: Tab) => TABS.find((t) => t.key === k)!.label;
+  // The uploaded data's first and last reading, for choosing the report's period.
+  const live = data?.files.filter((f) => !f.replaced && f.first && f.last) ?? [];
+  const span = live.length
+    ? {
+        from: Math.min(...live.map((f) => new Date(f.first!).getTime())),
+        to: Math.max(...live.map((f) => new Date(f.last!).getTime())),
+      }
+    : null;
+  const periodOpen = ["ready", "field_work", "data_issue", "data_received"].includes(s.job.status);
 
   // The one thing to do now, in plain words.
   const waitingForJob =
-    s.job.status === "created" && ["loggers", "precal", "times"].includes(current);
+    s.job.status === "created" && ["loggers", "precal", "data", "times"].includes(current);
   const NEXT: Record<Tab, { title: string; text: string }> = {
     layout: {
       title: "Lay out the positions",
@@ -134,18 +151,16 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
       title: "Record the pre-calibration",
       text: `Compare each logger with the master before the study starts. ${preDone} of ${placed} done.`,
     },
-    times: {
-      title: "Start and end the study",
-      text: "Tap Start when the loggers start recording, and End when the study is over.",
-    },
     data: {
       title: s.study.dataStatus === "issues" ? "Fix the data problems" : "Upload the logger data",
       text:
         s.study.dataStatus === "issues"
           ? "The uploaded data has gaps or errors: accept each with a reason, or upload again."
-          : s.study.dataStatus === "checked"
-            ? "The data is checked: set the study period if needed, then confirm it is received."
-            : "Upload the loggers' export, set the study period, then confirm it is received.",
+          : "Upload the loggers' export. Next you choose, from that data, the start and end the report covers.",
+    },
+    times: {
+      title: "Choose the report's start and end",
+      text: "Pick from the uploaded data the hours the report covers, e.g. 12-11-2026 12:00 AM for 24 h. Then confirm the data.",
     },
     postcal: {
       title: "Record the post-calibration",
@@ -303,7 +318,7 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
         ) : null}
       </section>
 
-      {!onSite && ["layout", "loggers", "precal", "times"].includes(tab) && !waitingForJob ? (
+      {!onSite && ["layout", "loggers", "precal"].includes(tab) && !waitingForJob ? (
         <p className="rounded-md bg-attention-soft px-3 py-2 text-sm text-attention">
           {s.job.status === "created"
             ? "Positions can be prepared now; loggers and times wait until the job is Ready."
@@ -387,16 +402,66 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
           <ReportPanel r={report} />
         ) : null
       ) : tab === "times" ? (
-        <TimesPanel
-          studyId={studyId}
-          readOnly={!canWork || !onSite}
-          canStart={s.positions.length > 0 && placed === s.positions.length}
-          durationHours={s.study.durationHours}
-          cycles={s.cycles}
-          thermal={s.study.workType === "thermal_validation"}
-          plannedStart={s.job.plannedStart}
-          plannedEnd={s.job.plannedEnd}
-        />
+        <div className="flex flex-col gap-4">
+          {span && data ? (
+            <>
+              <StudyPeriod
+                studyId={studyId}
+                periods={data.periods}
+                dataFrom={span.from}
+                dataTo={span.to}
+                durationHours={s.study.durationHours}
+                canSet={data.can.accept && periodOpen}
+              />
+              {data.can.accept && data.study.dataStatus === "checked" && periodOpen ? (
+                <ConfirmData
+                  studyId={studyId}
+                  jobNumber={s.job.number}
+                  periodSet={s.cycles.every((c) => c.done)}
+                />
+              ) : data.study.dataStatus === "issues" ? (
+                <p className="rounded-md bg-attention-soft px-3 py-2 text-sm text-attention">
+                  The data has problems for this period:{" "}
+                  <Link href={`/studies/${studyId}?tab=data`} className="underline">
+                    resolve them in Data
+                  </Link>
+                  , then confirm it here.
+                </p>
+              ) : data.study.dataStatus === "received" ? (
+                <p className="text-sm text-pass">
+                  Data confirmed for this period by {data.study.receivedBy}.
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <p className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
+              Upload the logger data first: the report&apos;s start and end are chosen from it.{" "}
+              <Link href={`/studies/${studyId}?tab=data`} className="text-primary underline">
+                Go to Data
+              </Link>
+            </p>
+          )}
+          <details
+            className="rounded-lg border border-border bg-surface p-3"
+            open={!span && onSite}
+          >
+            <summary className="cursor-pointer text-sm font-semibold">
+              Site log: start, end, door and power taps on site (optional)
+            </summary>
+            <div className="mt-3">
+              <TimesPanel
+                studyId={studyId}
+                readOnly={!canWork || !onSite}
+                canStart={s.positions.length > 0 && placed === s.positions.length}
+                durationHours={s.study.durationHours}
+                cycles={s.cycles}
+                thermal={s.study.workType === "thermal_validation"}
+                plannedStart={s.job.plannedStart}
+                plannedEnd={s.job.plannedEnd}
+              />
+            </div>
+          </details>
+        </div>
       ) : tab === "data" ? (
         data ? (
           <DataPanel data={data} />

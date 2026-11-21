@@ -1033,7 +1033,9 @@ export async function recordPrecal(
       throw new FieldError(`${inst.code} wasn't used on the ${e.code} study.`);
     }
     if (post && study.status !== "completed") {
-      throw new FieldError(`End the ${e.code} study (Times) before post-calibration.`);
+      throw new FieldError(
+        `Set the start and end of the ${e.code} study (Start & end) before post-calibration.`,
+      );
     }
     if (v.masterId) {
       const [m] = await tx

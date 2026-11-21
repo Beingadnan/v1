@@ -44,7 +44,7 @@ async function loggerExport(gap = false) {
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
-test("phase 6 exit test: the team leader uploads FE-WF-03's data, a 30-min gap sends the job to Data issue, accepting it with a reason clears it, and confirming moves the job to Data received", async ({
+test("phase 6 exit test: the team leader uploads FE-WF-03's data, a 30-min gap sends the job to Data issue, accepting it with a reason clears it, the report period is chosen from the data, and confirming moves the job to Data received", async ({
   page,
   isMobile,
 }) => {
@@ -104,8 +104,23 @@ test("phase 6 exit test: the team leader uploads FE-WF-03's data, a 30-min gap s
     .fill("Logger battery swap; 30 min excluded, see DEV-E2E-01");
   await page.getByRole("button", { name: "Accept", exact: true }).click();
   await expect(page.getByText("Accepted, with the reason recorded.")).toBeVisible();
+
+  // Then Start & end: the report's period is chosen from the data, then confirmed.
+  await page.getByRole("link", { name: "Next: choose the report's start and end" }).click();
+  await expect(page.getByRole("heading", { name: "Report period" })).toBeVisible();
+  await expect(page.getByText(/^Uploaded data: .* \(30 h\)$/)).toBeVisible();
+  await page.getByRole("button", { name: "Change" }).click();
+  await page.getByRole("button", { name: "24 h" }).click();
+  await expect(page.getByText(/: 24 h\.$/)).toBeVisible();
+  await page.getByLabel("Why does it change?").fill("Report the 24 h the loggers ran");
+  await page.getByRole("button", { name: "Save the period" }).click();
+  await expect(
+    page.getByText("Report period saved; the data is checked again for it."),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Confirm the data is complete" }).click();
   await expect(page.getByText(/the job is now Data received/)).toBeVisible();
+  await expect(page.getByText("Data confirmed for this period by Tarun Lead.")).toBeVisible();
+  await page.getByRole("link", { name: /^Data/ }).first().click();
   await expect(page.getByText(/^Confirmed by Tarun Lead/)).toBeVisible();
 
   // The original files can be downloaded as uploaded.

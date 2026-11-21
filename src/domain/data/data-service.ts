@@ -27,7 +27,8 @@ import type { SessionUser } from "@/domain/auth/session-service";
 import { isUuid } from "@/domain/clients/shared";
 import { cycleProgress, cyclesOf, studyStatusFrom } from "@/domain/field/field-service";
 import { STUDY_FLOW, type StudyStatus } from "@/domain/field/types";
-import { lockJob, setStatus } from "@/domain/jobs/job-service";
+import { lockJob, readinessInputFor, setStatus } from "@/domain/jobs/job-service";
+import { computeReadiness } from "@/domain/jobs/readiness";
 import { JOB_STATUS_LABELS, type JobStatus } from "@/domain/jobs/types";
 import { recordAudit } from "@/lib/audit";
 import { machine, move } from "@/lib/state-machine";
@@ -74,16 +75,40 @@ async function load(tx: Transaction, actor: SessionUser, studyId: string): Promi
   return { study: row.study, job, code: row.code };
 }
 
-function assertOpen(l: Loaded, what: string) {
+/**
+ * Data can be worked on while the job is in the field or after. Uploading the
+ * data and setting the study period also work on a Ready job (QA Tech, Nov
+ * 2026: the data comes first, and the period is chosen from it), and move the
+ * job into field work; nobody has to have tapped Start on site.
+ */
+function assertOpen(l: Loaded, what: string, opensFieldWork = false) {
   const s = l.job.status as JobStatus;
-  if (!DATA_OPEN.includes(s)) {
+  if (!DATA_OPEN.includes(s) && !(opensFieldWork && s === "ready")) {
     throw new DataError(
       `${what} isn't possible while job ${l.job.number} is ${JOB_STATUS_LABELS[s]?.toLowerCase() ?? s}.`,
     );
   }
-  if (l.study.status === "planned") {
-    throw new DataError(`The ${l.code} study hasn't started on site yet.`);
+}
+
+/** A Ready job goes into field work when its first data or period comes in. */
+async function openFieldWork(
+  tx: Transaction,
+  actor: SessionUser,
+  l: Loaded,
+  why: string,
+  request?: RequestInfo,
+) {
+  if (l.job.status !== "ready") return;
+  const readiness = computeReadiness(await readinessInputFor(tx, actor.organisationId, l.job));
+  if (!readiness.ready) {
+    throw new DataError(
+      `Job ${l.job.number} isn't ready for field work: ${readiness.items
+        .filter((i) => i.state === "pending" && i.blocking)
+        .map((i) => i.label)
+        .join(", ")}.`,
+    );
   }
+  await setStatus(tx, actor, l.job, "field_work", why, request);
 }
 
 // ---------------------------------------------------------------- the check
@@ -380,7 +405,8 @@ export async function addDataFile(
 
   return db.transaction(async (tx) => {
     const l = await load(tx, actor, studyId);
-    assertOpen(l, "Uploading data");
+    assertOpen(l, "Uploading data", true);
+    await openFieldWork(tx, actor, l, `Logger data uploaded for ${l.code}`, request);
     let replaced: { id: string; fileName: string } | null = null;
     if (input.replaces) {
       const [old] = await tx
@@ -661,7 +687,8 @@ export async function setStudyPeriod(
   const reason = input.reason.trim().slice(0, 300);
   return db.transaction(async (tx) => {
     const l = await load(tx, actor, studyId);
-    assertOpen(l, "Setting the study period");
+    assertOpen(l, "Setting the study period", true);
+    await openFieldWork(tx, actor, l, `Study period of ${l.code} set from the data`, request);
     const thermal = l.study.workType === "thermal_validation";
     const cycles = cyclesOf(l.study);
     if (!cycles.includes(input.cycle as (typeof cycles)[number])) {
@@ -947,7 +974,9 @@ export async function markReceived(
     const l = await load(tx, actor, studyId);
     assertOpen(l, "Confirming data");
     if (l.study.status !== "completed") {
-      throw new DataError(`End the ${l.code} study on site (Times) before confirming its data.`);
+      throw new DataError(
+        `Set the start and end of the ${l.code} study (Start & end) before confirming its data.`,
+      );
     }
     if (l.study.dataStatus === "received") {
       // Two people (or two tabs) confirming at once: the second is told, not recorded twice.

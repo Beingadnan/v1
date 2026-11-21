@@ -1,6 +1,13 @@
 "use client";
 
-import { Download, FileSpreadsheet, MessageSquareWarning, Upload } from "lucide-react";
+import {
+  ChevronRight,
+  Download,
+  FileSpreadsheet,
+  MessageSquareWarning,
+  Upload,
+} from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 
@@ -15,13 +22,11 @@ import {
   addDataAction,
   closeRequestAction,
   matchAction,
-  receivedAction,
   removeFileAction,
   requestDataAction,
   withdrawAction,
 } from "../data-actions";
 import { Sparkline } from "./sparkline";
-import { StudyPeriod } from "./study-period";
 
 const when = (d: Date | number | null) =>
   d === null
@@ -85,19 +90,15 @@ export function DataPanel({ data: d }: { data: StudyData }) {
   const [removing, setRemoving] = useState<{ id: string; reason: string } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const status = statusOf(d);
-  const open = !["field_work", "data_issue", "data_received"].includes(d.study.jobStatus)
-    ? `Job ${d.study.jobNumber} has moved on; the data can't be changed here.`
-    : d.study.status === "planned"
-      ? "The study hasn't started on site yet."
+  // A Ready job takes its first upload too: the data comes before the period (Nov 2026).
+  const open = ["created", "on_hold"].includes(d.study.jobStatus)
+    ? `Job ${d.study.jobNumber} isn't ready for field work yet: data can be uploaded once it is.`
+    : !["ready", "field_work", "data_issue", "data_received"].includes(d.study.jobStatus)
+      ? `Job ${d.study.jobNumber} has moved on; the data can't be changed here.`
       : null;
   const canImport = d.can.import && !open;
   const canAccept = d.can.accept && !open;
   const current = d.files.filter((f) => !f.replaced);
-  const spans = current.filter((f) => f.first && f.last);
-  const dataFrom = spans.length
-    ? Math.min(...spans.map((f) => new Date(f.first!).getTime()))
-    : null;
-  const dataTo = spans.length ? Math.max(...spans.map((f) => new Date(f.last!).getTime())) : null;
   const history = d.files.filter((f) => f.replaced);
 
   const run = <T,>(
@@ -177,48 +178,16 @@ export function DataPanel({ data: d }: { data: StudyData }) {
           </p>
         ) : null}
         {open ? <p className="text-sm text-muted-foreground">{open}</p> : null}
-        {d.study.dataStatus === "checked" && !canAccept && !open ? (
-          <p className="text-sm text-muted-foreground">
-            Nothing is wrong. A team leader or manager confirms the data next.
-          </p>
-        ) : null}
-        {d.study.dataStatus === "checked" && canAccept ? (
-          <div className="flex flex-col gap-1">
-            <Button
-              type="button"
-              disabled={busy || d.study.status !== "completed"}
-              onClick={() =>
-                run(
-                  () => receivedAction(d.study.id),
-                  (r) =>
-                    r &&
-                    "jobStatus" in (r as object) &&
-                    (r as { jobStatus: string }).jobStatus === "data_received"
-                      ? `Data confirmed. Every study on job ${d.study.jobNumber} is in: the job is now Data received.`
-                      : "Data confirmed.",
-                )
-              }
-            >
-              Confirm the data is complete
-            </Button>
-            {d.study.status !== "completed" ? (
-              <p className="text-xs text-muted-foreground">
-                Set the study period below (or end the study in Times) first.
-              </p>
-            ) : null}
-          </div>
+        {d.study.dataStatus === "checked" ? (
+          <Link
+            href={`/studies/${d.study.id}?tab=times`}
+            className="inline-flex min-h-10 w-fit items-center gap-1 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground"
+          >
+            Next: choose the report&apos;s start and end
+            <ChevronRight className="size-4" aria-hidden="true" />
+          </Link>
         ) : null}
       </section>
-
-      {current.length > 0 ? (
-        <StudyPeriod
-          studyId={d.study.id}
-          periods={d.periods}
-          dataFrom={dataFrom}
-          dataTo={dataTo}
-          canSet={canAccept}
-        />
-      ) : null}
 
       {/* Requests to the site */}
       {d.requests.some((r) => !r.closedAt) || canAccept ? (
