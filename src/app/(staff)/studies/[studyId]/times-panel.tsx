@@ -299,27 +299,33 @@ export function TimesPanel({
                       if (k === "power_on") return off > 0;
                       return opened <= 0 && off <= 0; // end
                     })
-                    .map((k) => (
-                      <Button
-                        key={k}
-                        type="button"
-                        size="lg"
-                        variant={k === "start" || k === "end" ? "primary" : "secondary"}
-                        disabled={busy || (k === "start" && !canStart)}
-                        onClick={() => record(c, k)}
-                      >
-                        {k === "start"
-                          ? `Start ${c.label.toLowerCase()}`
-                          : k === "end"
-                            ? confirmEnd === c.cycle
-                              ? "End anyway"
-                              : `End ${c.label.toLowerCase()}`
-                            : EVENT_LABELS[k]}
-                      </Button>
-                    ))}
+                    .map((k) => {
+                      // A typed time shows on the button, so it's plain which time is recorded.
+                      const typed = custom[c.cycle] ? new Date(custom[c.cycle]!) : null;
+                      const at =
+                        typed && !Number.isNaN(typed.getTime()) ? ` at ${time(typed)}` : "";
+                      return (
+                        <Button
+                          key={k}
+                          type="button"
+                          size="lg"
+                          variant={k === "start" || k === "end" ? "primary" : "secondary"}
+                          disabled={busy || (k === "start" && !canStart)}
+                          onClick={() => record(c, k)}
+                        >
+                          {k === "start"
+                            ? `Start ${c.label.toLowerCase()}${at}`
+                            : k === "end"
+                              ? confirmEnd === c.cycle
+                                ? `End anyway${at}`
+                                : `End ${c.label.toLowerCase()}${at}`
+                              : `${EVENT_LABELS[k]}${at}`}
+                        </Button>
+                      );
+                    })}
                 </div>
                 <label className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                  Happened earlier? Time:
+                  Happened earlier? Date and time:
                   <Input
                     ref={(el) => {
                       typedInputs.current[c.cycle] = el;
@@ -336,7 +342,7 @@ export function TimesPanel({
                       className="text-primary underline"
                       onClick={() => setCustom((m) => ({ ...m, [c.cycle]: "" }))}
                     >
-                      use now
+                      clear (record the time of the tap)
                     </button>
                   ) : null}
                 </label>
