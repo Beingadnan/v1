@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { FormMessage, TextField, useFormAction } from "@/components/ui/form-kit";
 import { Input } from "@/components/ui/form-controls";
 import { UploadFile } from "@/components/ui/upload-file";
+import { parseCodes } from "@/domain/jobs/booking";
 import type { BookingChoices, BookingLogger, LoggerState } from "@/domain/jobs/job-service";
 import { cn } from "@/lib/utils";
 
@@ -275,10 +276,8 @@ export function BookingPicker({ jobId, choices }: { jobId: string; choices: Book
           label="IDs or serials, or a range like T-TRH001 – T-TRH024"
           multiline
           onChange={(e) => {
-            const all = e.currentTarget.value
-              .split(/[\n,;]+/)
-              .map((x) => x.trim())
-              .filter(Boolean);
+            // The same reading as the server's: spaces, tabs, commas, lines, ranges.
+            const all = parseCodes(e.currentTarget.value);
             setPicked(all);
             setNote(
               need > 0 && have + all.length > need

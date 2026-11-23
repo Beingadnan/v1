@@ -278,6 +278,25 @@ describe("pickInstruments", () => {
       "84028451",
     ]);
   });
+
+  it("expands a pasted range, as the booking box offers (Nov 2026)", () => {
+    expect(parseCodes("T-TRH001 – T-TRH004")).toEqual([
+      "T-TRH001",
+      "T-TRH002",
+      "T-TRH003",
+      "T-TRH004",
+    ]);
+    expect(parseCodes("TRH-3615-TRH-3617, 84028479")).toEqual([
+      "TRH-3615",
+      "TRH-3616",
+      "TRH-3617",
+      "84028479",
+    ]);
+    // Space-separated serials, as typed or pasted from one Excel row.
+    expect(parseCodes("83562089 84034958 84866839")).toHaveLength(3);
+    // Backwards, or different prefixes: left as written.
+    expect(parseCodes("T-TRH009 - T-TRH002")).toEqual(["T-TRH009", "T-TRH002"]);
+  });
 });
 
 describe("job value", () => {

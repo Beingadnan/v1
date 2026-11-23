@@ -115,14 +115,30 @@ export function pickInstruments(input: {
   };
 }
 
-/** Pasted IDs or serials, one per line or separated by commas, tabs or spaces. */
+/** "T-TRH001 – T-TRH024" or "TRH-3615-TRH-3640": the same prefix, numbers going up. */
+const RANGE = /([A-Za-z][A-Za-z0-9._/-]*?)(\d+)\s*[-–—]\s*\1(\d+)/g;
+
+/**
+ * Pasted IDs or serials, one per line or separated by commas, tabs or spaces;
+ * a range of IDs is expanded (at most 500 IDs, like a booking).
+ */
 export function parseCodes(text: string): string[] {
+  const expanded = text.replace(RANGE, (whole, prefix: string, a: string, b: string) => {
+    const from = Number(a);
+    const to = Number(b);
+    if (!(to > from) || to - from >= 500) return whole;
+    const width = a.length;
+    return Array.from(
+      { length: to - from + 1 },
+      (_, i) => `${prefix}${String(from + i).padStart(width, "0")}`,
+    ).join(" ");
+  });
   return [
     ...new Set(
-      text
+      expanded
         .split(/[\s,;]+/)
         .map((s) => s.trim())
-        .filter(Boolean),
+        .filter((s) => s && !/^[-–—]+$/.test(s)),
     ),
   ];
 }
