@@ -254,6 +254,29 @@ function quantityOf(header: string): Quantity {
   return /%\s*rh|\brh\b|humid|%/i.test(header) ? "rh" : "temp";
 }
 
+/**
+ * Some exports keep the day's date for a few rows after midnight while the
+ * time has moved on (the Testo export behind PR-04, Nov 2026: "12.11.2026"
+ * beside 00:00 to 00:25). A reading that falls almost a day behind the one
+ * before it is that: it moves forward a day. Changes `times` in place;
+ * returns how many rows moved and the first one's new time.
+ */
+export function rollPastMidnight(times: number[]): { rows: number; first: number } | null {
+  const DAY = 86_400_000;
+  let rows = 0;
+  let first = 0;
+  for (let i = 1; i < times.length; i += 1) {
+    const step = times[i]! - times[i - 1]!;
+    // Back by a day less one plausible reading interval (up to 6 h).
+    if (step < 0 && step + DAY > 0 && step + DAY <= 6 * 3_600_000) {
+      times[i] = times[i]! + DAY;
+      if (rows === 0) first = times[i]!;
+      rows += 1;
+    }
+  }
+  return rows > 0 ? { rows, first } : null;
+}
+
 // ------------------------------------------------------------------ sheet
 
 function parseSheet(sheet: Sheet): ParsedSheet | null {
@@ -311,6 +334,17 @@ function parseSheet(sheet: Sheet): ParsedSheet | null {
     });
   }
   if (times.length < 2) return null;
+  const rolled = rollPastMidnight(times);
+  if (rolled) {
+    const day = new Date(rolled.first + IST_OFFSET_MS).toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "short",
+      timeZone: "UTC",
+    });
+    notes.push(
+      `${rolled.rows} row${rolled.rows === 1 ? "" : "s"} after midnight still carried the day before's date: read as ${day}.`,
+    );
+  }
   const lastDataRow = sourceRows[sourceRows.length - 1]! + 1;
 
   // Channel columns: mostly numbers in the readings, not an index column.

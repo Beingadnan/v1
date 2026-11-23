@@ -192,6 +192,35 @@ describe("messy input", () => {
     expect(r.best.times[1]! - r.best.times[0]!).toBe(10 * 60_000);
   });
 
+  it("rolls past midnight when the Date column lags behind the time (PR-04 export)", () => {
+    // The Testo export behind PR-04 kept "28.11.2026" for six rows after
+    // midnight; its Time cells, as the reader gives them (31 Dec 1899 23:55,
+    // then 1 Jan 1900 00:00), had moved on.
+    const t = (day: number, h: number, m: number) => new Date(Date.UTC(1899, 11, 30 + day, h, m));
+    const r = parseWorkbook(
+      sheet([
+        ["Date", "Time", 83562089, 84034958],
+        [null, null, "°C", "°C"],
+        ["28.11.2026", t(1, 23, 40), 4.5, 4.5],
+        ["28.11.2026", t(1, 23, 45), 4.6, 4.6],
+        ["28.11.2026", t(1, 23, 50), 4.7, 4.7],
+        ["28.11.2026", t(1, 23, 55), 4.6, 4.6],
+        ["28.11.2026", t(2, 0, 0), 4.3, 4.3],
+        ["28.11.2026", t(2, 0, 5), 4.6, 4.6],
+        ["29.11.2026", t(2, 0, 10), 4.7, 4.7],
+        ["29.11.2026", t(2, 0, 15), 4.4, 4.4],
+      ]),
+    );
+    if (!r.ok) throw new Error(r.error);
+    expect(r.best.times.map((x) => x - r.best.times[0]!)).toEqual(
+      [0, 5, 10, 15, 20, 25, 30, 35].map((m) => m * 60_000),
+    );
+    expect(r.best.times[4]).toBe(ist("2026-11-29T00:00:00"));
+    expect(r.best.notes.join(" ")).toMatch(
+      /2 rows after midnight still carried the day before's date: read as 29 Nov/,
+    );
+  });
+
   it("refuses a sheet with no readings, saying why", () => {
     const r = parseWorkbook(sheet([["Report"], ["Customer", "Watson"]]));
     expect(r).toMatchObject({ ok: false, error: expect.stringContaining("No readings found") });
