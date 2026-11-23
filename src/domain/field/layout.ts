@@ -279,10 +279,15 @@ export function projector(
   frame: { width: number; height: number; margin: number },
 ) {
   // Unknown sizes draw as the sketch's shape, or a cube.
-  const { L, W, H } = sizeOf(dims);
+  const { L: trueL, W, H } = sizeOf(dims);
+  // A tall, narrow cabinet (a fridge, 0.6 x 0.6 x 1.8 m) drawn to scale leaves a
+  // level's labels no room: they were pushed outside it (PR-04, Nov 2026). It is
+  // drawn wider and deeper instead, like a sketch; the sizes printed stay true.
+  const narrow = trueL < 0.8 * H;
+  const L = narrow ? 0.8 * H : trueL;
   // The depth is drawn shortened (at most half the length and height), so a
   // back corner never lands on a front one, as when drawn by hand.
-  const depth = Math.min(W * 0.35, L * 0.5, H * 0.5);
+  const depth = narrow ? 0.45 * L : Math.min(W * 0.35, L * 0.5, H * 0.5);
   const dx = depth;
   const dy = depth;
   const spanX = L + dx;

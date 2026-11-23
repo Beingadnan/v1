@@ -14,6 +14,7 @@ import {
   parseRoomSize,
   planProjector,
   projector,
+  spreadLabels,
   templateLayout,
 } from "./layout";
 import { evaluatePrecal } from "./precal";
@@ -191,6 +192,29 @@ describe("helpers", () => {
     // The front bottom-left corner is left of and below the back top-right one.
     expect(p({ x: 0, y: 0, z: 0 }).x).toBeLessThan(p({ x: 1, y: 1, z: 1 }).x);
     expect(p({ x: 0, y: 0, z: 0 }).y).toBeGreaterThan(p({ x: 1, y: 1, z: 1 }).y);
+  });
+
+  it("leaves room for every label on a tall, narrow fridge (PR-04, Nov 2026)", () => {
+    // 0.6 x 0.6 x 1.8 m drawn to scale put a level's nine labels in 80 x 20 points;
+    // spreading them threw L-04, L-05, L-06 and L-08 outside the cabinet.
+    const dims = { lengthM: 0.6, widthM: 0.6, heightM: 1.8 };
+    const p = projector(dims, { width: 515, height: 330, margin: 46 });
+    const points = templateLayout(16, dims, { room: false })
+      .filter((q) => !q.ambient)
+      .map((q) => ({ ...p(q), label: q.label }));
+    // No label has to move to make room.
+    expect(spreadLabels(points, { w: 30, h: 13 })).toEqual(points);
+    // The hot and cold captions (54 points wide) of two neighbours on a row don't touch.
+    const row = points.filter((q) => ["L-13", "L-14", "L-15"].includes(q.label));
+    expect(row.length).toBe(3);
+    expect(Math.abs(row[1]!.x - row[0]!.x)).toBeGreaterThanOrEqual(54);
+    // Every label inside the drawn box's outline.
+    const corners = BOX_EDGES.flat().map(p);
+    const xs = corners.map((c) => c.x);
+    for (const q of points) {
+      expect(q.x).toBeGreaterThan(Math.min(...xs));
+      expect(q.x).toBeLessThan(Math.max(...xs));
+    }
   });
 
   it("offers each cycle's markers in order", () => {
