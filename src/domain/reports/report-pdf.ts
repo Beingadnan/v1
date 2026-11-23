@@ -15,6 +15,7 @@ import {
 } from "@/domain/field/layout";
 import { drawPlan } from "@/domain/field/plan-pdf";
 import type { PlanFeature } from "@/domain/field/types";
+import { brandMark } from "@/lib/pdf/brand-logo";
 
 import { underShortName, withShortName } from "./org-name";
 import type { Assessed } from "./templates";
@@ -322,11 +323,7 @@ class Builder {
       }
     }
     const org = d.organisation;
-    doc
-      .font("Helvetica-Bold")
-      .fontSize(18)
-      .fillColor("#1f3a68")
-      .text(ascii(org.shortName || org.legalName), M, y + 6, { width: this.content / 2 });
+    brandMark(doc, org, M, y, 46);
     doc
       .font("Helvetica")
       .fontSize(7)
@@ -348,7 +345,7 @@ class Builder {
         y,
         { width: this.content / 2, align: "right" },
       );
-    y = Math.max(doc.y, y + 44) + 4;
+    y = Math.max(doc.y, y + 48) + 4;
     doc
       .lineWidth(1)
       .strokeColor("#1f3a68")
@@ -1317,22 +1314,25 @@ class Builder {
     const cols: [string, number][] = hasRh
       ? [
           ["Sensor Positions", w * 0.16],
-          ["Min Temp (°C)", w * 0.14],
-          ["Max Temp.(°C)", w * 0.14],
-          ["Average Temp.(°C)", w * 0.14],
-          ["Min RH (%)", w * 0.14],
-          ["Max RH (%)", w * 0.14],
-          ["Average RH (%)", w * 0.14],
+          ["Min Temp (°C)", w * 0.12],
+          ["Max Temp.(°C)", w * 0.12],
+          ["Average Temp.(°C)", w * 0.12],
+          ["MKT (°C)", w * 0.12],
+          ["Min RH (%)", w * 0.12],
+          ["Max RH (%)", w * 0.12],
+          ["Average RH (%)", w * 0.12],
         ]
       : [
-          ["Sensor Positions", w * 0.25],
-          ["Min Temp (°C)", w * 0.25],
-          ["Max Temp.(°C)", w * 0.25],
-          ["Average Temp.(°C)", w * 0.25],
+          ["Sensor Positions", w * 0.2],
+          ["Min Temp (°C)", w * 0.2],
+          ["Max Temp.(°C)", w * 0.2],
+          ["Average Temp.(°C)", w * 0.2],
+          ["MKT (°C)", w * 0.2],
         ];
+    // Two lines high, so "Average Temp.(°C)" fits beside the MKT column.
     const head = () =>
       this.row(
-        14,
+        20,
         cols.map(([t, cw]) => [t, cw, { align: "center" }] as [string, number, CellOpts]),
       );
     this.ensure(30, "body");
@@ -1349,12 +1349,14 @@ class Builder {
         [stat(p.temp, "min"), cols[1]![1], { align: "center" }],
         [stat(p.temp, "max"), cols[2]![1], { align: "center" }],
         [stat(p.temp, "avg"), cols[3]![1], { align: "center" }],
+        // Mean kinetic temperature from every reading (USP <1079.2>), as on the Analysis tab.
+        [p.temp?.mkt != null ? p.temp.mkt.toFixed(2) : "-", cols[4]![1], { align: "center" }],
       ];
       if (hasRh) {
         cells.push(
-          [stat(p.rh, "min"), cols[4]![1], { align: "center" }],
-          [stat(p.rh, "max"), cols[5]![1], { align: "center" }],
-          [stat(p.rh, "avg"), cols[6]![1], { align: "center" }],
+          [stat(p.rh, "min"), cols[5]![1], { align: "center" }],
+          [stat(p.rh, "max"), cols[6]![1], { align: "center" }],
+          [stat(p.rh, "avg"), cols[7]![1], { align: "center" }],
         );
       }
       const rowY = this.y;

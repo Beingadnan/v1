@@ -37,6 +37,7 @@ import {
 import type { SessionUser } from "@/domain/auth/session-service";
 import { certificatesOf } from "@/domain/instruments/certificate-service";
 import { renderFt05 } from "@/domain/instruments/ft05-pdf";
+import { printedMasters } from "@/domain/instruments/printed-masters";
 import { getCertificate } from "@/domain/instruments/queries";
 import { certificateCovering } from "@/domain/instruments/validity";
 import { WORK_TYPE_LABELS, type WorkType } from "@/domain/jobs/types";
@@ -129,24 +130,45 @@ export async function reportContext(db: Exec, actor: SessionUser, study: Study, 
       certificateCovering(certs.get(p.instrumentId!) ?? [], isoDay(start)),
     ]),
   );
+  // What each covering certificate says about its instruments and masters: a logger
+  // registered without a model (a list imported before its certificates) takes its
+  // name, make, range and accuracy from the certificate (QA Tech's PR-04, Nov 2026).
+  const certIds = [...new Set([...covering.values()].flatMap((c) => (c ? [c.id] : [])))];
+  const certInfo = new Map(
+    (certIds.length === 0
+      ? []
+      : await db
+          .select({
+            id: certificates.id,
+            equipmentName: certificates.equipmentName,
+            make: certificates.make,
+            rangeText: certificates.rangeText,
+            accuracyText: certificates.accuracyText,
+            remarks: certificates.remarks,
+          })
+          .from(certificates)
+          .where(inArray(certificates.id, certIds))
+    ).map((c) => [c.id, c]),
+  );
   const loggers = placed.map((p) => {
     const i = p.inst!;
     const c = covering.get(p.instrumentId!);
-    const name = i.equipmentName || p.model?.equipmentName || "Data Logger";
-    const make = i.make || p.model?.make || "";
+    const onCert = c ? certInfo.get(c.id) : undefined;
+    const name =
+      i.equipmentName || p.model?.equipmentName || onCert?.equipmentName || "Data Logger";
+    const make = i.make || p.model?.make || onCert?.make || "";
     return {
       label: p.label,
       serial: i.serialNo || i.code,
       name: make ? `${name} (${make})` : name,
-      range: i.rangeText || p.model?.rangeText || "",
-      accuracy: i.accuracyText || p.model?.accuracyText || "",
+      range: i.rangeText || p.model?.rangeText || onCert?.rangeText || "",
+      accuracy: i.accuracyText || p.model?.accuracyText || onCert?.accuracyText || "",
       calibratedOn: c?.calibratedOn ?? null,
       validUntil: c?.validUntil ?? null,
     };
   });
 
   // The masters that calibrated those loggers, from the certificates' traceability.
-  const certIds = [...new Set([...covering.values()].flatMap((c) => (c ? [c.id] : [])))];
   const masterRows =
     certIds.length === 0
       ? []
@@ -166,6 +188,17 @@ export async function reportContext(db: Exec, actor: SessionUser, study: Study, 
           .where(inArray(certificateMasters.certificateId, certIds))
           .orderBy(asc(certificateMasters.position));
   const masters = [...new Map(masterRows.map((m) => [m.masterCertificateId, m])).values()];
+  // Masters printed on imported workbooks but not in the register: listed from the
+  // certificates' remarks, once per certificate number.
+  const listed = new Set(masters.map((m) => m.certNumber.toLowerCase()));
+  const printed = certIds
+    .flatMap((id) => printedMasters(certInfo.get(id)?.remarks))
+    .filter((m) => {
+      const key = m.certificate.toLowerCase();
+      if (listed.has(key)) return false;
+      listed.add(key);
+      return true;
+    });
 
   const serialOf = new Map(placed.map((p) => [p.id, p.inst!.serialNo || p.inst!.code]));
   const reviews = await db
@@ -245,6 +278,7 @@ export async function reportContext(db: Exec, actor: SessionUser, study: Study, 
     placed,
     loggers,
     masters,
+    printed,
     covering,
     template,
     devs,
@@ -338,12 +372,20 @@ export async function reportData(
     })),
     planFeatures: study.planFeatures,
     loggers: ctx.loggers,
-    masters: ctx.masters.map((m) => ({
-      name: m.inst.equipmentName || m.inst.code,
-      make: m.inst.make,
-      serial: m.inst.serialNo,
-      certificate: m.certNumber,
-    })),
+    masters: [
+      ...ctx.masters.map((m) => ({
+        name: m.inst.equipmentName || m.inst.code,
+        make: m.inst.make,
+        serial: m.inst.serialNo,
+        certificate: m.certNumber,
+      })),
+      ...ctx.printed.map((m) => ({
+        name: m.name,
+        make: m.make,
+        serial: m.serial,
+        certificate: m.certificate,
+      })),
+    ],
     result: run.result,
     series: engine.series.map((s) => ({
       positionId: s.positionId,

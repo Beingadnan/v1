@@ -39,6 +39,7 @@ import {
   type PlannedFullCertificate,
   type Snapshot,
 } from "./instrument-import";
+import { printedMasterLine } from "./printed-masters";
 import { isInstrumentType, type InstrumentType, type Quantity } from "./types";
 
 /** Rows per INSERT: well under Postgres's 65,535-parameter limit. */
@@ -519,10 +520,7 @@ export async function applyInstrumentImport(
             remarks: [
               `Imported from ${file.firstFileName} (${c.sheets.join(", ")}).`,
               ...(c.note ? [c.note] : []),
-              ...unlinked.map(
-                (m) =>
-                  `Reference standard as printed: ${m.label}, certificate ${m.certificateNo}${m.validUntil ? `, due ${m.validUntil}` : ""}.`,
-              ),
+              ...unlinked.map(printedMasterLine),
             ].join("\n"),
             createdByUserId: actor.id,
           })

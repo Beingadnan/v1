@@ -9,6 +9,7 @@ import { BOX_EDGES, mm, projector, spreadLabels, type Point } from "./layout";
 import { drawPlan } from "./plan-pdf";
 import type { FieldStudy } from "./queries";
 import { EVENT_LABELS, type EventKind } from "./types";
+import { brandMark } from "@/lib/pdf/brand-logo";
 
 /**
  * Sensor location sheet (form QATM/PVAL/FT-12): the box drawn with its sizes
@@ -123,11 +124,7 @@ export async function renderFt12(s: FieldStudy, ctx: Ft12Context): Promise<Buffe
     }
   }
   if (!printedImage) {
-    doc
-      .font("Helvetica-Bold")
-      .fontSize(15)
-      .fillColor("#1f3a68")
-      .text(ascii(org.shortName || org.legalName), PAGE.margin, y, { width: CONTENT / 2 });
+    brandMark(doc, org, PAGE.margin, y, 38);
     doc
       .font("Helvetica")
       .fontSize(7.5)
@@ -145,7 +142,7 @@ export async function renderFt12(s: FieldStudy, ctx: Ft12Context): Promise<Buffe
           align: "right",
         },
       );
-    y = Math.max(doc.y, y + 36) + 4;
+    y = Math.max(doc.y, y + 40) + 4;
     doc
       .lineWidth(1)
       .strokeColor("#1f3a68")

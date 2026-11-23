@@ -6,6 +6,7 @@ import { decimalPlaces, DECISION_RULE_TEXT } from "./calibration-math";
 import { dmy, toPlaces } from "./display";
 import type { CertificateDetail } from "./queries";
 import { INSTRUMENT_TYPE_INFO, type InstrumentType } from "./types";
+import { brandMark } from "@/lib/pdf/brand-logo";
 
 /**
  * QA Tech's calibration certificate (form QATM/PVAL/FT-05) as a PDF, laid out
@@ -128,11 +129,10 @@ class Sheet {
       }
     }
     const org = ctx.organisation;
-    doc.font("Helvetica-Bold").fontSize(15).fillColor("#1f3a68");
-    doc.text(ascii(org.shortName || org.legalName), PAGE.margin, this.y, { width: CONTENT / 2 });
+    brandMark(doc, org, PAGE.margin, this.y, 34);
     doc.font("Helvetica").fontSize(7.5).fillColor("#333333");
     if (org.shortName && org.legalName !== org.shortName) {
-      doc.text(ascii(org.legalName), PAGE.margin, doc.y + 1, { width: CONTENT / 2 });
+      doc.text(ascii(org.legalName), PAGE.margin, this.y + 39, { width: CONTENT / 2 });
     }
     const right = [
       org.address,
@@ -147,7 +147,7 @@ class Sheet {
       width: CONTENT / 2,
       align: "right",
     });
-    this.y = Math.max(doc.y, this.y + 44) + 6;
+    this.y = Math.max(doc.y, this.y + 52) + 6;
     doc
       .lineWidth(1)
       .strokeColor("#1f3a68")

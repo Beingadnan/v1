@@ -3,6 +3,7 @@ import "server-only";
 import PDFDocument from "pdfkit";
 
 import type { SignBox } from "@/domain/reports/types";
+import { brandMark } from "@/lib/pdf/brand-logo";
 
 /** What the work completion report prints. */
 export type WcrData = {
@@ -93,11 +94,7 @@ export async function renderWcr(d: WcrData): Promise<{ pdf: Buffer; signBox: Sig
       }
     }
     if (!drawn) {
-      doc
-        .font("Helvetica-Bold")
-        .fontSize(18)
-        .fillColor("#1f3a68")
-        .text(ascii(d.organisation.shortName || d.organisation.legalName), M, y + 4);
+      brandMark(doc, d.organisation, M, y, 44);
       doc
         .font("Helvetica")
         .fontSize(7)
