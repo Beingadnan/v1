@@ -25,5 +25,9 @@ describe("dates and times as typed", () => {
 
   it("shows an instant the way it is typed, in India time", () => {
     expect(toTypedParts("2026-08-01T06:00:00Z")).toEqual(["01-08-2026", "11:30 AM"]);
+    // Noon and midnight as people write them, on every ICU build.
+    expect(toTypedParts("2026-11-12T06:30:00Z")).toEqual(["12-11-2026", "12:00 PM"]);
+    expect(toTypedParts("2026-11-12T18:30:00Z")).toEqual(["13-11-2026", "12:00 AM"]);
+    expect(toTypedParts("2026-11-12T19:35:00Z")).toEqual(["13-11-2026", "01:05 AM"]);
   });
 });

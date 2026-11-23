@@ -41,13 +41,17 @@ export function toTypedParts(at: Date | string | number): [string, string] {
       year: "numeric",
       hour: "2-digit",
       minute: "2-digit",
-      hour12: true,
+      // 0–23 from Intl, then 12-hour by hand: with hour12 some ICU builds
+      // (Node on macOS, Nov 2026) print noon as "00:00 PM", others "12:00 PM",
+      // and the page didn't hydrate.
+      hourCycle: "h23",
     })
       .formatToParts(new Date(at))
       .map((p) => [p.type, p.value]),
   );
+  const h = Number(parts.hour) % 24;
   return [
     `${parts.day}-${parts.month}-${parts.year}`,
-    `${parts.hour}:${parts.minute} ${String(parts.dayPeriod).toUpperCase()}`,
+    `${String(h % 12 || 12).padStart(2, "0")}:${parts.minute} ${h < 12 ? "AM" : "PM"}`,
   ];
 }
