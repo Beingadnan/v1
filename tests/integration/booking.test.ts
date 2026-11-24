@@ -13,7 +13,11 @@ import { createCompany } from "@/domain/clients/company-service";
 import { createEquipment } from "@/domain/clients/equipment-service";
 import { getCompany } from "@/domain/clients/queries";
 import { createExternalCertificate } from "@/domain/instruments/certificate-service";
-import { bulkAddInstruments, saveModel } from "@/domain/instruments/instrument-service";
+import {
+  bulkAddInstruments,
+  createInstrument,
+  saveModel,
+} from "@/domain/instruments/instrument-service";
 import {
   autoBook,
   bookByCodes,
@@ -261,5 +265,142 @@ describe("booking by hand", () => {
     const out = (await gatePassList(db, manager, jobId))!;
     expect(out.pdf.subarray(0, 5).toString()).toBe("%PDF-");
     expect(out.fileName).toMatch(/^Gate pass list QT-\d{2}-\d{4}-\d{4}\.pdf$/);
+  });
+});
+
+describe("booking the master for pre/post-calibration", () => {
+  // QA Tech, Nov 2026: "No logger could be booked. Still short of 1 temperature
+  // master." didn't say what to fix.
+  let job: string;
+  const why = (r: Awaited<ReturnType<typeof autoBook>>) =>
+    r.short.find((s) => s.type === "temperature master")?.why ?? "";
+
+  it("says when no master that measures temperature is in the register", async () => {
+    // A client that wants post-calibration, so the job needs a master.
+    const watson = (
+      await createCompany(
+        db,
+        manager,
+        {
+          name: "Watson",
+          code: "Watson",
+          gstin: "",
+          address: "",
+          notes: "",
+          postCalRequired: true,
+          requalificationMonths: 12,
+          reportNumberFormat: "{CLIENT}/{SITE}/{MM}/{YY}/{EQUIPMENT_ID}",
+          firstSite: {
+            name: "Ambernath",
+            code: "AMB",
+            address: "",
+            city: "",
+            state: "",
+            gstin: "",
+          },
+        },
+        req,
+      )
+    ).id;
+    const site = (await getCompany(db, manager, watson))!.sites[0]!.id;
+    const fridge = (
+      await createEquipment(
+        db,
+        manager,
+        watson,
+        {
+          siteId: site,
+          code: "PR-02",
+          name: "Refrigerator",
+          type: "refrigerator",
+          departmentId: null,
+          location: "",
+          make: "",
+          model: "",
+          serialNo: "",
+          lengthM: "",
+          widthM: "",
+          heightM: "",
+          setPointC: "5",
+          tempMinC: "2",
+          tempMaxC: "8",
+          rhMinPct: "",
+          rhMaxPct: "",
+          defaultChannels: "16",
+          readingIntervalMinutes: "5",
+          studyDurationHours: "24",
+          requalificationMonths: "",
+          lastStudyOn: "",
+          notes: "",
+        } as never,
+        req,
+      )
+    ).id;
+    job = (
+      await createJob(
+        db,
+        manager,
+        {
+          companyId: watson,
+          clientSiteId: site,
+          plannedStart: inDays(80),
+          plannedEnd: inDays(82),
+          items: [{ equipmentId: fridge }],
+        },
+        req,
+      )
+    ).id;
+    await recordGatePass(db, manager, job, { number: "GP-M1" }, req);
+    const r = await autoBook(db, manager, job, req);
+    expect(r.masters).toEqual([]);
+    expect(why(r)).toMatch(/^No master that measures it is in the register/);
+  });
+
+  it("says when the master's certificate runs out before the job", async () => {
+    const id = (
+      await createInstrument(
+        db,
+        manager,
+        {
+          type: "reference_thermometer",
+          tier: "master",
+          code: "SSPRT-BK1",
+          serialNo: "S9701/59",
+          make: "Isotech",
+          model: "935",
+        },
+        req,
+      )
+    ).id;
+    await createExternalCertificate(
+      db,
+      manager,
+      {
+        number: "ARAI/CAL/2508/2925",
+        ulrNo: "",
+        labName: "ARAI",
+        calibratedOn: inDays(-300),
+        validUntil: inDays(30),
+        instrumentIds: [id],
+      },
+      req,
+    );
+    const r = await autoBook(db, manager, job, req);
+    expect(r.masters).toEqual([]);
+    expect(why(r)).toMatch(/^SSPRT-BK1 is valid only until \d\d\.\d\d\.\d{4}\.$/);
+    await createExternalCertificate(
+      db,
+      manager,
+      {
+        number: "ARAI/CAL/2608/0001",
+        ulrNo: "",
+        labName: "ARAI",
+        calibratedOn: inDays(-1),
+        validUntil: inDays(364),
+        instrumentIds: [id],
+      },
+      req,
+    );
+    expect((await autoBook(db, manager, job, req)).masters).toEqual(["SSPRT-BK1"]);
   });
 });

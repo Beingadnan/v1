@@ -240,7 +240,7 @@ export default async function JobPage({ params }: PageProps<"/jobs/[jobId]">) {
     next = {
       title: `Book ${needed} logger${needed === 1 ? "" : "s"}${mastersNeeded ? " and the masters" : ""}`,
       text: mastersNeeded
-        ? `Loggers for the studies, and a master for pre/post-calibration: ${masters.length} booked.`
+        ? `Loggers for the studies (${loggers.length} of ${needed} booked), and a master for pre/post-calibration (${masters.length ? `${masters.length} booked` : "none booked yet"}).`
         : "One logger per position in the studies.",
       body: (
         <div className="flex flex-col gap-3">

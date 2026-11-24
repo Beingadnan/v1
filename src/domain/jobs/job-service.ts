@@ -1173,7 +1173,8 @@ function assertCanBook(job: Job) {
 
 export type AutoBookResult = {
   booked: string[];
-  short: { type: string; count: number }[];
+  /** `why` says why a master couldn't be booked, so the lab knows what to fix. */
+  short: { type: string; count: number; why?: string }[];
   skipped: { reason: string; count: number }[];
   masters: string[];
 };
@@ -1273,7 +1274,11 @@ export async function autoBook(
           result.masters.push(m.code);
           bookedNow.push(m);
         } else {
-          result.short.push({ type: `${q} master`, count: 1 });
+          result.short.push({
+            type: `${q} master`,
+            count: 1,
+            why: whyNoMaster(pool, measures, job),
+          });
         }
       }
     }
@@ -1293,6 +1298,29 @@ export async function autoBook(
     await syncReadiness(tx, actor, job, request);
     return result;
   });
+}
+
+/**
+ * Why no master measuring a quantity could be booked: none in the register,
+ * all on other jobs, or none calibrated for the job's dates (QA Tech, Nov 2026:
+ * "Still short of 1 temperature master" alone didn't say what to fix).
+ */
+function whyNoMaster(
+  pool: Candidate[],
+  measures: (c: { type: string }) => boolean,
+  job: Job,
+): string {
+  const masters = pool.filter(measures);
+  if (masters.length === 0) {
+    return "No master that measures it is in the register. Add it under Instruments, marked as a master, with its certificate.";
+  }
+  const reasons = masters.map((m) => {
+    const v = validThrough(m, job.plannedStart, job.plannedEnd);
+    if (!v.ok) return v.reason;
+    if (m.busyOn.length > 0) return `${m.code} is on another job then`;
+    return `${m.code} is already on this job`;
+  });
+  return `${reasons.slice(0, 4).join("; ")}${reasons.length > 4 ? `; and ${reasons.length - 4} more` : ""}.`;
 }
 
 export type ManualBookResult = {

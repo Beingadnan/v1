@@ -603,13 +603,15 @@ export function AutoBookButton({ jobId, label }: { jobId: string; label: string 
           {all.length > 0
             ? `Booked ${all.length}: ${shortList(all)}.`
             : short
-              ? "No logger could be booked."
+              ? r.short.every((s) => s.type.endsWith("master"))
+                ? "No master could be booked."
+                : "Nothing could be booked."
               : "Everything needed is already booked."}
         </p>
         {r.short.map((s) => (
           <p key={s.type}>
             Still short of {s.count} {s.type.replace(/_/g, " ")}
-            {s.count === 1 ? "" : "s"}.
+            {s.count === 1 ? "" : "s"}.{s.why ? ` ${s.why}` : ""}
           </p>
         ))}
         {r.skipped.length > 0 ? (
