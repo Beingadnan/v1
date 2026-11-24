@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/form-controls";
 import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
 import type { StudyData } from "@/domain/data/queries";
+import { uploadFailure } from "@/lib/upload-message";
 import { cn } from "@/lib/utils";
 
 import {
@@ -136,7 +137,7 @@ export function DataPanel({ data: d }: { data: StudyData }) {
       return;
     }
     if (!res.ok || !json.id) {
-      setFeedback({ ok: false, text: json.error ?? "The file couldn't be uploaded." });
+      setFeedback({ ok: false, text: uploadFailure(res.status, json.error, file.name) });
       return;
     }
     const replaces = replacing?.id;

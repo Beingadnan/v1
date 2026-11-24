@@ -4,6 +4,7 @@ import { Paperclip } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { uploadFailure } from "@/lib/upload-message";
 
 /**
  * Uploads one file (PDF or photo) as soon as it is picked and puts its id in
@@ -35,7 +36,7 @@ export function UploadFile({
       const res = await fetch("/api/files", { method: "POST", body });
       const json = (await res.json().catch(() => ({}))) as { id?: string; error?: string };
       if (res.status === 401) setErr("You were signed out. Sign in again, then retry.");
-      else if (!res.ok || !json.id) setErr(json.error ?? "The file couldn't be uploaded.");
+      else if (!res.ok || !json.id) setErr(uploadFailure(res.status, json.error, f.name));
       else setFile({ id: json.id, name: f.name });
     } catch {
       setErr("No connection. Try again when you're online.");
