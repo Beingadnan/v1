@@ -206,3 +206,43 @@ describe("checks", () => {
     expect(intervalOf([0, 10, 20, 40, 50].map((m) => m * MIN))).toBe(10);
   });
 });
+
+describe("calibration through the period the data gives", () => {
+  // QA Tech, Nov 2026: the job's dates are only a reminder; the study's dates come
+  // from the data, so each logger's certificate is judged against those.
+  const withCerts = (certs: { calibratedOn: string; validUntil: string | null }[]) => ({
+    ...base,
+    positions: positions.map((p, i) =>
+      i === 0 ? { ...p, logger: { ...p.logger!, certificates: certs } } : p,
+    ),
+    channels: SERIALS.map((s) => channel(s)),
+  });
+  const calibration = (r: ReturnType<typeof checkData>) =>
+    r.issues.filter((i) => i.kind === "out_of_calibration").map((i) => i.message);
+
+  it("is quiet when a certificate covers the data's period", () => {
+    expect(
+      calibration(checkData(withCerts([{ calibratedOn: "2025-06-01", validUntil: "2026-05-31" }]))),
+    ).toEqual([]);
+    expect(
+      calibration(checkData(withCerts([{ calibratedOn: "2025-06-01", validUntil: null }]))),
+    ).toEqual([]);
+  });
+
+  it("stops a logger whose certificate runs out during the data's period", () => {
+    const r = checkData(withCerts([{ calibratedOn: "2025-05-22", validUntil: "2026-05-22" }]));
+    expect(calibration(r)).toEqual([
+      "L-01 (E-TRH0001, 62281257): its certificate is valid only until 22.05.2026, but study runs 22 May, 22:30 to 23 May, 00:30.",
+    ]);
+    expect(r.issues.find((i) => i.kind === "out_of_calibration")!.severity).toBe("blocker");
+  });
+
+  it("stops a logger calibrated after the data starts, or with no certificate", () => {
+    expect(
+      calibration(checkData(withCerts([{ calibratedOn: "2026-05-23", validUntil: "2027-05-22" }]))),
+    ).toEqual([
+      "L-01 (E-TRH0001, 62281257): its certificate starts 23.05.2026, but study runs 22 May, 22:30 to 23 May, 00:30.",
+    ]);
+    expect(calibration(checkData(withCerts([])))[0]).toMatch(/has no certificate in force/);
+  });
+});

@@ -109,16 +109,25 @@ test("phase 6 exit test: the team leader uploads FE-WF-03's data, a 30-min gap s
   await page.getByRole("link", { name: "Next: choose the report's start and end" }).click();
   await expect(page.getByRole("heading", { name: "Report period" })).toBeVisible();
   await expect(page.getByText(/^Uploaded data: .* \(30 h\)$/)).toBeVisible();
-  await page.getByRole("button", { name: "Change" }).click();
+  // The times tapped on site are only a log: the form opens on the data's first
+  // reading, and choosing the period the first time needs no reason.
+  await expect(page.getByText(/^Not chosen yet\. On site: /)).toBeVisible();
+  await expect(page.getByLabel("Why does it change?")).toHaveCount(0);
   await page.getByRole("button", { name: "24 h" }).click();
   await expect(page.getByText(/: 24 h\.$/)).toBeVisible();
-  await page.getByLabel("Why does it change?").fill("Report the 24 h the loggers ran");
+  // Not confirmable until the period is chosen.
+  await expect(page.getByRole("button", { name: "Confirm the data is complete" })).toBeDisabled();
   await page.getByRole("button", { name: "Save the period" }).click();
   await expect(
     page.getByText("Report period saved; the data is checked again for it."),
   ).toBeVisible();
   await page.getByRole("button", { name: "Confirm the data is complete" }).click();
-  await expect(page.getByText(/the job is now Data received/)).toBeVisible();
+  // The confirmation may be replaced by the refreshed page's own line straight away.
+  await expect(
+    page
+      .getByText(/the job is now Data received|^Data confirmed for this period by Tarun Lead\.$/)
+      .first(),
+  ).toBeVisible();
   await expect(page.getByText("Data confirmed for this period by Tarun Lead.")).toBeVisible();
   await page.getByRole("link", { name: /^Data/ }).first().click();
   await expect(page.getByText(/^Confirmed by Tarun Lead/)).toBeVisible();

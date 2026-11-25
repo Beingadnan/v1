@@ -12,6 +12,7 @@ import { eq, sql } from "drizzle-orm";
 import ExcelJS from "exceljs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { choosePeriodsAsLogged } from "@/db/seed/choose-period";
 import { auditLog, jobs, sites, studies, studyAnalysisRuns, users } from "@/db/schema";
 import { ensureOrganisation } from "@/db/seed/ensure-organisation";
 import {
@@ -320,6 +321,7 @@ describe("phase 7: analysis, post-calibration and deviations", () => {
     await expect(runAnalysis(db, preparer, studyId, req)).rejects.toThrow(
       /isn't possible while job .* is field work/,
     );
+    await choosePeriodsAsLogged(db, leader, studyId, req);
     await markReceived(db, leader, studyId, req);
     expect(await jobStatus()).toBe("data_received");
     await expect(runAnalysis(db, accounts, studyId, req)).rejects.toBeInstanceOf(ForbiddenError);

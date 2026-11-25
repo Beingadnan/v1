@@ -49,7 +49,7 @@ import { SketchReadError, type SketchReader } from "@/lib/ai/sketch-reader";
 import { recheckIfData } from "@/domain/data/data-service";
 
 import { FieldError } from "./errors";
-import { templateLayout } from "./layout";
+import { heightText, POSITION_LEVELS, templateLayout, zFromHeight } from "./layout";
 import {
   layoutFromRoom,
   matchRoom,
@@ -126,12 +126,26 @@ const layoutSchema = z
       z: z.coerce.number().min(0).max(1),
       note: z.string().trim().max(200).default(""),
       ambient: z.boolean().default(false),
+      level: z.enum(POSITION_LEVELS).nullish(),
+      heightCm: z
+        .number()
+        .min(0, "A height can't be below zero.")
+        .max(10000, "A height is at most 10000 cm.")
+        .nullish(),
+      heightFrom: z.enum(["bottom", "top"]).nullish(),
     }),
   )
   .max(500, "At most 500 positions per study.")
   .superRefine((points, ctx) => {
     const seen = new Set<string>();
     points.forEach((p, i) => {
+      if ((p.heightCm ?? null) !== null && !p.heightFrom) {
+        ctx.addIssue({
+          code: "custom",
+          path: [i, "heightFrom"],
+          message: `Say whether ${p.label}'s height is from the bottom or the top.`,
+        });
+      }
       const key = p.label.toLowerCase();
       if (seen.has(key)) {
         ctx.addIssue({ code: "custom", path: [i, "label"], message: `${p.label} is used twice.` });
@@ -234,15 +248,28 @@ export async function saveLayout(
     }
     const gone = current.filter((p) => !keep.has(p.label.toLowerCase())).map((p) => p.id);
     if (gone.length > 0) await tx.delete(studyPositions).where(inArray(studyPositions.id, gone));
+    const tall = e.heightM === null ? null : Number(e.heightM);
     for (const [sort, p] of points.entries()) {
+      // A measured height places the logger exactly, when the box's height is known.
+      const cm = p.ambient ? null : (p.heightCm ?? null);
+      const from = cm === null ? null : p.heightFrom!;
+      if (cm !== null && tall && cm > tall * 100) {
+        throw new FieldError(
+          `${p.label} is ${heightText(cm, from!)}, but ${e.code} is only ${Math.round(tall * 100)} cm tall.`,
+        );
+      }
+      const z = cm === null ? p.z : (zFromHeight(cm, from!, tall) ?? p.z);
       const values = {
         label: p.label,
         sort: sort + 1,
         x: String(p.x),
         y: String(p.y),
-        z: String(p.z),
+        z: String(z),
         note: p.note,
         ambient: p.ambient,
+        level: p.ambient ? null : (p.level ?? null),
+        heightCm: cm === null ? null : String(cm),
+        heightFrom: from,
       };
       const existing = byLabel.get(p.label.toLowerCase());
       if (existing) {
@@ -285,7 +312,16 @@ export async function saveLayout(
       entityId: study.id,
       summary: `${actor.name} saved the layout of ${e.code} on job ${job.number}: ${points.length} positions${marks}`,
       before: {
-        positions: current.map(({ label, x, y, z, ambient }) => ({ label, x, y, z, ambient })),
+        positions: current.map(({ label, x, y, z, ambient, level, heightCm, heightFrom }) => ({
+          label,
+          x,
+          y,
+          z,
+          ambient,
+          level,
+          heightCm,
+          heightFrom,
+        })),
         features: study.planFeatures,
         shape: study.roomShape,
       },
@@ -473,14 +509,10 @@ async function placementProblem(
   inst: Awaited<ReturnType<typeof findInstrument>>,
 ): Promise<string | null> {
   if (inst.tier === "master") return `${inst.code} is a master standard, not a logger.`;
-  const certs = await certificatesOf(tx, actor.organisationId, [inst.id]);
-  const valid = validThrough(
-    { ...inst, certificates: certs.get(inst.id) ?? [] },
-    job.plannedStart,
-    job.plannedEnd,
-  );
-  if (!valid.ok)
-    return `${valid.reason} (the study runs to ${job.plannedEnd.split("-").reverse().join(".")}).`;
+  // Calibration isn't judged here: the job's dates are only a reminder, and a study
+  // can be entered after the fact. The data's own period is checked against each
+  // logger's certificate once it is uploaded (QA Tech, Nov 2026).
+  if (inst.status !== "active") return `${inst.code} is not in use.`;
   const busy = (await busyInstruments(tx, actor.organisationId, job, [inst.id])).get(inst.id);
   if (busy) return `${inst.code} is booked on ${busy.join(", ")} on these dates.`;
   const [elsewhere] = await tx

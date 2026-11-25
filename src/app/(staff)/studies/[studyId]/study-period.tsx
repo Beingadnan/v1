@@ -11,7 +11,14 @@ import { cn } from "@/lib/utils";
 
 import { studyPeriodAction } from "../data-actions";
 
-type Period = { cycle: string; label: string; start: Date | null; end: Date | null };
+type Period = {
+  cycle: string;
+  label: string;
+  start: Date | null;
+  end: Date | null;
+  /** Chosen from the data; otherwise the times were tapped on site (a log), or none. */
+  fromData: boolean;
+};
 
 const show = (at: Date | number) => toTypedParts(at).join(", ");
 
@@ -97,12 +104,16 @@ function PeriodRow({
   const router = useRouter();
   const [busy, start] = useTransition();
   // Not set yet: the form is open straight away, filled from the data.
-  const [editing, setEditing] = useState(canSet && !(p.start && p.end));
+  // Until a period is chosen from the data, the form is open, filled from the data's
+  // first reading: the job's dates and times tapped on site are only a reminder.
+  const chosen = p.fromData && p.start !== null && p.end !== null;
+  const [editing, setEditing] = useState(canSet && !chosen);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [form, setForm] = useState(() => {
-    const begin = p.start?.getTime() ?? dataFrom;
+    const begin = (chosen ? p.start?.getTime() : null) ?? dataFrom;
     const planned = durationHours ? begin + durationHours * 3600_000 : null;
-    const finish = p.end?.getTime() ?? (planned && planned <= dataTo ? planned : dataTo);
+    const finish =
+      (chosen ? p.end?.getTime() : null) ?? (planned && planned <= dataTo ? planned : dataTo);
     const [sd, st] = toTypedParts(begin);
     const [ed, et] = toTypedParts(finish);
     return { sd, st, ed, et, reason: "" };
@@ -122,7 +133,7 @@ function PeriodRow({
         : from < dataFrom || to > dataTo
           ? "Part of this period is outside the uploaded data: those hours will show as missing readings."
           : null;
-  const needsReason = p.start !== null;
+  const needsReason = chosen;
 
   /** Sets the end to the start plus a number of hours. */
   function lengthOf(h: number) {
@@ -195,16 +206,18 @@ function PeriodRow({
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
         <p>
           {many ? <span className="font-medium">{p.label}: </span> : null}
-          {p.start && p.end ? (
+          {chosen ? (
             <>
-              {show(p.start)} to {show(p.end)}{" "}
+              {show(p.start!)} to {show(p.end!)}{" "}
               <span className="text-muted-foreground">
-                ({hours(p.start.getTime(), p.end.getTime())})
+                ({hours(p.start!.getTime(), p.end!.getTime())})
               </span>
             </>
           ) : p.start ? (
             <span className="text-attention">
-              Started {show(p.start)} on site, not ended. Choose the end from the data.
+              Not chosen yet. On site: {show(p.start)}
+              {p.end ? ` to ${show(p.end)}` : ", not ended"}. Choose the start and end from the
+              data.
             </span>
           ) : (
             <span className="text-attention">
@@ -218,7 +231,7 @@ function PeriodRow({
           </Button>
         ) : null}
       </div>
-      {!canSet && !(p.start && p.end) ? (
+      {!canSet && !chosen ? (
         <p className="text-xs text-muted-foreground">
           A team leader or manager chooses the period.
         </p>

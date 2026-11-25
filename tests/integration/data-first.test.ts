@@ -11,7 +11,7 @@ import { eq } from "drizzle-orm";
 import ExcelJS from "exceljs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { jobs, sites, studies, users } from "@/db/schema";
+import { certificates, jobs, sites, studies, users } from "@/db/schema";
 import { ensureOrganisation } from "@/db/seed/ensure-organisation";
 import { toSessionUser, type SessionUser } from "@/domain/auth/session-service";
 import { createCompany } from "@/domain/clients/company-service";
@@ -252,6 +252,7 @@ describe("the data first, then the report's period chosen from it", () => {
     const d = (await getStudyData(db, leader, studyId))!;
     const p = d.periods.find((x) => x.cycle === "routine")!;
     expect([p.start!.getTime(), p.end!.getTime()]).toEqual([from, to]);
+    expect(p.fromData).toBe(true);
     expect(d.windows[0]).toMatchObject({ start: from, end: to });
     expect(d.study.status).toBe("completed");
     expect(d.study.dataStatus).toBe("checked");
@@ -269,5 +270,34 @@ describe("the data first, then the report's period chosen from it", () => {
     await setStudyPeriod(db, leader, studyId, { ...input, reason: "report from noon" }, req);
     const p = (await getStudyData(db, leader, studyId))!.periods[0]!;
     expect([p.start!.getTime(), p.end!.getTime()]).toEqual([from, to]);
+  });
+  it("judges each logger's calibration on the data's dates, not the job's", async () => {
+    // The certificate runs out on the data's first day; the chosen period ends the next.
+    const day = new Date(dataStart + 330 * MIN).toISOString().slice(0, 10);
+    const [cert] = await db
+      .update(certificates)
+      .set({ validUntil: day })
+      .where(eq(certificates.number, "QATECH/BHIWANDI/11/26/DF-01"))
+      .returning({ id: certificates.id });
+    const from = dataStart + 12 * 60 * MIN;
+    const to = from + 24 * 60 * MIN;
+    await setStudyPeriod(
+      db,
+      leader,
+      studyId,
+      { cycle: "routine", start: istText(from), end: istText(to), reason: "recheck calibration" },
+      req,
+    );
+    const out = (await getStudyData(db, leader, studyId))!.issues.filter(
+      (i) => i.kind === "out_of_calibration",
+    );
+    expect(out).toHaveLength(serials.length);
+    expect(out[0]!.message).toMatch(
+      new RegExp(`its certificate is valid only until ${day.split("-").reverse().join("\\.")}`),
+    );
+    await db
+      .update(certificates)
+      .set({ validUntil: new Date(Date.now() + 300 * 86_400_000).toISOString().slice(0, 10) })
+      .where(eq(certificates.id, cert!.id));
   });
 });

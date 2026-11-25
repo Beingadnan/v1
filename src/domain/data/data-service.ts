@@ -2,7 +2,7 @@ import "server-only";
 
 import { reads } from "@/db/reads";
 
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 
 import type { Database, Transaction } from "@/db/client-factory";
 import {
@@ -25,6 +25,7 @@ import { assertCan } from "@/domain/auth/permissions";
 import type { RequestInfo } from "@/domain/auth/policy";
 import type { SessionUser } from "@/domain/auth/session-service";
 import { isUuid } from "@/domain/clients/shared";
+import { certificatesOf } from "@/domain/instruments/certificate-service";
 import { cycleProgress, cyclesOf, studyStatusFrom } from "@/domain/field/field-service";
 import { STUDY_FLOW, type StudyStatus } from "@/domain/field/types";
 import { lockJob, readinessInputFor, setStatus } from "@/domain/jobs/job-service";
@@ -126,7 +127,7 @@ export async function dataContext(
     .select({ id: studyDataFiles.id })
     .from(studyDataFiles)
     .where(and(eq(studyDataFiles.studyId, study.id), isNull(studyDataFiles.replacedAt)));
-  const [positions, files, events, channels] = await reads(tx, [
+  const [positions, files, events, channels, certs] = await reads(tx, [
     () =>
       tx
         .select({
@@ -135,6 +136,7 @@ export async function dataContext(
           ambient: studyPositions.ambient,
           code: instruments.code,
           serialNo: instruments.serialNo,
+          instrumentId: studyPositions.instrumentId,
         })
         .from(studyPositions)
         .leftJoin(instruments, eq(instruments.id, studyPositions.instrumentId))
@@ -158,6 +160,17 @@ export async function dataContext(
         .from(studyDataChannels)
         .where(inArray(studyDataChannels.dataFileId, current))
         .orderBy(asc(studyDataChannels.column)),
+    // The placed loggers' certificates, judged against the periods the data gives,
+    // in the same round by a subquery.
+    () =>
+      certificatesOf(
+        tx,
+        organisationId,
+        tx
+          .select({ id: studyPositions.instrumentId })
+          .from(studyPositions)
+          .where(and(eq(studyPositions.studyId, study.id), isNotNull(studyPositions.instrumentId))),
+      ),
   ]);
   const thermal = study.workType === "thermal_validation";
   const cycles = cycleProgress(cyclesOf(study), events, thermal);
@@ -166,7 +179,18 @@ export async function dataContext(
     id: p.id,
     label: p.label,
     ambient: p.ambient,
-    logger: p.code ? { code: p.code, serialNo: p.serialNo ?? "" } : null,
+    logger: p.code
+      ? {
+          code: p.code,
+          serialNo: p.serialNo ?? "",
+          certificates: (certs.get(p.instrumentId!) ?? [])
+            .filter((c) => c.status === "issued")
+            .map((c) => ({
+              calibratedOn: c.calibratedOn,
+              validUntil: c.validUntil,
+            })),
+        }
+      : null,
   }));
   const fileName = new Map(files.map((f) => [f.id, f.fileName]));
   const channelInfo: ChannelInfo[] = channels.map((c) => ({
@@ -203,7 +227,13 @@ export async function dataContext(
   });
   // No file yet: nothing to check (every logger would show as "missing").
   if (files.length === 0) result.issues = [];
-  return { positions: positionInfo, files, channels: channelInfo, cycles, ...result };
+  // Periods chosen from the data (Start & end), as against times tapped on site.
+  const fromData = new Set(
+    events
+      .filter((e) => !e.voided && e.kind === "start" && e.note.startsWith(PERIOD_NOTE))
+      .map((e) => e.cycle),
+  );
+  return { positions: positionInfo, files, channels: channelInfo, cycles, fromData, ...result };
 }
 
 /**
@@ -662,6 +692,9 @@ const fromIst = (text: string): Date | null => {
   return Number.isNaN(d.getTime()) ? null : d;
 };
 
+/** The note on start and end events chosen from the data. */
+const PERIOD_NOTE = "Study period set from the data";
+
 /**
  * Sets when a cycle ran, typed after the data is in (QA Tech, Nov 2026): "read
  * the study from 01.08.2026 11:30 to 02.08.2026 11:30". The cycle's recorded
@@ -714,7 +747,8 @@ export async function setStudyPeriod(
       (e) => e.cycle === input.cycle && (e.kind === "start" || e.kind === "end"),
     );
     const was = cycleProgress(cycles, events, thermal).find((c) => c.cycle === input.cycle)!;
-    if (old.length > 0 && !reason) {
+    // Times tapped on site are a log; changing a period already chosen from the data needs a reason.
+    if (old.some((e) => e.kind === "start" && e.note.startsWith(PERIOD_NOTE)) && !reason) {
       throw new DataError("Say why the times change, e.g. “logger clocks started at 11:30”.");
     }
     if (old.length > 0) {
@@ -728,9 +762,7 @@ export async function setStudyPeriod(
           ),
         );
     }
-    const note = reason
-      ? `Study period set from the data: ${reason}`
-      : "Study period set from the data";
+    const note = reason ? `${PERIOD_NOTE}: ${reason}` : PERIOD_NOTE;
     await tx.insert(studyEvents).values([
       {
         id: crypto.randomUUID(),
@@ -973,7 +1005,25 @@ export async function markReceived(
   return db.transaction(async (tx) => {
     const l = await load(tx, actor, studyId);
     assertOpen(l, "Confirming data");
-    if (l.study.status !== "completed") {
+    // The report's period is chosen from the uploaded data, not taken from the times
+    // tapped on site or the job's dates, which are only a reminder (QA Tech, Nov 2026).
+    const chosen = new Set(
+      (
+        await tx
+          .select({ cycle: studyEvents.cycle, note: studyEvents.note })
+          .from(studyEvents)
+          .where(
+            and(
+              eq(studyEvents.studyId, l.study.id),
+              eq(studyEvents.kind, "start"),
+              eq(studyEvents.voided, false),
+            ),
+          )
+      )
+        .filter((e) => e.note.startsWith(PERIOD_NOTE))
+        .map((e) => e.cycle),
+    );
+    if (l.study.status !== "completed" || cyclesOf(l.study).some((c) => !chosen.has(c))) {
       throw new DataError(
         `Set the start and end of the ${l.code} study (Start & end) before confirming its data.`,
       );

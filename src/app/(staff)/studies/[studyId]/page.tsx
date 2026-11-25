@@ -417,7 +417,7 @@ export default async function StudyPage({ params, searchParams }: PageProps<"/st
                 <ConfirmData
                   studyId={studyId}
                   jobNumber={s.job.number}
-                  periodSet={s.cycles.every((c) => c.done)}
+                  periodSet={data.periods.every((p) => p.fromData && p.start && p.end)}
                 />
               ) : data.study.dataStatus === "issues" ? (
                 <p className="rounded-md bg-attention-soft px-3 py-2 text-sm text-attention">

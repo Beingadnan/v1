@@ -12,6 +12,7 @@ import path from "node:path";
 
 import { eq } from "drizzle-orm";
 
+import { choosePeriodsAsLogged } from "@/db/seed/choose-period";
 import type { Database } from "@/db/client-factory";
 import { jobs, sites, studies, studyEvents, users } from "@/db/schema";
 import { ensureOrganisation } from "@/db/seed/ensure-organisation";
@@ -234,6 +235,7 @@ export async function seedBeWf02(
   });
   if (!stored.ok) throw new Error(stored.message);
   await addDataFile(db, blobs, lead, studyId, { fileId: stored.file.id }, req);
+  await choosePeriodsAsLogged(db, lead, studyId, req);
   await markReceived(db, lead, studyId, req);
   return { lead, manager, studyId, jobId: job.id, companyId, blobs };
 }

@@ -10,6 +10,7 @@ import { eq } from "drizzle-orm";
 import ExcelJS from "exceljs";
 import { PDFDocument } from "pdf-lib";
 
+import { choosePeriodsAsLogged } from "@/db/seed/choose-period";
 import type { Database } from "@/db/client-factory";
 import {
   certificates,
@@ -450,6 +451,7 @@ export async function seedAnalysisJob(
   });
   if (!stored.ok) throw new Error(stored.message);
   await addDataFile(db, blobs, lead, studyId, { fileId: stored.file.id }, req);
+  await choosePeriodsAsLogged(db, lead, studyId, req);
   await markReceived(db, lead, studyId, req);
   return { job, studyId, lead };
 }

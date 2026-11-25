@@ -21,6 +21,7 @@ import ExcelJS from "exceljs";
 import { PDFDocument } from "pdf-lib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { choosePeriodsAsLogged } from "@/db/seed/choose-period";
 import { jobs, sites, users } from "@/db/schema";
 import { ensureOrganisation } from "@/db/seed/ensure-organisation";
 import {
@@ -557,6 +558,7 @@ describe.skipIf(!haveFiles)("QTech end to end on QA Tech's real files", () => {
           expect((await post(tl38, "humidity", "50.2", "51.4")).result).toBe("pass");
         }
       }
+      await choosePeriodsAsLogged(db, p.lead, st.id, req);
       await markReceived(db, p.lead, st.id, req);
     }
   });

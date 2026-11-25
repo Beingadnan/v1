@@ -65,7 +65,6 @@ let jobId: string;
 let freezerStudy: string;
 let roomStudy: string;
 let codes: string[] = [];
-let expiredSerial: string;
 let masterId: string;
 
 async function makeUser(organisationId: string, email: string, role: string, name: string) {
@@ -240,7 +239,6 @@ beforeAll(async () => {
     },
     req,
   );
-  expiredSerial = added[19]!.serialNo;
   masterId = (
     await createInstrument(
       db,
@@ -333,6 +331,38 @@ describe("phase 5: an engineer places 9 loggers for BE-WF-02 and records start a
     const s = await study(freezerStudy);
     expect(s.positions.map((p) => p.label)).toEqual(template.map((p) => p.label));
     expect(s.equipment.dims).toEqual({ lengthM: 3.36, widthM: 6.4, heightM: 2.4 });
+  });
+
+  it("keeps a chosen level and a height measured from the top or bottom", async () => {
+    // QA Tech, Nov 2026: an extreme top logger, 5 cm under the ceiling of a 2.4 m box.
+    const template = await layoutTemplate(db, engineer, freezerStudy);
+    const at = (p: Partial<(typeof template)[number]>) => [
+      { ...template[0]!, ...p },
+      ...template.slice(1),
+    ];
+    await expect(
+      saveLayout(db, engineer, freezerStudy, at({ heightCm: 250, heightFrom: "bottom" }), req),
+    ).rejects.toThrow("L-01 is 250 cm from bottom, but BE-WF-02 is only 240 cm tall.");
+    await expect(saveLayout(db, engineer, freezerStudy, at({ heightCm: 30 }), req)).rejects.toThrow(
+      "Say whether L-01's height is from the bottom or the top.",
+    );
+    await saveLayout(
+      db,
+      engineer,
+      freezerStudy,
+      at({ level: "extreme_top", heightCm: 5, heightFrom: "top", z: 0.98 }),
+      req,
+    );
+    const p = (await study(freezerStudy)).positions[0]!;
+    expect(p).toMatchObject({ level: "extreme_top", heightCm: 5, heightFrom: "top", z: 0.9792 });
+    await saveLayout(db, engineer, freezerStudy, at({ heightCm: 30, heightFrom: "bottom" }), req);
+    expect((await study(freezerStudy)).positions[0]).toMatchObject({ z: 0.125, level: null });
+    await saveLayout(db, engineer, freezerStudy, template, req);
+    expect((await study(freezerStudy)).positions[0]).toMatchObject({
+      heightCm: null,
+      heightFrom: null,
+      z: template[0]!.z,
+    });
   });
 
   it("offers the last study's positions for the next study of the same equipment", async () => {
@@ -490,9 +520,8 @@ describe("phase 5: an engineer places 9 loggers for BE-WF-02 and records start a
     await expect(placeLogger(db, engineer, freezerStudy, { code: codes[0]! }, req)).rejects.toThrow(
       `${codes[0]} is already at L-01.`,
     );
-    await expect(
-      placeLogger(db, engineer, freezerStudy, { code: expiredSerial }, req),
-    ).rejects.toThrow("is valid only until");
+    // A logger out of calibration is caught on the data's own dates, not here: the
+    // job's dates are only a reminder (QA Tech, Nov 2026; see data-first.test.ts).
     await expect(
       placeLogger(db, engineer, freezerStudy, { code: "QATM/CAL/SSPRT-09" }, req),
     ).rejects.toThrow("is a master standard");

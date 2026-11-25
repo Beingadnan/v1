@@ -12,6 +12,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import ExcelJS from "exceljs";
 
+import { choosePeriodsAsLogged } from "./choose-period";
 import type { Database } from "@/db/client-factory";
 import { clientCompanies, equipment, instruments, jobs, studyPrecal, users } from "@/db/schema";
 import {
@@ -395,6 +396,7 @@ async function postCalAndReceive(
     if (!has(l.id, "temperature")) await check("temperature", masters.temp, ref, reading);
     if (rh && !has(l.id, "humidity")) await check("humidity", masters.rh, "50.2", "51.0");
   }
+  await choosePeriodsAsLogged(db, p.lead.user, studyId, req);
   await markReceived(db, p.lead.user, studyId, req);
 }
 

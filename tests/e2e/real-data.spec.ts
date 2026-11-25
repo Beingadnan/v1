@@ -440,6 +440,13 @@ async function layOutAndPlace(page: Page, d: Dataset, study: string) {
     await page.getByRole("button", { name: `Remove L-${String(total).padStart(2, "0")}` }).click();
     await page.getByRole("button", { name: "Ambient", exact: true }).click();
   }
+  if (!d.equipment.room) {
+    // A logger under the ceiling, measured on site (QA Tech, Nov 2026).
+    await page.getByLabel("L-01 level").selectOption({ label: "Extreme top" });
+    await page.getByLabel("L-01 height in cm").fill("5");
+    await page.getByLabel("L-01 height measured from").selectOption("top");
+    await expect(page.getByLabel("Where L-01 goes")).toHaveValue(/^Extreme top .*, 5 cm from top$/);
+  }
   await page.getByRole("button", { name: "Save layout" }).click();
   await expect(page.getByText(`Saved ${total} positions.`)).toBeVisible();
 
@@ -456,7 +463,11 @@ async function layOutAndPlace(page: Page, d: Dataset, study: string) {
 async function dataPeriodAndConfirm(page: Page, d: Dataset, study: string) {
   // The data first: the job is Ready, nobody tapped Start on site.
   await page.goto(`${study}?tab=data`);
-  await page.getByLabel("Logger export file").setInputFiles(d.data);
+  // Through the button, as a person does: it opens the file picker only once the page
+  // is live (setting the hidden input before that dropped the file, 1 run in 7).
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Choose a file" }).click();
+  await (await chooser).setFiles(d.data);
   const read = page.getByText(/Nothing wrong found\./);
   const refused = page.getByRole("alert").filter({ hasText: /\w/ });
   await expect(read.or(refused).first()).toBeVisible({ timeout: 30_000 });
@@ -544,6 +555,9 @@ function checkPdfText(d: Dataset, pdf: string) {
     );
   }
   expect(flat).toMatch(d.verdict);
+  if (!d.equipment.room) {
+    expect(flat, "L-01's level and measured height").toMatch(/Extreme top \(5 cm from top\)/);
+  }
 }
 
 // ---------------------------------------------------------------- the runs

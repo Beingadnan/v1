@@ -11,6 +11,7 @@ import { and, eq } from "drizzle-orm";
 import ExcelJS from "exceljs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { choosePeriodsAsLogged } from "@/db/seed/choose-period";
 import { auditLog, jobs, sites, studyDataFiles, users } from "@/db/schema";
 import { ensureOrganisation } from "@/db/seed/ensure-organisation";
 import { ForbiddenError } from "@/domain/auth/permissions";
@@ -342,6 +343,13 @@ describe("phase 6: logger data in, checked, and confirmed", () => {
   });
 
   it("confirming the data moves the job to Data received", async () => {
+    // Times tapped on site are a log: the report's period is chosen from the data first.
+    expect((await data()).periods[0]).toMatchObject({ fromData: false });
+    await expect(markReceived(db, leader, studyId, req)).rejects.toThrow(
+      "Set the start and end of the BE-WF-02 study (Start & end) before confirming its data.",
+    );
+    await choosePeriodsAsLogged(db, leader, studyId, req);
+    expect((await data()).periods[0]).toMatchObject({ fromData: true });
     expect(await markReceived(db, leader, studyId, req)).toEqual({ jobStatus: "data_received" });
     // A second tab (or a colleague) confirming at the same time is told, not recorded twice.
     await expect(markReceived(db, leader, studyId, req)).rejects.toThrow(
@@ -527,6 +535,7 @@ describe("phase 6: logger data in, checked, and confirmed", () => {
   });
 
   it("confirms again, and every step is in the audit trail", async () => {
+    await choosePeriodsAsLogged(db, leader, studyId, req);
     await markReceived(db, leader, studyId, req);
     expect(await jobStatus()).toBe("data_received");
     const actions = (
@@ -583,10 +592,12 @@ describe("phase 6: logger data in, checked, and confirmed", () => {
     expect(p.start!.getTime()).toBe(from);
     expect(p.end!.getTime()).toBe(to);
     expect(d.windows[0]).toMatchObject({ start: from, end: to });
-    const [audit] = await db
+    const audits = await db
       .select({ summary: auditLog.summary })
       .from(auditLog)
       .where(and(eq(auditLog.entityId, studyId), eq(auditLog.action, "study.period_set")));
-    expect(audit!.summary).toContain("loggers started 30 min after the Start tap");
+    expect(audits.map((a) => a.summary).join("\n")).toContain(
+      "loggers started 30 min after the Start tap",
+    );
   });
 });

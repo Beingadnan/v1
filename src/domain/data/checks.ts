@@ -34,6 +34,7 @@ export const ISSUE_KINDS = [
   "stuck",
   "no_times",
   "outside_window",
+  "out_of_calibration",
 ] as const;
 export type IssueKind = (typeof ISSUE_KINDS)[number];
 
@@ -41,7 +42,16 @@ export type PositionInfo = {
   id: string;
   label: string;
   ambient: boolean;
-  logger: { code: string; serialNo: string } | null;
+  logger: {
+    code: string;
+    serialNo: string;
+    /**
+     * Its certificates in force (yyyy-mm-dd). The study's own dates come from
+     * the data, so calibration is judged against them, not the job's planned
+     * dates (QA Tech, Nov 2026). Left out: not checked.
+     */
+    certificates?: { calibratedOn: string; validUntil: string | null }[];
+  } | null;
 };
 
 export type ChannelInfo = {
@@ -296,6 +306,35 @@ export function checkData(input: CheckInput): CheckResult {
     });
     return { ...w, start: w.start ?? span.start, end: w.end ?? span.end };
   });
+
+  // ---- each placed logger calibrated through each period the data gives
+  const day = (ms: number) => new Date(ms + 330 * 60_000).toISOString().slice(0, 10);
+  const dmy = (d: string) => d.split("-").reverse().join(".");
+  for (const p of positions) {
+    const certs = p.logger?.certificates;
+    if (!certs) continue;
+    for (const w of windows) {
+      if (w.start === null || w.end === null) continue;
+      const a = day(w.start);
+      const b = day(w.end);
+      if (certs.some((c) => c.calibratedOn <= a && (c.validUntil === null || c.validUntil >= b))) {
+        continue;
+      }
+      const latest = [...certs].sort((x, y) => y.calibratedOn.localeCompare(x.calibratedOn))[0];
+      const why = !latest
+        ? "it has no certificate in force"
+        : latest.calibratedOn > a
+          ? `its certificate starts ${dmy(latest.calibratedOn)}`
+          : `its certificate is valid only until ${dmy(latest.validUntil!)}`;
+      add({
+        kind: "out_of_calibration",
+        severity: "blocker",
+        message: `${name(p)}: ${why}, but ${w.label.toLowerCase()} runs ${hhmm(w.start)} to ${hhmm(w.end)}.`,
+        cycle: w.cycle,
+        positionId: p.id,
+      });
+    }
+  }
 
   // ---- per channel, per window
   const step = (intervalMinutes ?? 0) * 60_000;

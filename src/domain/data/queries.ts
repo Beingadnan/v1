@@ -179,12 +179,17 @@ export async function getStudyData(db: Database, actor: SessionUser, studyId: st
       accept: can(actor, "data.accept"),
     },
     windows: ctx.windows,
-    /** Each cycle's recorded start and end (null: not recorded, the data's span is used). */
+    /**
+     * Each cycle's start and end. `fromData`: chosen from the uploaded data
+     * (Start & end); otherwise times tapped on site, or none, and the report
+     * period starts from the data's own span (QA Tech, Nov 2026).
+     */
     periods: ctx.cycles.map((c) => ({
       cycle: c.cycle as string,
       label: c.label,
       start: c.startedAt,
       end: c.endedAt,
+      fromData: ctx.fromData.has(c.cycle),
     })),
     files: allFiles.map(({ file, by, sha256, size }) => ({
       id: file.id,
