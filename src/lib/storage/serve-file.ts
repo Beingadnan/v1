@@ -6,6 +6,7 @@ import { db } from "@/db/client";
 import { storedFiles } from "@/db/schema";
 
 import { blobStore } from ".";
+import { streamBytes } from "./stream";
 
 /**
  * A stored file as a download, shown in the browser where it can be (PDFs,
@@ -28,7 +29,7 @@ export async function serveStoredFile(
   if (!row) return new Response("Not found.", { status: 404 });
   const bytes = await blobStore.get(row.key);
   const safe = row.name.replace(/[^\w .()-]/g, "_");
-  return new Response(new Uint8Array(bytes), {
+  return new Response(streamBytes(bytes), {
     headers: {
       "Content-Type": row.mime,
       "Content-Disposition": `inline; filename="${safe}"; filename*=UTF-8''${encodeURIComponent(row.name)}`,

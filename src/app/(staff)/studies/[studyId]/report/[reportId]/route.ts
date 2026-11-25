@@ -6,6 +6,7 @@ import { previewReport } from "@/domain/reports/report-service";
 import { reportDownload } from "@/domain/reports/review-service";
 import { userForRoute } from "@/lib/auth/route-auth";
 import { blobStore } from "@/lib/storage";
+import { streamBytes } from "@/lib/storage/stream";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -40,7 +41,7 @@ export async function GET(
   const kind = copy === "frozen" || copy === "scan" ? copy : "signed";
   const got = await reportDownload(db, blobStore, user, reportId, kind);
   if (got) {
-    return new Response(new Uint8Array(got.bytes), {
+    return new Response(streamBytes(got.bytes), {
       headers: {
         ...headers(got.fileName, got.sha256 ? { "X-Content-SHA256": got.sha256 } : {}),
         "Content-Type": got.mime,
@@ -51,7 +52,7 @@ export async function GET(
   try {
     const draft = await previewReport(db, blobStore, user, reportId);
     if (!draft) return new Response("Not found.", { status: 404 });
-    return new Response(new Uint8Array(draft.bytes), {
+    return new Response(streamBytes(draft.bytes), {
       headers: headers(
         `${draft.data.reportNumber} ${draft.data.revision} DRAFT.pdf`.replace(
           /[\\/:*?"<>|]+/g,

@@ -14,6 +14,14 @@ async function main(): Promise<void> {
     throw new Error("DATABASE_URL is not set. Copy .env.example to .env.local and fill it in.");
   }
   const pool = new Pool({ connectionString: url, max: 1 });
+  // The app's role has a 60 s statement timeout (migration 0032); a migration that
+  // rebuilds an index on a large table may need longer. This only holds on a direct
+  // connection: through Neon's pooler, run long migrations with the direct URL.
+  pool.on("connect", (client) => {
+    client.query("set statement_timeout = 0").catch((error: unknown) => {
+      console.error("Could not lift the statement timeout:", error);
+    });
+  });
   try {
     await migrate(drizzle(pool), { migrationsFolder: "./drizzle" });
     console.log("Migrations applied.");

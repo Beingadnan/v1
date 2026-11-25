@@ -28,6 +28,7 @@ import {
   withdrawAction,
 } from "../data-actions";
 import { Sparkline } from "./sparkline";
+import { postFile } from "@/lib/upload-client";
 
 const when = (d: Date | number | null) =>
   d === null
@@ -123,7 +124,7 @@ export function DataPanel({ data: d }: { data: StudyData }) {
     body.append("file", file, file.name);
     let res: Response;
     try {
-      res = await fetch("/api/files", { method: "POST", body });
+      res = await postFile(body);
     } catch {
       setFeedback({ ok: false, text: "No connection. Try again when you're online." });
       return;

@@ -5,6 +5,7 @@ import { db } from "@/db/client";
 import { storedFiles, studyPhotos } from "@/db/schema";
 import { userForRoute } from "@/lib/auth/route-auth";
 import { blobStore } from "@/lib/storage";
+import { streamBytes } from "@/lib/storage/stream";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -31,7 +32,7 @@ export async function GET(
     );
   if (!row) return new Response("Not found.", { status: 404 });
   const bytes = await blobStore.get(row.key);
-  return new Response(new Uint8Array(bytes), {
+  return new Response(streamBytes(bytes), {
     headers: {
       "Content-Type": row.mime,
       "Cache-Control": "private, max-age=3600",

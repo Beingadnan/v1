@@ -5,6 +5,7 @@ import { validateSession } from "@/domain/auth/session-service";
 import { wcrDownload } from "@/domain/billing/wcr-service";
 import { readSessionCookie } from "@/lib/auth/session-cookie";
 import { blobStore } from "@/lib/storage";
+import { streamBytes } from "@/lib/storage/stream";
 
 /** GET /client/wcr/:id/pdf — the client's own company's WCR, with its acceptance once accepted. */
 export async function GET(
@@ -18,7 +19,7 @@ export async function GET(
   if (!got) return new Response("Not found.", { status: 404 });
   const disposition = request.nextUrl.searchParams.get("download") ? "attachment" : "inline";
   const ascii = got.fileName.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "");
-  return new Response(new Uint8Array(got.bytes), {
+  return new Response(streamBytes(got.bytes), {
     headers: {
       "Content-Type": got.mime,
       "Content-Disposition": `${disposition}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(got.fileName)}`,

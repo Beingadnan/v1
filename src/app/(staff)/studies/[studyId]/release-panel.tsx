@@ -9,6 +9,7 @@ import { FormMessage, TextField, useFormAction } from "@/components/ui/form-kit"
 import { ROLE_LABELS, type Role } from "@/domain/auth/roles";
 
 import { paperSignoffAction, releaseReportAction } from "../report-actions";
+import { postFile } from "@/lib/upload-client";
 
 type Person = { id: string; name: string; email: string; role: string };
 export type Mail = { to: string[]; subject: string; body: string; link: string };
@@ -161,7 +162,7 @@ export function PaperSignoffForm({
     try {
       const body = new FormData();
       body.append("file", f, f.name);
-      const res = await fetch("/api/files", { method: "POST", body });
+      const res = await postFile(body);
       const json = (await res.json().catch(() => ({}))) as { id?: string; error?: string };
       if (res.status === 401) setUploadError("You were signed out. Sign in again, then retry.");
       else if (!res.ok || !json.id) setUploadError(json.error ?? "The scan couldn't be uploaded.");

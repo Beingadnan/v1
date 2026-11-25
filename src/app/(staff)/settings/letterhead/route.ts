@@ -4,6 +4,7 @@ import { db } from "@/db/client";
 import { organisationSettings, storedFiles } from "@/db/schema";
 import { userForRoute } from "@/lib/auth/route-auth";
 import { blobStore } from "@/lib/storage";
+import { streamBytes } from "@/lib/storage/stream";
 
 /** GET /settings/letterhead — the letterhead image, for the Settings page. */
 export async function GET(): Promise<Response> {
@@ -21,7 +22,7 @@ export async function GET(): Promise<Response> {
     );
   if (!row) return new Response("No letterhead.", { status: 404 });
   const bytes = await blobStore.get(row.key);
-  return new Response(new Uint8Array(bytes), {
+  return new Response(streamBytes(bytes), {
     headers: {
       "Content-Type": row.mime,
       "Cache-Control": "private, no-store",

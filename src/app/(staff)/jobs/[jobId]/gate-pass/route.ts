@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 import { db } from "@/db/client";
 import { gatePassList } from "@/domain/jobs/queries";
 import { userForRoute } from "@/lib/auth/route-auth";
+import { streamBytes } from "@/lib/storage/stream";
 
 /** GET /jobs/:id/gate-pass — the PDF list of booked instruments for the client's security. */
 export async function GET(
@@ -14,7 +15,7 @@ export async function GET(
   const { jobId } = await params;
   const out = await gatePassList(db, user, jobId);
   if (!out) return new Response("Not found.", { status: 404 });
-  return new Response(new Uint8Array(out.pdf), {
+  return new Response(streamBytes(out.pdf), {
     headers: {
       "Content-Type": "application/pdf",
       "Content-Disposition": `inline; filename="${out.fileName}"`,

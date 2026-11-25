@@ -4,6 +4,7 @@ import { db } from "@/db/client";
 import { wcrDownload } from "@/domain/billing/wcr-service";
 import { userForRoute } from "@/lib/auth/route-auth";
 import { blobStore } from "@/lib/storage";
+import { streamBytes } from "@/lib/storage/stream";
 
 /**
  * GET /jobs/:id/wcr/:wcrId — the job's WCR: with the client's acceptance
@@ -29,7 +30,7 @@ function pdfResponse(
   disposition: string,
 ) {
   const ascii = got.fileName.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "");
-  return new Response(new Uint8Array(got.bytes), {
+  return new Response(streamBytes(got.bytes), {
     headers: {
       "Content-Type": got.mime,
       "Content-Disposition": `${disposition}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(got.fileName)}`,

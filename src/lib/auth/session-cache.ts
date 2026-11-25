@@ -8,10 +8,11 @@ import { createHash } from "node:crypto";
  * database is a quarter of a second away from Bhiwandi, so without this each
  * click waited for that check before anything else could start.
  *
- * Only valid sessions are remembered. Signing out, a role change, deactivating
- * a user and a password change forget them all at once, so in this process
- * they take effect on the next click; another server process (if any) catches
- * up within TTL_MS. The session's idle limit is minutes, so a few seconds of
+ * Only valid sessions are remembered, and only for page loads: server actions
+ * (every change of data) always check the database (src/lib/auth/dal.ts).
+ * Signing out, a role change, deactivating a user and a password change forget
+ * them all at once, so in this process they take effect on the next click;
+ * another server process (if any) still shows pages for up to TTL_MS. The session's idle limit is minutes, so a few seconds of
  * memory never keeps a timed-out session alive in practice.
  */
 export const TTL_MS = 15_000;

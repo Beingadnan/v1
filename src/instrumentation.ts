@@ -1,3 +1,5 @@
+import type { Instrumentation } from "next";
+
 /**
  * Runs once when a server process starts. In production it opens database
  * connections in the background, so the first person to open a page after a
@@ -18,3 +20,28 @@ export async function register() {
     ),
   );
 }
+
+/**
+ * Every error thrown while rendering a page, running a server action or a route
+ * handler, written as one JSON line to the host's log (Vercel → Logs). The digest
+ * is the reference the error page shows the person. No headers or cookies are
+ * logged.
+ */
+export const onRequestError: Instrumentation.onRequestError = async (error, request, context) => {
+  const err = error as Error & { digest?: string };
+  console.error(
+    JSON.stringify({
+      level: "error",
+      msg: "request failed",
+      digest: err.digest,
+      name: err.name,
+      // Database errors append the query's values ("params: …"), which can be personal data.
+      error: err.message.split(/\bparams:/)[0]?.slice(0, 500),
+      stack: err.stack?.split("\n").slice(0, 8).join("\n"),
+      method: request.method,
+      path: request.path.split("?")[0],
+      routePath: context.routePath,
+      routeType: context.routeType,
+    }),
+  );
+};

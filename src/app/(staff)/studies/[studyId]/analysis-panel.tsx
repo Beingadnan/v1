@@ -28,6 +28,7 @@ import {
   withdrawApprovalAction,
   withdrawExcursionAction,
 } from "../analysis-actions";
+import { postFile } from "@/lib/upload-client";
 
 const when = (d: Date | number | string | null) =>
   d === null
@@ -281,7 +282,7 @@ export function AnalysisPanel({ a }: { a: StudyAnalysis }) {
     body.append("file", file, file.name);
     let res: Response;
     try {
-      res = await fetch("/api/files", { method: "POST", body });
+      res = await postFile(body);
     } catch {
       setFeedback({ ok: false, text: "No connection. Try again when you're online." });
       return;

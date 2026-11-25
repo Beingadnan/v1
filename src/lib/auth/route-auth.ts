@@ -5,6 +5,7 @@ import { can, type Action } from "@/domain/auth/permissions";
 import { validateSession, type SessionUser } from "@/domain/auth/session-service";
 
 import { readSessionCookie } from "./session-cookie";
+import { streamBytes } from "@/lib/storage/stream";
 
 /**
  * For route handlers (file downloads): the signed-in user if they may do
@@ -22,7 +23,7 @@ export async function userForRoute(action: Action): Promise<SessionUser | Respon
 /** An Excel download that browsers save under `fileName` and never cache. */
 export function excelResponse(bytes: Uint8Array, fileName: string): Response {
   const ascii = fileName.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "");
-  return new Response(new Uint8Array(bytes), {
+  return new Response(streamBytes(bytes), {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       "Content-Disposition": `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,

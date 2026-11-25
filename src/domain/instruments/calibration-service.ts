@@ -25,7 +25,7 @@ import {
 import { assertCan, can, type Action } from "@/domain/auth/permissions";
 import type { RequestInfo } from "@/domain/auth/policy";
 import type { SessionUser } from "@/domain/auth/session-service";
-import { signRecord, type SignatureMeaning } from "@/domain/auth/signature-service";
+import { signRecordTx, type SignatureMeaning } from "@/domain/auth/signature-service";
 import { isUuid } from "@/domain/clients/shared";
 import { nextDueDate, todayInIndia } from "@/domain/clients/requalification";
 import { allocateNumber } from "@/domain/numbering/allocate";
@@ -633,7 +633,13 @@ const STEPS: Record<
 /**
  * One sign-off step with a password re-entered (21 CFR Part 11 style):
  * done by → checked by → approved by. The checker and the approver must be
- * different people from whoever did the calibration.
+ * different people from whoever did the calibration, and the approver must
+ * also be someone other than the checker.
+ *
+ * The signature and the status change are written in one transaction with the
+ * certificate locked, so a double submit or two people signing at once can't
+ * leave a signature without the step it signs. A wrong password still commits
+ * (the failed attempt counts towards the lockout) but changes nothing else.
  */
 export async function signCalibrationStep(
   db: Database,
@@ -643,44 +649,42 @@ export async function signCalibrationStep(
 ): Promise<{ ok: true; status: string } | { ok: false; message: string }> {
   const step = STEPS[input.step];
   assertCan(actor, step.action);
-  // Check everything that can be checked before asking for the signature.
-  const hash = await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     const cert = await lockCertificate(tx, actor, input.certificateId);
     if (cert.status !== step.from)
       throw new InstrumentsError(`This certificate is ${cert.status}, not ready for this step.`);
     if (input.step === "submit") await assertComplete(tx, actor, cert);
     if (input.step !== "submit") {
-      const doneBy = (await certificateSignatures(tx, actor.organisationId, cert.id))
-        .filter((s) => s.meaning === "done_by")
-        .at(-1);
-      if (doneBy?.userId === actor.id) {
+      const sigs = await certificateSignatures(tx, actor.organisationId, cert.id);
+      const last = (meaning: SignatureMeaning) =>
+        sigs.filter((s) => s.meaning === meaning).at(-1)?.userId;
+      if (last("done_by") === actor.id) {
         throw new InstrumentsError(
           "Someone other than the person who did the calibration must check and approve it.",
         );
       }
+      if (input.step === "approve" && last("checked_by") === actor.id) {
+        throw new InstrumentsError(
+          "You checked this certificate. Someone other than the checker must approve it.",
+        );
+      }
     }
-    return certificateContentHash(tx, cert.id);
-  });
+    const hash = await certificateContentHash(tx, cert.id);
 
-  const signed = await signRecord(
-    db,
-    actor,
-    {
-      meaning: step.meaning,
-      entityType: "certificate",
-      entityId: input.certificateId,
-      recordHash: hash,
-      password: input.password,
-    },
-    request,
-  );
-  if (!signed.ok) return { ok: false, message: signed.message };
+    const signed = await signRecordTx(
+      tx,
+      actor,
+      {
+        meaning: step.meaning,
+        entityType: "certificate",
+        entityId: cert.id,
+        recordHash: hash,
+        password: input.password,
+      },
+      request,
+    );
+    if (!signed.ok) return { ok: false as const, message: signed.message };
 
-  return db.transaction(async (tx) => {
-    const cert = await lockCertificate(tx, actor, input.certificateId);
-    if (cert.status !== step.from || (await certificateContentHash(tx, cert.id)) !== hash) {
-      throw new InstrumentsError("The certificate changed while you were signing. Open it again.");
-    }
     const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
     await tx
       .update(certificates)

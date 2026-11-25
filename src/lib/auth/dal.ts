@@ -1,5 +1,6 @@
 import "server-only";
 
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
 
@@ -20,6 +21,10 @@ import { readSessionCookie } from "./session-cookie";
 export const getCurrentSession = cache(
   async (): Promise<{ user: SessionUser; sessionId: string } | null> => {
     const token = await readSessionCookie();
+    // A server action changes data, so it always checks the session in the database:
+    // a sign-out, deactivation or role change elsewhere stops it at once on every
+    // server. Page loads only read, and keep the few-second memory (ADR 0018).
+    if ((await headers()).has("next-action")) return validateSession(db, token);
     return rememberedSession(token, () => validateSession(db, token));
   },
 );

@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 import { attachCertificateFileAction } from "../../actions";
+import { postFile } from "@/lib/upload-client";
 
 /** Upload the scan of an outside-lab or imported certificate that has none yet. */
 export function AttachCertificateFile({ certificateId }: { certificateId: string }) {
@@ -22,7 +23,7 @@ export function AttachCertificateFile({ certificateId }: { certificateId: string
     body.append("file", file, file.name);
     let res: Response;
     try {
-      res = await fetch("/api/files", { method: "POST", body });
+      res = await postFile(body);
     } catch {
       setFeedback({ ok: false, text: "No connection. Try again when you're online." });
       return;

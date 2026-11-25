@@ -35,3 +35,20 @@ A hosted app has no lasting disk, and QA Tech chose Vercel Blob for files.
   occasional, so this is not on any page's critical path.
 - The token is a secret: it lives only in `.env.local` and the host's environment
   settings, never in the repository.
+
+## Update, 25 Nov 2026: files above 4.5 MB on Vercel
+
+The audit found real files over the limit (an 8.4 MB scanned sketch PDF), and a report
+with its certificate annexes can pass it on the way out too. So:
+
+- **Uploads above 4 MB** go from the browser straight into the store when
+  `BLOB_READ_WRITE_TOKEN` is set (`src/lib/upload-client.ts`). The browser asks
+  `GET /api/files/direct` for its own folder, uploads one private file to
+  `incoming/<user id>/<random id>` with a short-lived token from `POST /api/files/direct`
+  (size capped at `UPLOAD_MAX_MB`, valid 10 minutes, only that folder), then calls
+  `POST /api/files/register`. That route reads the file back, makes exactly the checks
+  `POST /api/files` makes (size, content type, hash), stores it content-addressed and
+  deletes the incoming copy. The daily cron deletes incoming files older than a day.
+  Smaller files, and every file without Blob, still go to `POST /api/files`.
+- **Downloads are streamed** (`src/lib/storage/stream.ts`), which Vercel doesn't cap.
+- The Content-Security-Policy allows `connect-src https://vercel.com` only when Blob is on.

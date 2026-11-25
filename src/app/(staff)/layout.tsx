@@ -7,6 +7,7 @@ import { db } from "@/db/client";
 import { ACTIONS, can } from "@/domain/auth/permissions";
 import { isClientRole } from "@/domain/auth/roles";
 import { unreadCount } from "@/domain/notifications/notify";
+import { SkipLink } from "@/components/shell/skip-link";
 import { requireUser, toUserSummary } from "@/lib/auth/dal";
 
 /**
@@ -22,16 +23,23 @@ export default async function StaffLayout({ children }: { children: ReactNode })
   const unread = await unreadCount(db, user);
 
   return (
-    <div className="flex min-h-dvh">
-      <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 md:block">
-        <SidebarContent allowed={allowed} />
-      </aside>
-      <div className="flex min-w-0 flex-1 flex-col">
-        <Topbar user={toUserSummary(user)} allowed={allowed} unread={unread} />
-        <main id="main" className="flex-1 px-4 py-6 md:px-8 md:py-8">
-          {children}
-        </main>
+    <>
+      <SkipLink />
+      <div className="flex min-h-dvh">
+        <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 md:block">
+          <SidebarContent allowed={allowed} />
+        </aside>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <Topbar user={toUserSummary(user)} allowed={allowed} unread={unread} />
+          <main
+            id="main"
+            tabIndex={-1}
+            className="flex-1 px-4 py-6 focus:outline-none md:px-8 md:py-8"
+          >
+            {children}
+          </main>
+        </div>
       </div>
-    </div>
+    </>
   );
 }

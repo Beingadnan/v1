@@ -565,6 +565,94 @@ describe("PDL-17: batch calibration certificate (exit test)", () => {
     ).rejects.toThrow(/someone other than/i);
   });
 
+  it("stops the checker from also approving", async () => {
+    const c = await createCalibration(
+      db,
+      lab,
+      {
+        header: { ...header("2026-03-28"), siteId },
+        instrumentIds: [loggerIds[0]!],
+        masterIds: [ssprtId],
+      },
+      req,
+    );
+    await saveCalibration(
+      db,
+      lab,
+      c.id,
+      {
+        header: header("2026-03-28"),
+        points: [{ quantity: "temperature", reference: "20", condition: "" }],
+        masterIds: [ssprtId],
+        instrumentIds: [loggerIds[0]!],
+        readings: [["20.1"]],
+      },
+      req,
+    );
+    await signCalibrationStep(
+      db,
+      lab,
+      { certificateId: c.id, step: "submit", password: PASSWORD },
+      req,
+    );
+    expect(
+      await signCalibrationStep(
+        db,
+        manager,
+        { certificateId: c.id, step: "check", password: PASSWORD },
+        req,
+      ),
+    ).toEqual({ ok: true, status: "approving" });
+    await expect(
+      signCalibrationStep(
+        db,
+        manager,
+        { certificateId: c.id, step: "approve", password: PASSWORD },
+        req,
+      ),
+    ).rejects.toThrow(/someone other than the checker/i);
+    const sigs = await db.select().from(signatures).where(eq(signatures.entityId, c.id));
+    expect(sigs.map((s) => s.meaning)).toEqual(["done_by", "checked_by"]);
+  });
+
+  it("keeps no signature when the step can't be taken", async () => {
+    const c = await createCalibration(
+      db,
+      lab,
+      {
+        header: { ...header("2026-03-29"), siteId },
+        instrumentIds: [loggerIds[0]!],
+        masterIds: [ssprtId],
+      },
+      req,
+    );
+    await saveCalibration(
+      db,
+      lab,
+      c.id,
+      {
+        header: header("2026-03-29"),
+        points: [{ quantity: "temperature", reference: "20", condition: "" }],
+        masterIds: [ssprtId],
+        instrumentIds: [loggerIds[0]!],
+        readings: [["20.1"]],
+      },
+      req,
+    );
+    const submit = () =>
+      signCalibrationStep(
+        db,
+        lab,
+        { certificateId: c.id, step: "submit", password: PASSWORD },
+        req,
+      );
+    // A double submit: both requests sign at once; only one step and one signature are kept.
+    const results = await Promise.allSettled([submit(), submit()]);
+    expect(results.filter((r) => r.status === "fulfilled" && r.value.ok)).toHaveLength(1);
+    const sigs = await db.select().from(signatures).where(eq(signatures.entityId, c.id));
+    expect(sigs.map((s) => s.meaning)).toEqual(["done_by"]);
+  });
+
   it("lists the month in the Calibration Index, in number order", async () => {
     const index = await calibrationIndex(db, lab, 2026, 3);
     expect(index).toHaveLength(1);

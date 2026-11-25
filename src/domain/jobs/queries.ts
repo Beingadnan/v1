@@ -87,6 +87,9 @@ export type JobListRow = {
   poValue: string | null;
 };
 
+/** The jobs list shows at most this many; the page says so when there are more. */
+export const JOB_LIST_LIMIT = 500;
+
 /** Jobs matching a search by job number, PO, client, equipment or report number. */
 export async function listJobs(
   db: Database,
@@ -164,7 +167,7 @@ export async function listJobs(
         ? [asc(jobs.plannedStart), asc(jobs.createdAt)]
         : [desc(jobs.createdAt), desc(jobs.id)]),
     )
-    .limit(500);
+    .limit(JOB_LIST_LIMIT);
   const money = can(actor, "jobs.money");
   return rows.map((r) => ({
     ...r,

@@ -1,52 +1,28 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { db } from "@/db/client";
-import { can } from "@/domain/auth/permissions";
-import { validateSession } from "@/domain/auth/session-service";
-import { SESSION_COOKIE } from "@/lib/auth/session-cookie";
-import { env } from "@/lib/env";
-import { requestInfoFromHeaders } from "@/lib/request-info";
-import { blobStore, uploadMaxBytes } from "@/lib/storage";
-import { storeFile } from "@/lib/storage/store-file";
+import { uploadMaxBytes } from "@/lib/storage";
+import { storeAndRespond, tooLarge, uploader } from "@/lib/storage/upload-route";
 
 /**
  * POST /api/files — upload one file (multipart field "file").
  * Returns the stored file's id and SHA-256. Used by upload screens from phase 3.
  *
  * Checks, in order: same-origin request (CSRF), valid session, files.upload
- * permission, size, then content type (inside storeFile).
+ * permission, size, then content type (inside storeFile). Files above 4 MB on
+ * Vercel go through /api/files/direct and /api/files/register instead
+ * (src/lib/upload-client.ts).
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  // Browsers always send Origin on cross-site POSTs; reject anything not from this app.
-  const origin = request.headers.get("origin");
-  const allowed = new Set([new URL(env.APP_URL).origin, request.nextUrl.origin]);
-  if (!origin || !allowed.has(origin)) {
-    return NextResponse.json({ error: "Cross-site request refused." }, { status: 403 });
-  }
-
-  const session = await validateSession(db, request.cookies.get(SESSION_COOKIE)?.value);
-  if (!session) return NextResponse.json({ error: "Sign in again." }, { status: 401 });
-  if (!can(session.user, "files.upload")) {
-    return NextResponse.json({ error: "Your role doesn't allow uploads." }, { status: 403 });
-  }
+  const user = await uploader(request);
+  if (user instanceof NextResponse) return user;
 
   // Refuse oversized bodies before reading them into memory.
   const declared = Number(request.headers.get("content-length") ?? "0");
-  if (declared > uploadMaxBytes + 64 * 1024) {
-    return NextResponse.json(
-      { error: `Files can be at most ${env.UPLOAD_MAX_MB} MB.` },
-      { status: 413 },
-    );
-  }
+  if (declared > uploadMaxBytes + 64 * 1024) return tooLarge();
 
   // Count bytes as they arrive, so a body without Content-Length still can't exceed the limit.
   const body = await readBodyWithLimit(request, uploadMaxBytes + 64 * 1024);
-  if (body === "too_large") {
-    return NextResponse.json(
-      { error: `Files can be at most ${env.UPLOAD_MAX_MB} MB.` },
-      { status: 413 },
-    );
-  }
+  if (body === "too_large") return tooLarge();
 
   let file: FormDataEntryValue | null;
   try {
@@ -66,29 +42,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
   }
 
-  const result = await storeFile(db, blobStore, {
-    organisationId: session.user.organisationId,
-    actor: { type: "user", userId: session.user.id },
-    fileName: file.name,
-    bytes: new Uint8Array(await file.arrayBuffer()),
-    maxBytes: uploadMaxBytes,
-    request: requestInfoFromHeaders(request.headers),
-  });
-
-  if (!result.ok) {
-    const status = result.reason === "too_large" ? 413 : 422;
-    return NextResponse.json({ error: result.message }, { status });
-  }
-  return NextResponse.json(
-    {
-      id: result.file.id,
-      sha256: result.file.sha256,
-      fileType: result.file.fileType,
-      sizeBytes: result.file.sizeBytes,
-      reused: result.reused,
-    },
-    { status: result.reused ? 200 : 201 },
-  );
+  return storeAndRespond(request, user, file.name, new Uint8Array(await file.arrayBuffer()));
 }
 
 async function readBodyWithLimit(request: NextRequest, limit: number): Promise<Blob | "too_large"> {

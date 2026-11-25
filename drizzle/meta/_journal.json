@@ -225,6 +225,13 @@
       "when": 1795542389766,
       "tag": "0031_out_of_calibration",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1795612571635,
+      "tag": "0032_notification_href_and_timeouts",
+      "breakpoints": true
     }
   ]
 }

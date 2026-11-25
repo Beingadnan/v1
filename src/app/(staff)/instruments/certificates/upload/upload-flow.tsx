@@ -17,6 +17,7 @@ import {
   readCertificateUploadAction,
   saveCertificateUploadsAction,
 } from "../../actions";
+import { postFile } from "@/lib/upload-client";
 
 type Item =
   | { key: string; state: "reading"; fileName: string }
@@ -34,7 +35,7 @@ async function upload(file: File): Promise<{ id: string } | { error: string }> {
   const body = new FormData();
   body.set("file", file, file.name);
   try {
-    const response = await fetch("/api/files", { method: "POST", body });
+    const response = await postFile(body);
     const json = (await response.json().catch(() => ({}))) as { id?: string; error?: string };
     if (response.status === 401) return { error: "You were signed out. Sign in again." };
     if (!response.ok || !json.id) return { error: json.error ?? "The upload failed. Try again." };

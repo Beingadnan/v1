@@ -4,6 +4,7 @@ import { db } from "@/db/client";
 import { certificatePdf } from "@/domain/instruments/pdf-service";
 import { userForRoute } from "@/lib/auth/route-auth";
 import { blobStore } from "@/lib/storage";
+import { streamBytes } from "@/lib/storage/stream";
 
 /** GET /instruments/certificates/:id/pdf — the certificate PDF, shown in the browser. */
 export async function GET(
@@ -16,7 +17,7 @@ export async function GET(
   const pdf = await certificatePdf(db, blobStore, user, certificateId);
   if (!pdf) return new Response("No PDF for this certificate.", { status: 404 });
   const ascii = pdf.fileName.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "");
-  return new Response(new Uint8Array(pdf.bytes), {
+  return new Response(streamBytes(pdf.bytes), {
     headers: {
       "Content-Type": pdf.contentType ?? "application/pdf",
       "Content-Disposition": `inline; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(pdf.fileName)}`,

@@ -22,6 +22,12 @@ export async function GET(
     .where(and(eq(notifications.id, id), eq(notifications.userId, session.user.id)));
   if (!n) return NextResponse.redirect(new URL("/", request.url));
   await markRead(db, session.user, id);
-  // Only paths inside the app (checked by the database too).
-  return NextResponse.redirect(new URL(n.href.startsWith("/") ? n.href : "/", request.url));
+  // Only paths inside the app (checked by the database too): "//host" and "/\host"
+  // would open another site.
+  const target = new URL(INSIDE_APP.test(n.href) ? n.href : "/", request.url);
+  return NextResponse.redirect(
+    target.origin === request.nextUrl.origin ? target : new URL("/", request.url),
+  );
 }
+
+const INSIDE_APP = /^\/([^/\\]|$)/;

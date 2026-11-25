@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 
 import { readSketchAction } from "../actions";
 import { LayoutDiagram, levelOfZ } from "./layout-diagram";
+import { postFile } from "@/lib/upload-client";
 
 export type UseSketch = SketchRoomLayout & { fileId: string };
 
@@ -52,7 +53,7 @@ export function SketchUpload({
     body.append("file", file, file.name || "sketch.jpg");
     let res: Response;
     try {
-      res = await fetch("/api/files", { method: "POST", body });
+      res = await postFile(body);
     } catch {
       setStage("idle");
       setError("No connection. Try again when you're online.");

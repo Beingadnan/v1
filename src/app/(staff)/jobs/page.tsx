@@ -17,7 +17,7 @@ import {
 import { db } from "@/db/client";
 import { can } from "@/domain/auth/permissions";
 import { todayInIndia } from "@/domain/clients/requalification";
-import { listJobs, type JobListRow } from "@/domain/jobs/queries";
+import { JOB_LIST_LIMIT, listJobs, type JobListRow } from "@/domain/jobs/queries";
 import { JOB_STATUS_LABELS, ORDER_TYPE_SHORT, type OrderType } from "@/domain/jobs/types";
 import { requirePermission } from "@/lib/auth/dal";
 import { cn } from "@/lib/utils";
@@ -163,6 +163,13 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
           </Button>
         </form>
       </div>
+
+      {rows.length >= JOB_LIST_LIMIT ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          Showing the first {JOB_LIST_LIMIT} jobs in this order. Search, or choose a narrower list
+          above, to find the others.
+        </p>
+      ) : null}
 
       {rows.length === 0 ? (
         <EmptyState

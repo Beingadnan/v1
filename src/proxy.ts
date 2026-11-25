@@ -32,7 +32,11 @@ export function proxy(request: NextRequest) {
   }
 
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
-  const csp = buildContentSecurityPolicy(nonce, process.env.NODE_ENV === "development");
+  const csp = buildContentSecurityPolicy(
+    nonce,
+    process.env.NODE_ENV === "development",
+    Boolean(process.env.BLOB_READ_WRITE_TOKEN),
+  );
 
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-nonce", nonce);
@@ -55,7 +59,11 @@ export function proxy(request: NextRequest) {
 const REPORT_PDF =
   /^\/(studies\/[^/]+\/report\/[^/]+|client\/reports\/[^/]+\/pdf|jobs\/[^/]+\/wcr\/[^/]+|client\/wcr\/[^/]+\/pdf)$/;
 
-export function buildContentSecurityPolicy(nonce: string, isDev: boolean): string {
+export function buildContentSecurityPolicy(
+  nonce: string,
+  isDev: boolean,
+  directUploads = false,
+): string {
   const directives = [
     "default-src 'self'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ""}`,
@@ -68,7 +76,8 @@ export function buildContentSecurityPolicy(nonce: string, isDev: boolean): strin
     "style-src-attr 'unsafe-inline'",
     "img-src 'self' blob: data:",
     "font-src 'self'",
-    "connect-src 'self'",
+    // Large uploads go from the browser straight to Vercel Blob (src/lib/upload-client.ts).
+    `connect-src 'self'${directUploads ? " https://vercel.com" : ""}`,
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",

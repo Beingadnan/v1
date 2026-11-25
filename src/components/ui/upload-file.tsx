@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { uploadFailure } from "@/lib/upload-message";
+import { postFile } from "@/lib/upload-client";
 
 /**
  * Uploads one file (PDF or photo) as soon as it is picked and puts its id in
@@ -33,7 +34,7 @@ export function UploadFile({
     try {
       const body = new FormData();
       body.append("file", f, f.name);
-      const res = await fetch("/api/files", { method: "POST", body });
+      const res = await postFile(body);
       const json = (await res.json().catch(() => ({}))) as { id?: string; error?: string };
       if (res.status === 401) setErr("You were signed out. Sign in again, then retry.");
       else if (!res.ok || !json.id) setErr(uploadFailure(res.status, json.error, f.name));

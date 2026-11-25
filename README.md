@@ -205,6 +205,17 @@ npm run start:lan
 Others open `http://<this computer's IP>:3000`. In production, host on Vercel in Singapore
 (`vercel.json`), next to the database.
 
+## Production notes
+
+- **Vercel:** files above 4 MB upload straight to Vercel Blob and downloads are streamed,
+  so the 4.5 MB function limit doesn't apply (ADR 0019). `TRUST_PROXY` stays `false`:
+  the client's address is read from Vercel's own headers.
+- **Database:** migration 0032 gives the app's role a 60 s statement timeout and a 60 s
+  idle-in-transaction timeout. Run long migrations over Neon's direct (non-pooler) URL.
+- **Monitoring:** `GET /api/health` answers `{"ok":true}` when the database is reachable
+  (point an uptime monitor at it). Every failed request is logged as one JSON line with
+  the reference shown on the error page.
+
 ## Checks
 
 | Command                    | What it does                                                |

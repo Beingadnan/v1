@@ -4,6 +4,7 @@ import { db } from "@/db/client";
 import { ft12Pdf } from "@/domain/field/queries";
 import { userForRoute } from "@/lib/auth/route-auth";
 import { blobStore } from "@/lib/storage";
+import { streamBytes } from "@/lib/storage/stream";
 
 /** GET /studies/:id/ft12 — the sensor location sheet (FT-12), shown in the browser. */
 export async function GET(
@@ -16,7 +17,7 @@ export async function GET(
   const pdf = await ft12Pdf(db, blobStore, user, studyId);
   if (!pdf) return new Response("No such study.", { status: 404 });
   const ascii = pdf.fileName.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "");
-  return new Response(new Uint8Array(pdf.bytes), {
+  return new Response(streamBytes(pdf.bytes), {
     headers: {
       "Content-Type": "application/pdf",
       "Content-Disposition": `inline; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(pdf.fileName)}`,

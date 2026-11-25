@@ -59,7 +59,8 @@ export const notifications = pgTable(
     }).onDelete("restrict"),
     check("notifications_kind_check", sql`${t.kind} in (${list(NOTIFICATION_KINDS)})`),
     check("notifications_email_check", sql`${t.emailStatus} in (${list(EMAIL_STATUSES)})`),
-    check("notifications_href_check", sql`${t.href} ~ '^/'`),
+    // A path inside the app: "/x", never "//host" or "/\\host" (both open another site).
+    check("notifications_href_check", sql`${t.href} ~ '^/([^/\\\\]|$)'`),
   ],
 );
 

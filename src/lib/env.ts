@@ -45,9 +45,11 @@ const envSchema = z.object({
     .default("http://localhost:3000")
     .transform((v) => v.replace(/\/$/, "")),
   /**
-   * Set to "true" only when the app runs behind a reverse proxy that sets
-   * X-Forwarded-For (Railway, Render, nginx). Otherwise that header is ignored,
-   * because a client could forge it to dodge sign-in throttling.
+   * Set to "true" only when the app runs behind ONE reverse proxy that appends the
+   * client's address to X-Forwarded-For (Railway, Render, nginx); the right-most
+   * entry is then used (with a CDN in front of that proxy it would be the CDN's). Otherwise that header is ignored, because a client could
+   * forge it to dodge sign-in throttling. Not needed on Vercel, which sets the
+   * real address itself (see src/lib/request-info.ts).
    */
   TRUST_PROXY: z
     .enum(["true", "false"])

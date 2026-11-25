@@ -74,9 +74,13 @@ const realFiles: Array<[string, string | null]> = [
   ["FW_ WH013.eml", null],
 ];
 
-describe.skipIf(!existsSync(fixtureDir))("real QA Tech files", () => {
-  it.each(realFiles)("%s", (name, expected) => {
-    const result = checkFileType(name, readFileSync(path.join(fixtureDir, name)));
-    expect(result.ok ? result.type : null).toBe(expected);
-  });
+describe("real QA Tech files", () => {
+  // Each file is checked when it is there, so a partial copy of the folder still runs.
+  for (const [name, expected] of realFiles) {
+    const file = path.join(fixtureDir, name);
+    it.skipIf(!existsSync(file))(name, () => {
+      const result = checkFileType(name, readFileSync(file));
+      expect(result.ok ? result.type : null).toBe(expected);
+    });
+  }
 });

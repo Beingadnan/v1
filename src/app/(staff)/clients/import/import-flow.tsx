@@ -19,6 +19,7 @@ import {
 import type { ImportPreview } from "@/domain/clients/import/import-service";
 
 import { applyImportAction, previewImportAction } from "./actions";
+import { postFile } from "@/lib/upload-client";
 
 type Stage =
   | { name: "choose"; error?: string }
@@ -37,7 +38,7 @@ async function upload(file: File): Promise<{ id: string } | { error: string }> {
   const body = new FormData();
   body.set("file", file);
   try {
-    const response = await fetch("/api/files", { method: "POST", body });
+    const response = await postFile(body);
     const json = (await response.json()) as { id?: string; error?: string };
     if (!response.ok || !json.id) return { error: json.error ?? "The upload failed. Try again." };
     return { id: json.id };

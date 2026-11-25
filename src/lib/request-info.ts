@@ -14,11 +14,27 @@ export async function getRequestInfo(): Promise<RequestInfo> {
 }
 
 export function requestInfoFromHeaders(h: Headers): RequestInfo {
+  return clientInfo(h, { onVercel: process.env.VERCEL === "1", trustProxy: env.TRUST_PROXY });
+}
+
+/**
+ * Which address to believe:
+ * - On Vercel, its edge overwrites X-Forwarded-For and X-Real-IP with the address it
+ *   saw, so whatever a client sent is gone and either header is the real client.
+ * - Behind another reverse proxy (TRUST_PROXY=true), that proxy appends the address it
+ *   saw, so only the right-most entry is trustworthy; anything to its left was sent by
+ *   the client and could be forged to dodge sign-in throttling.
+ * - Otherwise forwarded headers are ignored.
+ */
+export function clientInfo(
+  h: Headers,
+  options: { onVercel: boolean; trustProxy: boolean },
+): RequestInfo {
   let ip: string | undefined;
-  if (env.TRUST_PROXY) {
-    // The proxy appends the real client address; the left-most entry is the original client.
-    const forwarded = h.get("x-forwarded-for")?.split(",")[0]?.trim();
-    ip = forwarded ?? h.get("x-real-ip")?.trim();
+  if (options.onVercel) {
+    ip = h.get("x-real-ip")?.trim() || h.get("x-forwarded-for")?.split(",")[0]?.trim();
+  } else if (options.trustProxy) {
+    ip = h.get("x-forwarded-for")?.split(",").at(-1)?.trim() || h.get("x-real-ip")?.trim();
   }
   return {
     ipAddress: ip && isIP(ip) ? ip : undefined,
