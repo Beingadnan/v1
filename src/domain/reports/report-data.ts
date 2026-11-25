@@ -44,6 +44,7 @@ import { WORK_TYPE_LABELS, type WorkType } from "@/domain/jobs/types";
 import type { BlobStore } from "@/lib/storage/blob-store";
 
 import { renderReport, type ReportData } from "./report-pdf";
+import { POSITION_LEVELS, type PositionLevel } from "@/domain/field/layout";
 import { overridesOf } from "@/domain/field/override-service";
 
 import { assessedOutcome, conclusionText, observationText, type TemplateInput } from "./templates";
@@ -107,6 +108,9 @@ export async function reportContext(db: Exec, actor: SessionUser, study: Study, 
       z: studyPositions.z,
       ambient: studyPositions.ambient,
       note: studyPositions.note,
+      level: studyPositions.level,
+      heightCm: studyPositions.heightCm,
+      heightFrom: studyPositions.heightFrom,
       instrumentId: studyPositions.instrumentId,
       inst: instruments,
       model: instrumentModels,
@@ -369,6 +373,11 @@ export async function reportData(
       ambient: p.ambient,
       serial: p.inst ? p.inst.serialNo || p.inst.code : "",
       note: p.note,
+      level: (POSITION_LEVELS as readonly string[]).includes(p.level ?? "")
+        ? (p.level as PositionLevel)
+        : null,
+      heightCm: p.heightCm === null ? null : Number(p.heightCm),
+      heightFrom: p.heightFrom === "top" || p.heightFrom === "bottom" ? p.heightFrom : null,
     })),
     planFeatures: study.planFeatures,
     loggers: ctx.loggers,

@@ -15,12 +15,10 @@ import { formatDate, formatDateTime } from "@/lib/format";
 
 import { DueBadge } from "../../../due-badge";
 import { EquipmentForm, RetireEquipmentButton } from "../equipment-form";
+import { equipmentFormValues, equipmentPlaces } from "../form-values";
 import { finderHref, Trail } from "../../finder";
 
 export const metadata = { title: "Equipment" };
-
-/** numeric "-30.00" → "-30" for an editable input; null → "". */
-const plain = (value: string | number | null) => (value === null ? "" : String(Number(value)));
 
 export default async function EquipmentPage({
   params,
@@ -37,12 +35,7 @@ export default async function EquipmentPage({
   if (!isEquipmentType(item.type)) throw new Error(`Unknown equipment type ${item.type}`);
 
   // The current site/department stay selectable even if switched off since.
-  const sites = data.sites
-    .filter((s) => s.active || s.id === item.siteId)
-    .map((s) => ({ id: s.id, name: s.name }));
-  const departments = data.departments
-    .filter((d) => d.active || d.id === item.departmentId)
-    .map((d) => ({ id: d.id, name: d.name, siteId: d.siteId }));
+  const { sites, departments } = equipmentPlaces(data, item);
 
   // Where it is filed on the client page: site → department.
   const site = data.sites.find((x) => x.id === item.siteId);
@@ -123,34 +116,7 @@ export default async function EquipmentPage({
         departments={departments}
         readOnly={!canManage}
         typeDefaults={await getEffectiveTypeDefaults(db, actor.organisationId)}
-        values={{
-          id: item.id,
-          siteId: item.siteId,
-          departmentId: item.departmentId ?? "",
-          code: item.code,
-          name: item.name,
-          type: item.type,
-          location: item.location,
-          make: item.make,
-          model: item.model,
-          serialNo: item.serialNo,
-          lengthM: plain(item.lengthM),
-          widthM: plain(item.widthM),
-          heightM: plain(item.heightM),
-          setPointC: plain(item.setPointC),
-          tempMinC: plain(item.tempMinC),
-          tempMaxC: plain(item.tempMaxC),
-          rhMinPct: plain(item.rhMinPct),
-          rhMaxPct: plain(item.rhMaxPct),
-          defaultChannels: plain(item.defaultChannels),
-          readingIntervalMinutes: plain(item.readingIntervalMinutes),
-          studyDurationHours: plain(item.studyDurationHours),
-          requalificationMonths: plain(item.requalificationMonths),
-          lastStudyOn: item.lastStudyOn ?? "",
-          cycles: item.cycles,
-          seasonalMapping: item.seasonalMapping,
-          notes: item.notes,
-        }}
+        values={equipmentFormValues(item)}
       />
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-semibold">History</h2>

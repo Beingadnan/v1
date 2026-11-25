@@ -277,6 +277,40 @@ export function rollPastMidnight(times: number[]): { rows: number; first: number
   return rows > 0 ? { rows, first } : null;
 }
 
+/**
+ * Dates typed day first ("01-08-2026" for 1 Aug) that Excel stored month
+ * first (8 Jan) make the readings jump a month at midnight (QA Tech's PR-02,
+ * Nov 2026: 8 Jan to 8 Feb in one day of 5-minute readings). When every date
+ * can be swapped and only the swapped dates run on without a jump, they are
+ * swapped in place. Returns the first date as read and as swapped.
+ */
+export function swapDayMonth(times: number[]): { from: number; to: number } | null {
+  const DAY = 86_400_000;
+  const jumps = (xs: number[]) =>
+    xs.some((x, i) => i > 0 && (x - xs[i - 1]! > 2 * DAY || x - xs[i - 1]! < -DAY));
+  if (!jumps(times)) return null;
+  const swapped: number[] = [];
+  for (const t of times) {
+    const w = new Date(t + IST_OFFSET_MS);
+    const day = w.getUTCDate();
+    if (day > 12) return null;
+    swapped.push(
+      Date.UTC(
+        w.getUTCFullYear(),
+        day - 1,
+        w.getUTCMonth() + 1,
+        w.getUTCHours(),
+        w.getUTCMinutes(),
+        w.getUTCSeconds(),
+      ) - IST_OFFSET_MS,
+    );
+  }
+  if (jumps(swapped)) return null;
+  const out = { from: times[0]!, to: swapped[0]! };
+  swapped.forEach((t, i) => (times[i] = t));
+  return out;
+}
+
 // ------------------------------------------------------------------ sheet
 
 function parseSheet(sheet: Sheet): ParsedSheet | null {
@@ -334,6 +368,19 @@ function parseSheet(sheet: Sheet): ParsedSheet | null {
     });
   }
   if (times.length < 2) return null;
+  const swap = swapDayMonth(times);
+  if (swap) {
+    const day = (t: number) =>
+      new Date(t + IST_OFFSET_MS).toLocaleDateString("en-GB", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+        timeZone: "UTC",
+      });
+    notes.push(
+      `The dates were stored month first (the first as ${day(swap.from)}), so the readings jumped a month: read day first, from ${day(swap.to)}. Check this is the study's date.`,
+    );
+  }
   const rolled = rollPastMidnight(times);
   if (rolled) {
     const day = new Date(rolled.first + IST_OFFSET_MS).toLocaleDateString("en-GB", {

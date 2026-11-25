@@ -1,17 +1,35 @@
 import {
   BOX_EDGES,
+  LEVEL_NAMES,
+  levelOfPoint,
   projector,
   sizeOf,
   type Dimensions,
   type Point,
+  type PositionLevel,
   type ShapeObject,
 } from "@/domain/field/layout";
 import type { PlanFeature } from "@/domain/field/types";
 
-type P = { label: string; x: number; y: number; z: number; ambient: boolean };
+type P = {
+  label: string;
+  x: number;
+  y: number;
+  z: number;
+  ambient: boolean;
+  level?: PositionLevel | null;
+};
 
-/** Level colours, as on QA Tech's diagrams: top green, middle white, bottom blue. */
-export const LEVEL_FILL = { top: "#a6c93c", middle: "#ffffff", bottom: "#a8c8f8" } as const;
+/**
+ * Level colours, as on QA Tech's diagrams: top green, middle white, bottom
+ * blue; extreme top (under the ceiling) dark green.
+ */
+export const LEVEL_FILL: Record<PositionLevel, string> = {
+  extreme_top: "#4f7a1f",
+  top: "#a6c93c",
+  middle: "#ffffff",
+  bottom: "#a8c8f8",
+};
 export const levelOfZ = (z: number) => (z >= 0.67 ? "top" : z <= 0.33 ? "bottom" : "middle");
 
 /**
@@ -53,6 +71,11 @@ export function LayoutDiagram({
   const inside = points.filter((p) => !p.ambient);
   const outside = points.filter((p) => p.ambient);
   // Back loggers first, so front ones are drawn over them.
+  // Extreme top joins the legend only when a logger is there.
+  const legend: PositionLevel[] = inside.some((p) => levelOfPoint(p) === "extreme_top")
+    ? ["extreme_top", "top", "bottom", "middle"]
+    : ["top", "bottom", "middle"];
+  const step = legend.length > 3 ? 95 : 110;
   const spots = inside.map((p) => ({ p, q: at(p) })).sort((a, b) => b.p.y - a.p.y || a.p.z - b.p.z);
   const r = inside.length > 30 ? 11 : inside.length > 18 ? 13 : 15;
   const hiddenEdge = (a: Point, b: Point) =>
@@ -165,7 +188,7 @@ export function LayoutDiagram({
       ))}
 
       {spots.map(({ p, q }) => {
-        const level = levelOfZ(p.z);
+        const level = levelOfPoint(p);
         return (
           <g key={p.label}>
             <circle
@@ -182,7 +205,7 @@ export function LayoutDiagram({
               textAnchor="middle"
               fontSize={r * 0.75}
               fontWeight={700}
-              fill="#111111"
+              fill={level === "extreme_top" ? "#ffffff" : "#111111"}
             >
               {p.label.replace(/^L-0?/, "L")}
             </text>
@@ -198,11 +221,11 @@ export function LayoutDiagram({
 
       {/* Legend */}
       <line x1={W - legendW} y1={36} x2={W - legendW} y2={H - 8} stroke="#cccccc" />
-      {(["top", "bottom", "middle"] as const).map((level, i) => (
+      {legend.map((level, i) => (
         <g key={level}>
           <circle
             cx={W - legendW / 2}
-            cy={110 + i * 110}
+            cy={110 + i * step}
             r={22}
             fill={LEVEL_FILL[level]}
             stroke="#111111"
@@ -210,13 +233,13 @@ export function LayoutDiagram({
           />
           <text
             x={W - legendW / 2}
-            y={155 + i * 110}
+            y={155 + i * step}
             textAnchor="middle"
             fontSize={14}
             fontWeight={700}
             fill="#111111"
           >
-            {level[0]!.toUpperCase() + level.slice(1)}
+            {LEVEL_NAMES[level]}
           </text>
         </g>
       ))}

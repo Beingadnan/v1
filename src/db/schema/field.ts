@@ -44,6 +44,11 @@ export const studyPositions = pgTable(
     note: text("note").notNull().default(""),
     /** Outside the equipment: the room around it. */
     ambient: boolean("ambient").notNull().default(false),
+    /** Bottom, middle, top or extreme top, as chosen; null on older positions. */
+    level: text("level"),
+    /** Measured on site: centimetres from the floor or the ceiling of the box. */
+    heightCm: numeric("height_cm", { precision: 7, scale: 1 }),
+    heightFrom: text("height_from"),
     instrumentId: uuid("instrument_id"),
     placedAt: timestamp("placed_at", { withTimezone: true }),
     placedByUserId: uuid("placed_by_user_id").references((): AnyPgColumn => users.id, {
@@ -71,6 +76,14 @@ export const studyPositions = pgTable(
       sql`${t.x} between 0 and 1 and ${t.y} between 0 and 1 and ${t.z} between 0 and 1`,
     ),
     check("study_positions_label_check", sql`length(${t.label}) between 1 and 20`),
+    check(
+      "study_positions_level_check",
+      sql`${t.level} is null or ${t.level} in ('bottom', 'middle', 'top', 'extreme_top')`,
+    ),
+    check(
+      "study_positions_height_check",
+      sql`(${t.heightCm} is null and ${t.heightFrom} is null) or (${t.heightCm} >= 0 and ${t.heightFrom} in ('bottom', 'top'))`,
+    ),
   ],
 );
 

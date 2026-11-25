@@ -7,11 +7,15 @@ import {
   BOX_EDGES,
   describe,
   describeRoom,
+  heightText,
+  levelOfPoint,
   mm,
   projector,
   spreadLabels,
   type Dimensions,
+  type HeightFrom,
   type Point,
+  type PositionLevel,
 } from "@/domain/field/layout";
 import { drawPlan } from "@/domain/field/plan-pdf";
 import type { PlanFeature } from "@/domain/field/types";
@@ -29,6 +33,14 @@ import { FT09_FORM, type ReportLayout, type ReportSection, type SignBox } from "
  * the post-calibration sheet and the deviations. Certificates are joined on
  * afterwards (report-service). Pure: everything comes in as `ReportData`.
  */
+
+/** Level names in the report's elevation column and key. */
+const PLANE_NAMES: Record<PositionLevel, string> = {
+  extreme_top: "Extreme top",
+  top: "Top",
+  middle: "Mid",
+  bottom: "Bottom",
+};
 
 export type ReportData = {
   organisation: {
@@ -84,6 +96,9 @@ export type ReportData = {
     serial: string;
     /** Where it sits, as written on site ("Working height on wall-1 near pass box"). */
     note?: string;
+    level?: PositionLevel | null;
+    heightCm?: number | null;
+    heightFrom?: HeightFrom | null;
   }[];
   /** Doors, pass boxes, LAFs… marked on a room's plan. */
   planFeatures?: PlanFeature[];
@@ -996,7 +1011,7 @@ class Builder {
         .text(
           ascii(
             which
-              ? `Logger ${which.label}${p?.serial ? ` (Sr. ${p.serial})` : ""}: ${f1(which.avg)} °C average${p ? `, ${this.plane(p.z)}` : ""}`
+              ? `Logger ${which.label}${p?.serial ? ` (Sr. ${p.serial})` : ""}: ${f1(which.avg)} °C average${p ? `, ${this.plane(p)}` : ""}`
               : "-",
           ),
           M + 10,
@@ -1010,7 +1025,7 @@ class Builder {
     const inside = d.positions.filter((p) => !p.ambient);
     const levels = new Map<string, string[]>();
     for (const p of inside) {
-      const k = this.plane(p.z).split(" (")[0]!;
+      const k = this.plane(p).split(" (")[0]!;
       const tag = hot.has(p.id) ? " (hot)" : cold.has(p.id) ? " (cold)" : "";
       levels.set(k, [...(levels.get(k) ?? []), p.label + tag]);
     }
@@ -1018,7 +1033,7 @@ class Builder {
     const v = this.verdict();
     const lines: [string, boolean][] = [
       ["ELEVATION DISTRIBUTION", true],
-      ...["Top", "Mid", "Bottom"]
+      ...["Extreme top", "Top", "Mid", "Bottom"]
         .filter((k) => levels.has(k))
         .map((k) => [`${k}: ${levels.get(k)!.join(", ")}`, false] as [string, boolean]),
       [
@@ -1054,11 +1069,17 @@ class Builder {
     this.y = top + KEY_H;
   }
 
-  /** "Top (2.0 m)" from a point's height in the box (0 at the floor, 1 at the top). */
-  plane(z: number) {
+  /**
+   * "Top (2.0 m)" from a point's height in the box (0 at the floor, 1 at the
+   * top), or "Extreme top (5 cm from top)" as measured on site.
+   */
+  plane(p: ReportData["positions"][number]) {
+    const k = PLANE_NAMES[levelOfPoint(p)];
+    if (p.heightCm !== null && p.heightCm !== undefined && p.heightFrom) {
+      return `${k} (${heightText(p.heightCm, p.heightFrom)})`;
+    }
     const h = this.d.equipment.dims.heightM;
-    const k = z >= 0.67 ? "Top" : z <= 0.33 ? "Bottom" : "Mid";
-    return h ? `${k} (${(Math.round(z * h * 10) / 10).toFixed(1)} m)` : k;
+    return h ? `${k} (${(Math.round(p.z * h * 10) / 10).toFixed(1)} m)` : k;
   }
 
   /** Where each logger sits and what it showed: QA Tech's placement reference table. */
@@ -1069,8 +1090,9 @@ class Builder {
     const cols: [string, number][] = [
       ["Location", w * 0.09],
       ["Logger Sr. No.", w * 0.14],
-      ["Elevation Plane", w * 0.14],
-      ["Placement Description", w * 0.4],
+      // Wide enough for "Extreme top (12.5 cm from top)".
+      ["Elevation Plane", w * 0.2],
+      ["Placement Description", w * 0.34],
       ["Status / Classification", w * 0.23],
     ];
     const head = () =>
@@ -1113,7 +1135,7 @@ class Builder {
       this.row(13, [
         [p.label, cols[0]![1], { bold: true, size: 7 }],
         [p.serial || "-", cols[1]![1], { size: 7 }],
-        [p.ambient ? "-" : this.plane(p.z), cols[2]![1], { size: 7 }],
+        [p.ambient ? "-" : this.plane(p), cols[2]![1], { size: 7 }],
         [where, cols[3]![1], { size: 7 }],
         ["", cols[4]![1]],
       ]);

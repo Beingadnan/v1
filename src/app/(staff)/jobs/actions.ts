@@ -3,6 +3,9 @@
 import { revalidatePath } from "next/cache";
 
 import { db } from "@/db/client";
+import { ClientsError } from "@/domain/clients/errors";
+import { getCompany, getEquipment } from "@/domain/clients/queries";
+import { getEffectiveTypeDefaults } from "@/domain/clients/type-defaults-service";
 import {
   addStudies,
   autoBook,
@@ -26,6 +29,9 @@ import type { Transition } from "@/domain/jobs/types";
 import { runAction, type ActionResult } from "@/lib/action-result";
 import { SESSION_ENDED, userForAction } from "@/lib/auth/dal";
 import { getRequestInfo } from "@/lib/request-info";
+
+import type { EquipmentFormValues } from "../clients/[companyId]/equipment/equipment-form";
+import { equipmentFormValues, equipmentPlaces } from "../clients/[companyId]/equipment/form-values";
 
 /**
  * Server actions for the Jobs screens. Each re-checks the session (and says
@@ -115,6 +121,40 @@ export async function siteEquipmentAction(
   const actor = await userForAction();
   if (!actor) return { ok: false, error: SESSION_ENDED };
   return runAction(() => siteEquipment(db, actor, clientSiteId));
+}
+
+/**
+ * What the equipment form needs to add an item to a client, or edit one, from
+ * the new job page without leaving it (QA Tech, Nov 2026).
+ */
+export async function equipmentFormAction(
+  companyId: string,
+  equipmentId: string | null,
+): Promise<
+  ActionResult<{
+    companyRequalificationMonths: number;
+    sites: { id: string; name: string }[];
+    departments: { id: string; name: string; siteId: string }[];
+    typeDefaults: Awaited<ReturnType<typeof getEffectiveTypeDefaults>>;
+    values: EquipmentFormValues | null;
+  }>
+> {
+  const actor = await userForAction();
+  if (!actor) return { ok: false, error: SESSION_ENDED };
+  return runAction(async () => {
+    const data = await getCompany(db, actor, companyId);
+    if (!data) throw new ClientsError("That client no longer exists.");
+    const found = equipmentId ? await getEquipment(db, actor, equipmentId) : null;
+    if (equipmentId && (!found || found.company.id !== companyId)) {
+      throw new ClientsError("That equipment no longer exists.");
+    }
+    return {
+      companyRequalificationMonths: data.company.requalificationMonths,
+      ...equipmentPlaces(data, found?.equipment),
+      typeDefaults: await getEffectiveTypeDefaults(db, actor.organisationId),
+      values: found ? equipmentFormValues(found.equipment) : null,
+    };
+  });
 }
 
 export async function updateJobAction(_prev: unknown, formData: FormData): Promise<ActionResult> {

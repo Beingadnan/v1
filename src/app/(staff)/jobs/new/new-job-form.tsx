@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2 } from "lucide-react";
+import { Loader2, Pencil, Plus } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
@@ -15,6 +15,8 @@ import { OrderFields } from "../order-fields";
 import { TeamPicker } from "../team-picker";
 
 import { createJobAction, siteEquipmentAction } from "../actions";
+
+import { EquipmentDialog } from "./equipment-dialog";
 
 type Staff = { id: string; name: string; role: string };
 
@@ -47,6 +49,7 @@ export function NewJobForm({
   qaSites,
   me,
   canSeeMoney,
+  canManageClients,
   initial,
 }: {
   clients: WizardClient[];
@@ -54,6 +57,8 @@ export function NewJobForm({
   qaSites: { id: string; code: string; name: string }[];
   me: { id: string; role: string };
   canSeeMoney: boolean;
+  /** May add and edit the client's equipment from here. */
+  canManageClients: boolean;
   initial: {
     companyId: string;
     siteId: string;
@@ -73,6 +78,8 @@ export function NewJobForm({
   const [filter, setFilter] = useState("");
   const [start, setStart] = useState(initial.plannedStart);
   const [end, setEnd] = useState(plusDays(initial.plannedStart, 3));
+  /** The equipment dialog: "new" to add, an item's id to edit it. */
+  const [editing, setEditing] = useState<string | null>(null);
 
   const company = clients.find((c) => c.id === companyId);
 
@@ -94,6 +101,25 @@ export function NewJobForm({
       }
       setEquipment(r.data);
       setTicked(initialTicks(r.data, []));
+    });
+  }
+
+  /** After adding or editing an item: the site's list again, the item ticked, other ticks kept. */
+  function reloadAfterSave(savedId: string) {
+    setEditing(null);
+    startLoading(async () => {
+      const r = await siteEquipmentAction(siteId);
+      if (!r.ok) {
+        setLoadError(r.error);
+        return;
+      }
+      setEquipment(r.data);
+      setTicked((prev) => {
+        const next = new Set([...prev].filter((id) => r.data.some((e) => e.id === id)));
+        // A new item, or one moved to this site: ticked. Moved away: dropped.
+        if (r.data.some((e) => e.id === savedId)) next.add(savedId);
+        return next;
+      });
     });
   }
 
@@ -123,6 +149,15 @@ export function NewJobForm({
 
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-6" noValidate>
+      {editing && companyId && siteId ? (
+        <EquipmentDialog
+          companyId={companyId}
+          siteId={siteId}
+          equipmentId={editing === "new" ? null : editing}
+          onClose={() => setEditing(null)}
+          onSaved={reloadAfterSave}
+        />
+      ) : null}
       <section
         aria-labelledby="where"
         className="flex flex-col gap-4 rounded-lg border border-border bg-surface p-4"
@@ -178,12 +213,20 @@ export function NewJobForm({
           <h2 id="what" className="font-semibold">
             2. Equipment
           </h2>
-          {equipment.length > 0 ? (
-            <p className="text-sm text-muted-foreground" aria-live="polite">
-              {ticked.size} of {equipment.length} ticked
-              {dueCount > 0 ? ` · ${dueCount} due` : ""}
-            </p>
-          ) : null}
+          <div className="flex flex-wrap items-center gap-3">
+            {equipment.length > 0 ? (
+              <p className="text-sm text-muted-foreground" aria-live="polite">
+                {ticked.size} of {equipment.length} ticked
+                {dueCount > 0 ? ` · ${dueCount} due` : ""}
+              </p>
+            ) : null}
+            {canManageClients && siteId ? (
+              <Button type="button" variant="secondary" size="sm" onClick={() => setEditing("new")}>
+                <Plus aria-hidden="true" />
+                Add equipment
+              </Button>
+            ) : null}
+          </div>
         </div>
         {loading ? (
           <p className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -201,10 +244,22 @@ export function NewJobForm({
         ) : equipment.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             No equipment is recorded at this site.{" "}
-            <Link href={`/clients/${companyId}`} className="text-primary underline">
-              Add it on the client&apos;s page
-            </Link>{" "}
-            or import their list, then come back.
+            {canManageClients ? (
+              <>
+                Add it here with <strong>Add equipment</strong>, or{" "}
+                <Link href={`/clients/${companyId}`} className="text-primary underline">
+                  import their list on the client&apos;s page
+                </Link>
+                .
+              </>
+            ) : (
+              <>
+                <Link href={`/clients/${companyId}`} className="text-primary underline">
+                  Add it on the client&apos;s page
+                </Link>{" "}
+                or import their list, then come back.
+              </>
+            )}
           </p>
         ) : (
           <>
@@ -274,6 +329,23 @@ export function NewJobForm({
                     >
                       {DUE_LABEL[e.due]}
                     </span>
+                    {canManageClients ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`Edit ${e.code}`}
+                        onClick={(ev) => {
+                          // Inside the row's label: editing mustn't tick or untick it.
+                          ev.preventDefault();
+                          setEditing(e.id);
+                        }}
+                        className="-my-1"
+                      >
+                        <Pencil aria-hidden="true" />
+                        Edit
+                      </Button>
+                    ) : null}
                   </label>
                   {ticked.has(e.id) ? <CalibrationChoice e={e} /> : null}
                 </li>

@@ -33,6 +33,7 @@ import type { BlobStore } from "@/lib/storage/blob-store";
 
 import { cycleProgress } from "./field-service";
 import { renderFt12 } from "./ft12-pdf";
+import { POSITION_LEVELS, type PositionLevel } from "./layout";
 import { ROUTINE, type CycleKey, type StudyStatus } from "./types";
 import { calibrationOf } from "@/domain/jobs/studies";
 import { effectiveResult, overridesOf } from "./override-service";
@@ -174,6 +175,9 @@ export async function getFieldStudy(db: Database, actor: SessionUser, studyId: s
           z: studyPositions.z,
           note: studyPositions.note,
           ambient: studyPositions.ambient,
+          level: studyPositions.level,
+          heightCm: studyPositions.heightCm,
+          heightFrom: studyPositions.heightFrom,
           instrumentId: studyPositions.instrumentId,
           placedAt: studyPositions.placedAt,
           code: instruments.code,
@@ -262,6 +266,9 @@ export async function getFieldStudy(db: Database, actor: SessionUser, studyId: s
           z: studyPositions.z,
           note: studyPositions.note,
           ambient: studyPositions.ambient,
+          level: studyPositions.level,
+          heightCm: studyPositions.heightCm,
+          heightFrom: studyPositions.heightFrom,
         })
         .from(studyPositions)
         .innerJoin(studies, eq(studies.id, studyPositions.studyId))
@@ -290,6 +297,7 @@ export async function getFieldStudy(db: Database, actor: SessionUser, studyId: s
                   x: Number(p.x),
                   y: Number(p.y),
                   z: Number(p.z),
+                  ...heights(p),
                 })),
               },
         ),
@@ -338,7 +346,14 @@ export async function getFieldStudy(db: Database, actor: SessionUser, studyId: s
       const cover = p.instrumentId
         ? certificateCovering(certs.get(p.instrumentId) ?? [], job.plannedStart)
         : null;
-      return { ...p, x: Number(p.x), y: Number(p.y), z: Number(p.z), certificate: cover };
+      return {
+        ...p,
+        x: Number(p.x),
+        y: Number(p.y),
+        z: Number(p.z),
+        ...heights(p),
+        certificate: cover,
+      };
     }),
     cycles: cycleProgress(cycles, events, study.workType === "thermal_validation"),
     events,
@@ -396,4 +411,15 @@ export async function ft12Pdf(
   });
   const fileName = `FT-12 ${s.equipment.code} ${s.job.number}.pdf`.replace(/[\\/:*?"<>|]+/g, "-");
   return { bytes, fileName };
+}
+
+/** A position's chosen level and measured height, typed. */
+function heights(p: { level: string | null; heightCm: string | null; heightFrom: string | null }) {
+  return {
+    level: (POSITION_LEVELS as readonly string[]).includes(p.level ?? "")
+      ? (p.level as PositionLevel)
+      : null,
+    heightCm: p.heightCm === null ? null : Number(p.heightCm),
+    heightFrom: p.heightFrom === "top" || p.heightFrom === "bottom" ? p.heightFrom : null,
+  } as const;
 }

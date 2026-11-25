@@ -786,7 +786,7 @@ export function DataPanel({ data: d }: { data: StudyData }) {
                     <td className="px-2 py-1 whitespace-nowrap">{when(r.t)}</td>
                     {d.preview!.columns.map((c) => (
                       <td key={c.id} className="px-2 py-1 text-right">
-                        {c.values[r.i] ?? "—"}
+                        {c.values[r.i] == null ? "—" : Number(c.values[r.i]!.toFixed(4))}
                       </td>
                     ))}
                   </tr>

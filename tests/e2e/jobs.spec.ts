@@ -78,7 +78,29 @@ test("phase 4 exit test: a Watson job with 2 freezers, found by PO, held back by
     .selectOption({ label: `Watson ${run} Pharma (W${run})` });
   // Freezer A is due on 09.11.2026, so it comes ticked.
   await expect(page.getByText("1 of 2 ticked · 1 due")).toBeVisible();
+
+  // Equipment is added and edited from here, without leaving the job (QA Tech, Nov 2026).
+  await page.getByRole("button", { name: "Add equipment" }).click();
+  let box = page.getByRole("dialog");
+  await box.getByLabel("Equipment ID").fill(`PR-${run}`);
+  await box.getByLabel("Equipment name").fill("Pharmaceutical Refrigerator");
+  await box.getByLabel("Type").selectOption({ label: "Refrigerator" });
+  await box.getByRole("button", { name: "Add equipment" }).click();
+  await expect(box).toHaveCount(0);
+  await expect(page.getByText("2 of 3 ticked · 1 due")).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: new RegExp(`^PR-${run} `) })).toBeChecked();
+  await page.getByRole("button", { name: `Edit PR-${run}` }).click();
+  box = page.getByRole("dialog");
+  await expect(box.getByLabel("Equipment ID")).toHaveValue(`PR-${run}`);
+  await box.getByLabel("Equipment name").fill("Pharmaceutical Refrigerator 2");
+  await box.getByRole("button", { name: "Save changes" }).click();
+  await expect(box).toHaveCount(0);
+  await expect(page.getByText("Pharmaceutical Refrigerator 2")).toBeVisible();
+  // Still ticked; this job is for the freezers, so it comes off again.
+  await page.getByRole("checkbox", { name: new RegExp(`^PR-${run} `) }).uncheck();
+  await expect(page.getByText("1 of 3 ticked · 1 due")).toBeVisible();
   await page.getByRole("button", { name: "Tick all" }).click();
+  await page.getByRole("checkbox", { name: new RegExp(`^PR-${run} `) }).uncheck();
   // Each freezer's study runs 4 cycles of 24 h: 03.06 to 07.06.2030 covers it.
   await page.getByLabel("First day on site").fill("2030-06-03");
   await page.getByLabel("Data due by").fill("2030-06-07");

@@ -110,6 +110,7 @@ export function EquipmentForm({
   startAt,
   typeDefaults,
   readOnly,
+  onSaved,
 }: {
   companyId: string;
   companyRequalificationMonths: number;
@@ -121,6 +122,8 @@ export function EquipmentForm({
   /** QA Tech's defaults per type (Settings); fill empty fields when a type is chosen. */
   typeDefaults: Record<EquipmentType, TypeDefaults>;
   readOnly?: boolean;
+  /** In a dialog (a new job): called with the saved item instead of opening its page. */
+  onSaved?: (id: string) => void;
 }) {
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
@@ -154,8 +157,10 @@ export function EquipmentForm({
   );
 
   useEffect(() => {
-    if (result?.ok && isNew) router.push(`/clients/${companyId}/equipment/${result.data.id}`);
-  }, [result, isNew, router, companyId]);
+    if (!result?.ok) return;
+    if (onSaved) onSaved(result.data.id);
+    else if (isNew) router.push(`/clients/${companyId}/equipment/${result.data.id}`);
+  }, [result, isNew, router, companyId, onSaved]);
 
   /**
    * Choosing a type on a new item fills the empty fields from that type's

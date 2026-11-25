@@ -8,7 +8,61 @@
 import { roomWalls, suggestLoggerCount } from "@/domain/clients/study-defaults";
 
 export type Point = { x: number; y: number; z: number };
-export type LayoutPoint = Point & { label: string; note: string; ambient: boolean };
+
+/**
+ * The level a logger is on in a box. "Extreme top" is right under the ceiling,
+ * above the top shelf, where warm air collects (QA Tech, Nov 2026).
+ */
+export const POSITION_LEVELS = ["bottom", "middle", "top", "extreme_top"] as const;
+export type PositionLevel = (typeof POSITION_LEVELS)[number];
+export const LEVEL_NAMES: Record<PositionLevel, string> = {
+  bottom: "Bottom",
+  middle: "Middle",
+  top: "Top",
+  extreme_top: "Extreme top",
+};
+/** Where a level sits when its height wasn't measured, as a fraction of the height. */
+export const LEVEL_Z: Record<PositionLevel, number> = {
+  bottom: 0.1,
+  middle: 0.5,
+  top: 0.9,
+  extreme_top: 0.98,
+};
+export type HeightFrom = "bottom" | "top";
+
+/** A level from a height alone, for positions saved before levels were chosen. */
+export function levelFromZ(z: number): PositionLevel {
+  return z >= 0.95 ? "extreme_top" : z >= 0.67 ? "top" : z <= 0.33 ? "bottom" : "middle";
+}
+
+/** The level chosen for a position, or the one its height gives. */
+export const levelOfPoint = (p: { z: number; level?: PositionLevel | null }): PositionLevel =>
+  p.level ?? levelFromZ(p.z);
+
+/**
+ * The height as a fraction from a measured distance, e.g. 15 cm from the top
+ * of a box 180 cm tall is 0.917. Null when the box's height isn't known.
+ */
+export function zFromHeight(cm: number, from: HeightFrom, heightM: number | null): number | null {
+  if (!heightM || heightM <= 0) return null;
+  const f = Math.min(1, Math.max(0, cm / (heightM * 100)));
+  return Math.round((from === "top" ? 1 - f : f) * 10000) / 10000;
+}
+
+/** "15 cm from top". */
+export const heightText = (cm: number, from: HeightFrom) =>
+  `${Number(cm.toFixed(1))} cm from ${from}`;
+
+export type LayoutPoint = Point & {
+  label: string;
+  note: string;
+  ambient: boolean;
+  /** Chosen on the layout; absent on older positions (their height gives it). */
+  level?: PositionLevel | null;
+  /** Measured on site: how far the logger is from the floor or the ceiling. */
+  heightCm?: number | null;
+  heightFrom?: HeightFrom | null;
+};
 /** Something drawn inside the room on the sketch: footprint and height as fractions. */
 export type ShapeObject = {
   kind: string;
@@ -59,8 +113,19 @@ const OUT = 0.9;
 export const label = (n: number) => `L-${String(n).padStart(2, "0")}`;
 
 /** "Bottom front left corner", "Middle level centre"… for the table and FT-12. */
-export function describe({ x, y, z }: Point, levels = 3): string {
-  const level = levels === 1 ? "" : z <= 0.25 ? "Bottom" : z >= 0.75 ? "Top" : "Middle";
+export function describe({ x, y, z }: Point, levels = 3, chosen?: PositionLevel | null): string {
+  const level =
+    levels === 1
+      ? ""
+      : chosen
+        ? LEVEL_NAMES[chosen]
+        : z <= 0.25
+          ? "Bottom"
+          : z >= 0.95
+            ? "Extreme top"
+            : z >= 0.75
+              ? "Top"
+              : "Middle";
   const side = (v: number, low: string, high: string) => (v <= 0.25 ? low : v >= 0.75 ? high : "");
   const depth = side(y, "front", "back");
   const across = side(x, "left", "right");

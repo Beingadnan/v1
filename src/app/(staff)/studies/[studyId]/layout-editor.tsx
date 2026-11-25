@@ -10,12 +10,18 @@ import { Input } from "@/components/ui/form-controls";
 import {
   describe,
   describeRoom,
+  heightText,
   label as labelFor,
+  LEVEL_Z,
+  levelOfPoint,
   sizeOf,
   workingZ,
   type Dimensions,
+  type HeightFrom,
   type LayoutPoint,
+  type PositionLevel,
   type Shape,
+  zFromHeight,
 } from "@/domain/field/layout";
 import {
   PLAN_FEATURE_KINDS,
@@ -50,16 +56,18 @@ const MARK_SPOTS = [
 ];
 const markWithUid = (f: PlanFeature): Mark => ({ ...f, uid: newId() });
 
-const BOX_LEVELS = [
-  { z: 0.1, name: "Bottom" },
-  { z: 0.5, name: "Middle" },
-  { z: 0.9, name: "Top" },
+/** A box's levels; extreme top is under the ceiling, above the top shelf. */
+const BOX_LEVELS: { z: number; name: string; key: PositionLevel | null }[] = [
+  { z: LEVEL_Z.bottom, name: "Bottom", key: "bottom" },
+  { z: LEVEL_Z.middle, name: "Middle", key: "middle" },
+  { z: LEVEL_Z.top, name: "Top", key: "top" },
+  { z: LEVEL_Z.extreme_top, name: "Extreme top", key: "extreme_top" },
 ];
 /** A room is mostly mapped at working height; floor and ceiling for hot or cold spots. */
 const roomLevels = (heightM: number | null) => [
-  { z: 0.05, name: "Floor" },
-  { z: Math.round(workingZ(heightM) * 1000) / 1000, name: "Working height" },
-  { z: 0.95, name: "Ceiling" },
+  { z: 0.05, name: "Floor", key: null },
+  { z: Math.round(workingZ(heightM) * 1000) / 1000, name: "Working height", key: null },
+  { z: 0.95, name: "Ceiling", key: null },
 ];
 const clamp = (v: number) => Math.round(Math.min(1, Math.max(0, v)) * 1000) / 1000;
 
@@ -104,8 +112,26 @@ export function LayoutEditor({
   const LEVELS = room ? roomLevels(dims.heightM) : BOX_LEVELS;
   const levelOf = (z: number) =>
     LEVELS.reduce((best, l) => (Math.abs(l.z - z) < Math.abs(best - z) ? l.z : best), LEVELS[0]!.z);
-  const noteFor = (p: { x: number; y: number; z: number }) =>
-    room ? describeRoom(p, dims.heightM) : describe(p);
+  /** The level a position is drawn on: its chosen one in a box, the nearest in a room. */
+  const groupOf = (p: { z: number; level?: PositionLevel | null }) =>
+    room ? levelOf(p.z) : LEVEL_Z[levelOfPoint(p)];
+  const noteFor = (p: {
+    x: number;
+    y: number;
+    z: number;
+    level?: PositionLevel | null;
+    heightCm?: number | null;
+    heightFrom?: HeightFrom | null;
+  }) =>
+    (room ? describeRoom(p, dims.heightM) : describe(p, 3, p.level)) +
+    (p.heightCm !== null && p.heightCm !== undefined && p.heightFrom
+      ? `, ${heightText(p.heightCm, p.heightFrom)}`
+      : "");
+  /** The height from a measured distance, when the box's height is known. */
+  const zOf = (p: { z: number; heightCm?: number | null; heightFrom?: HeightFrom | null }) =>
+    p.heightCm !== null && p.heightCm !== undefined && p.heightFrom
+      ? (zFromHeight(p.heightCm, p.heightFrom, dims.heightM) ?? p.z)
+      : p.z;
   const firstLevel = levelOf(initial.find((p) => !p.ambient)?.z ?? (room ? 0.4 : 0.1));
   const [points, setPoints] = useState<Point[]>(() => initial.map(withUid));
   const [level, setLevel] = useState(firstLevel);
@@ -135,7 +161,7 @@ export function LayoutEditor({
     change(points.map((p) => (p.uid === uid ? { ...p, ...patch } : p)));
   const selectedLabel = points.find((p) => p.uid === selected)?.label ?? null;
 
-  const onLevel = points.filter((p) => !p.ambient && levelOf(p.z) === level);
+  const onLevel = points.filter((p) => !p.ambient && groupOf(p) === level);
 
   // Plan: length across, width up the screen (front of the equipment at the bottom).
   const PW = 320;
@@ -159,7 +185,7 @@ export function LayoutEditor({
     }
     const uid = drag.current!;
     setPoints((ps) =>
-      ps.map((p) => (p.uid === uid ? { ...p, x, y, note: noteFor({ x, y, z: p.z }) } : p)),
+      ps.map((p) => (p.uid === uid ? { ...p, x, y, note: noteFor({ ...p, x, y }) } : p)),
     );
     setDirty(true);
   }
@@ -213,7 +239,13 @@ export function LayoutEditor({
             x: 0.5,
             y: 0.5,
             z: level,
-            note: noteFor({ x: 0.5, y: 0.5, z: level }),
+            level: LEVELS.find((l) => l.z === level)?.key ?? null,
+            note: noteFor({
+              x: 0.5,
+              y: 0.5,
+              z: level,
+              level: LEVELS.find((l) => l.z === level)?.key ?? null,
+            }),
             ambient: false,
           },
     );
@@ -228,13 +260,16 @@ export function LayoutEditor({
   function save() {
     start(async () => {
       const r = await saveLayoutAction(studyId, {
-        points: points.map(({ label, x, y, z, note, ambient }) => ({
+        points: points.map(({ label, x, y, z, note, ambient, level, heightCm, heightFrom }) => ({
           label,
           x,
           y,
           z,
           note,
           ambient,
+          level: level ?? null,
+          heightCm: heightCm ?? null,
+          heightFrom: heightCm === null || heightCm === undefined ? null : (heightFrom ?? null),
         })),
         features: marks.map(({ kind, label, x, y }) => ({ kind, label, x, y })),
         ...(shape ? { shape } : {}),
@@ -324,7 +359,7 @@ export function LayoutEditor({
               const p = points.find((q) => q.label === label);
               if (!p) return;
               setSelected(p.uid);
-              if (!p.ambient) setLevel(levelOf(p.z));
+              if (!p.ambient) setLevel(groupOf(p));
             }}
           />
         ) : room ? (
@@ -654,23 +689,44 @@ export function LayoutEditor({
                 className="min-w-40 flex-1"
               />
               {!p.ambient ? (
-                <select
-                  aria-label={`${p.label} height`}
-                  value={levelOf(p.z)}
-                  disabled={readOnly}
-                  onChange={(e) => {
-                    const z = Number(e.target.value);
-                    update(p.uid, { z, note: noteFor({ x: p.x, y: p.y, z }) });
-                    setLevel(z);
-                  }}
-                  className="h-9 rounded-md border border-input bg-surface px-2 text-sm"
-                >
-                  {LEVELS.map((l) => (
-                    <option key={l.z} value={l.z}>
-                      {l.name}
-                    </option>
-                  ))}
-                </select>
+                <>
+                  <select
+                    aria-label={`${p.label} level`}
+                    value={groupOf(p)}
+                    disabled={readOnly}
+                    onChange={(e) => {
+                      const at = LEVELS.find((l) => l.z === Number(e.target.value))!;
+                      const next = { ...p, level: at.key, z: at.z };
+                      next.z = zOf(next);
+                      update(p.uid, { level: at.key, z: next.z, note: noteFor(next) });
+                      setLevel(at.z);
+                    }}
+                    className="h-9 rounded-md border border-input bg-surface px-2 text-sm"
+                  >
+                    {LEVELS.map((l) => (
+                      <option key={l.z} value={l.z}>
+                        {l.name}
+                      </option>
+                    ))}
+                  </select>
+                  <Height
+                    label={p.label}
+                    cm={p.heightCm ?? null}
+                    from={p.heightFrom ?? "bottom"}
+                    disabled={readOnly}
+                    onChange={(cm, from) => {
+                      // Keep the level it was on; the height places it exactly within it.
+                      const next = {
+                        ...p,
+                        level: p.level ?? (room ? null : levelOfPoint(p)),
+                        heightCm: cm,
+                        heightFrom: cm === null ? null : from,
+                      };
+                      next.z = cm === null ? groupOf(next) : zOf(next);
+                      update(p.uid, { ...next, note: noteFor(next) });
+                    }}
+                  />
+                </>
               ) : (
                 <span className="text-xs text-muted-foreground">ambient</span>
               )}
@@ -689,6 +745,12 @@ export function LayoutEditor({
               ) : null}
             </li>
           ))}
+          {!dims.heightM && points.some((p) => p.heightCm !== null && p.heightCm !== undefined) ? (
+            <li className="px-3 py-2 text-xs text-attention">
+              The equipment&apos;s height isn&apos;t recorded, so heights in cm are printed but
+              can&apos;t place the loggers exactly. Add the height on the equipment.
+            </li>
+          ) : null}
         </ul>
       ) : (
         <p className="text-sm text-muted-foreground">
@@ -722,5 +784,54 @@ export function LayoutEditor({
         </Button>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * How far the logger is from the floor or the ceiling, as measured on site
+ * ("5 cm from top"). Places it exactly when the box's height is known.
+ */
+function Height({
+  label,
+  cm,
+  from,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  cm: number | null;
+  from: HeightFrom;
+  disabled: boolean;
+  onChange: (cm: number | null, from: HeightFrom) => void;
+}) {
+  const [text, setText] = useState(cm === null ? "" : String(cm));
+  return (
+    <span className="flex items-center gap-1">
+      <Input
+        aria-label={`${label} height in cm`}
+        inputMode="decimal"
+        placeholder="cm"
+        value={text}
+        disabled={disabled}
+        onChange={(e) => {
+          const t = e.target.value.replace(/[^\d.]/g, "").slice(0, 7);
+          setText(t);
+          const n = Number(t);
+          onChange(t === "" || !Number.isFinite(n) ? null : n, from);
+        }}
+        className="h-9 w-16 text-right"
+      />
+      <span className="text-xs text-muted-foreground">cm from</span>
+      <select
+        aria-label={`${label} height measured from`}
+        value={from}
+        disabled={disabled}
+        onChange={(e) => onChange(cm, e.target.value as HeightFrom)}
+        className="h-9 rounded-md border border-input bg-surface px-2 text-sm"
+      >
+        <option value="bottom">bottom</option>
+        <option value="top">top</option>
+      </select>
+    </span>
   );
 }

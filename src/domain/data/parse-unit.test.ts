@@ -221,6 +221,44 @@ describe("messy input", () => {
     );
   });
 
+  it("reads dates day first when Excel stored them month first (PR-02 export)", () => {
+    // Typed "01-08-2026" (1 Aug); Excel kept 8 Jan, then 8 Feb after midnight.
+    const d = (m: number) => new Date(Date.UTC(2026, m - 1, 8));
+    const t = (h: number, m: number) => new Date(Date.UTC(1899, 11, 30, h, m));
+    const r = parseWorkbook(
+      sheet([
+        ["Date", "Time", "T-TRH001", "T-TRH002"],
+        [null, null, "°C", "°C"],
+        [d(1), t(23, 50), 3.8, 4.2],
+        [d(1), t(23, 55), 3.9, 4.1],
+        [d(2), t(0, 0), 4.0, 4.3],
+        [d(2), t(0, 5), 4.1, 4.4],
+      ]),
+    );
+    if (!r.ok) throw new Error(r.error);
+    expect(r.best.times[0]).toBe(ist("2026-08-01T23:50:00"));
+    expect(r.best.times[3]).toBe(ist("2026-08-02T00:05:00"));
+    expect(r.best.notes.join(" ")).toMatch(
+      /stored month first \(the first as 8 Jan 2026\).*read day first, from 1 Aug 2026/,
+    );
+  });
+
+  it("leaves dates alone when they run on without a jump", () => {
+    const d = (day: number) => new Date(Date.UTC(2026, 0, day));
+    const t = (h: number) => new Date(Date.UTC(1899, 11, 30, h, 0));
+    const r = parseWorkbook(
+      sheet([
+        ["Date", "Time", "T-TRH001"],
+        [d(8), t(22), 3.8],
+        [d(8), t(23), 3.9],
+        [d(9), t(0), 4.0],
+      ]),
+    );
+    if (!r.ok) throw new Error(r.error);
+    expect(r.best.times[0]).toBe(ist("2026-01-08T22:00:00"));
+    expect(r.best.notes.join(" ")).not.toMatch(/month first/);
+  });
+
   it("refuses a sheet with no readings, saying why", () => {
     const r = parseWorkbook(sheet([["Report"], ["Customer", "Watson"]]));
     expect(r).toMatchObject({ ok: false, error: expect.stringContaining("No readings found") });

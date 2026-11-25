@@ -68,6 +68,7 @@ export default async function NewJobPage({ searchParams }: PageProps<"/jobs/new"
         qaSites={qaSites}
         me={{ id: actor.id, role: actor.role }}
         canSeeMoney={can(actor, "jobs.money")}
+        canManageClients={can(actor, "clients.manage")}
         initial={{
           companyId,
           siteId,
