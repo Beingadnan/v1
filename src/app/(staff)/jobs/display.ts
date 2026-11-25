@@ -38,3 +38,15 @@ export function dateRange(start: string, end: string): string {
 const inr = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 });
 export const rupees = (value: string | number | null) =>
   value === null || value === "" ? "" : `₹${inr.format(Number(value))}`;
+
+/** A job still waiting for its data: before Data received, or on hold. */
+const WAITING_FOR_DATA = new Set(["created", "ready", "field_work", "data_issue"]);
+
+/**
+ * The job's last day is when its data is due: only a reminder, never the
+ * study's own dates, which come from the data (QA Tech, Nov 2026). True once
+ * that day has passed and the data still isn't in.
+ */
+export function dataOverdue(status: string, dueOn: string, today: string): boolean {
+  return WAITING_FOR_DATA.has(status) && today > dueOn;
+}

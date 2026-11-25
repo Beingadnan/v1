@@ -316,14 +316,14 @@ export function NewJobForm({
           />
           <TextField
             name="plannedEnd"
-            label="Last day (loggers back)"
+            label="Data due by"
             type="date"
             required
             result={result}
             value={end}
             min={start}
             onChange={(e) => setEnd(e.target.value)}
-            hint="Loggers must stay calibrated until this day."
+            hint="A reminder: the data should be in by this day, and booked loggers stay calibrated until then. The report's dates come from the data."
           />
           <SelectField
             name="siteId"

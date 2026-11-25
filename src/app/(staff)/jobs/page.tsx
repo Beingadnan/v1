@@ -16,12 +16,13 @@ import {
 } from "@/components/ui/table";
 import { db } from "@/db/client";
 import { can } from "@/domain/auth/permissions";
+import { todayInIndia } from "@/domain/clients/requalification";
 import { listJobs, type JobListRow } from "@/domain/jobs/queries";
 import { JOB_STATUS_LABELS, ORDER_TYPE_SHORT, type OrderType } from "@/domain/jobs/types";
 import { requirePermission } from "@/lib/auth/dal";
 import { cn } from "@/lib/utils";
 
-import { dashDate, rupees, statusTone } from "./display";
+import { dashDate, dataOverdue, rupees, statusTone } from "./display";
 
 export const metadata = { title: "Jobs" };
 
@@ -183,6 +184,7 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
 }
 
 function JobTable({ rows, money }: { rows: JobListRow[]; money: boolean }) {
+  const today = todayInIndia();
   return (
     <Table>
       <TableHeader>
@@ -190,8 +192,8 @@ function JobTable({ rows, money }: { rows: JobListRow[]; money: boolean }) {
           <TableHead>Job</TableHead>
           <TableHead>Client</TableHead>
           <TableHead>Equipment</TableHead>
-          <TableHead>Start date</TableHead>
-          <TableHead>End date</TableHead>
+          <TableHead>On site</TableHead>
+          <TableHead>Data due</TableHead>
           <TableHead>Status</TableHead>
           {money ? <TableHead className="text-right">PO value</TableHead> : null}
         </TableRow>
@@ -226,7 +228,12 @@ function JobTable({ rows, money }: { rows: JobListRow[]; money: boolean }) {
               </span>
             </TableCell>
             <TableCell className="tabular whitespace-nowrap">{dashDate(r.plannedStart)}</TableCell>
-            <TableCell className="tabular whitespace-nowrap">{dashDate(r.plannedEnd)}</TableCell>
+            <TableCell className="tabular whitespace-nowrap">
+              {dashDate(r.plannedEnd)}
+              {dataOverdue(r.status, r.plannedEnd, today) ? (
+                <p className="text-xs font-medium text-fail">Overdue</p>
+              ) : null}
+            </TableCell>
             <TableCell>
               <StatusBadge tone={statusTone(r.status)}>{JOB_STATUS_LABELS[r.status]}</StatusBadge>
             </TableCell>

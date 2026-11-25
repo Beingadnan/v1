@@ -228,7 +228,8 @@ function EditJobForm({
     <form onSubmit={onSubmit} className="flex flex-col gap-4">
       <DialogTitle>Job details</DialogTitle>
       <DialogDescription>
-        Moving the dates rechecks every booked logger against the new dates.
+        The dates are a reminder for the team: when to go on site, and when the data is due. Booked
+        loggers are rechecked against them; the report&apos;s dates come from the uploaded data.
       </DialogDescription>
       <Hidden fields={{ jobId }} />
       <div className="grid gap-4 sm:grid-cols-2">
@@ -242,7 +243,7 @@ function EditJobForm({
         />
         <TextField
           name="plannedEnd"
-          label="Last day (loggers back)"
+          label="Data due by"
           type="date"
           required
           defaultValue={values.plannedEnd}

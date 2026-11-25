@@ -81,13 +81,15 @@ test("phase 4 exit test: a Watson job with 2 freezers, found by PO, held back by
   await page.getByRole("button", { name: "Tick all" }).click();
   // Each freezer's study runs 4 cycles of 24 h: 03.06 to 07.06.2030 covers it.
   await page.getByLabel("First day on site").fill("2030-06-03");
-  await page.getByLabel("Last day (loggers back)").fill("2030-06-07");
+  await page.getByLabel("Data due by").fill("2030-06-07");
   await page.getByLabel("PO number").fill(`PO-${run}`);
   await page.getByRole("button", { name: "Create job with 2 items" }).click();
   await expect(
     page.getByRole("heading", { level: 1, name: /^QT\/\d{2}\/\d{4}\/\d{4}$/ }),
   ).toBeVisible();
   const jobUrl = page.url();
+  await expect(page.getByText("On site 03-06-2030 · Data due 07-06-2030")).toBeVisible();
+  await expect(page.getByText("Data overdue", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("link", { name: `WF-${run}-A`, exact: true })).toBeVisible();
 
   // The gate pass, then one logger per freezer scanned in and booked: field work can start.
@@ -114,7 +116,7 @@ test("phase 4 exit test: a Watson job with 2 freezers, found by PO, held back by
   await page.getByRole("button", { name: "Edit details" }).click();
   dialog = page.getByRole("dialog");
   await dialog.getByLabel("First day on site").fill("2030-07-01");
-  await dialog.getByLabel("Last day (loggers back)").fill("2030-07-05");
+  await dialog.getByLabel("Data due by").fill("2030-07-05");
   await dialog.getByRole("button", { name: "Save" }).click();
   await expect(dialog).toBeHidden();
   await expect(page.getByText("is valid only until 30.06.2030").first()).toBeVisible();

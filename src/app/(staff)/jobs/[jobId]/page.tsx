@@ -6,6 +6,7 @@ import type React from "react";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { todayInIndia } from "@/domain/clients/requalification";
 import {
   Table,
   TableBody,
@@ -45,7 +46,7 @@ import { requirePermission } from "@/lib/auth/dal";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-import { dateRange, rupees, statusTone } from "../display";
+import { dashDate, dataOverdue, rupees, statusTone } from "../display";
 import {
   AddStudiesButton,
   AutoBookButton,
@@ -334,7 +335,14 @@ export default async function JobPage({ params }: PageProps<"/jobs/[jobId]">) {
               <Link href={`/clients/${detail.company.id}`} className="text-primary hover:underline">
                 {detail.company.name}
               </Link>{" "}
-              · {detail.site.name} · {dateRange(job.plannedStart, job.plannedEnd)}
+              · {detail.site.name} · On site {dashDate(job.plannedStart)} · Data due{" "}
+              {dashDate(job.plannedEnd)}
+              {dataOverdue(job.status, job.plannedEnd, todayInIndia()) ? (
+                <>
+                  {" "}
+                  <StatusBadge tone="fail">Data overdue</StatusBadge>
+                </>
+              ) : null}
               {job.title ? ` · ${job.title}` : ""}
             </>
           }

@@ -400,12 +400,16 @@ async function jobToStudy(page: Page, d: Dataset): Promise<string> {
     .selectOption({ label: `${d.client.name} (${d.client.short})` });
   await page.getByRole("button", { name: "Tick all" }).click();
   await page.getByLabel("First day on site").fill(d.job.start);
-  await page.getByLabel("Last day (loggers back)").fill(d.job.end);
+  await page.getByLabel("Data due by").fill(d.job.end);
   await page.getByLabel("PO number").fill(`PO/${d.client.short}/${run}`);
   await page.getByRole("button", { name: "Create job with 1 item" }).click();
   await expect(
     page.getByRole("heading", { level: 1, name: /^QT\/\d{2}\/\d{4}\/\d{4}$/ }),
   ).toBeVisible();
+  // The job's last day is when the data is due: a reminder, long past for these studies.
+  const due = d.job.end.split("-").reverse().join("-");
+  await expect(page.getByText(`Data due ${due}`)).toBeVisible();
+  await expect(page.getByText("Data overdue", { exact: true })).toBeVisible();
 
   await page.getByLabel("Gate pass number").fill(`GP/${run}`);
   await page.getByRole("button", { name: "Save gate pass" }).click();
